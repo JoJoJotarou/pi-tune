@@ -1,5 +1,6 @@
 import {
   type AgentToolResult,
+  type EditToolDetails,
   type FindToolDetails,
   type GrepToolDetails,
   keyText,
@@ -10,12 +11,15 @@ import {
   type ToolRendererResolver,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
+import type { StructuredPatchHunk } from "diff";
 import { exitCodeOf, failureExcerpt, summarizeCommand } from "./bash.ts";
+import { type DiffStats, diffStats, hunksFromPatch, renderDiff } from "./diff.ts";
 import { renderHeader, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta, renderGrepRows } from "./search.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
+const EDIT_FOLD_LIMIT = 8;
 
 interface CompactContext {
   state: Record<string, unknown>;
@@ -96,6 +100,24 @@ function summaryFor(toolName: string, rawArgs: unknown): string {
   }
 }
 
+interface EditDiff {
+  path: string;
+  hunks: StructuredPatchHunk[];
+}
+
+function editDiffOf(result: AgentToolResult<unknown>, rawArgs: unknown): EditDiff | undefined {
+  const details = result.details as EditToolDetails | undefined;
+  if (details === undefined || typeof details.patch !== "string") return undefined;
+  const path = stringArg(textArgs(rawArgs), "path");
+  if (path === undefined) return undefined;
+  return { path, hunks: hunksFromPatch(details.patch) };
+}
+
+function editMeta(stats: DiffStats, folded: boolean): string {
+  const counts = `+${stats.added} −${stats.removed}`;
+  return folded ? `${counts} · ${keyText("app.tools.expand")}` : counts;
+}
+
 class HeaderComponent implements Component {
   private readonly toolName: string;
   private readonly summary: string;
@@ -156,6 +178,34 @@ class ResultComponent implements Component {
   invalidate(): void {}
 }
 
+class DiffComponent implements Component {
+  private readonly diff: EditDiff;
+  private readonly contextLines: number;
+  private readonly theme: Theme;
+  private readonly context: CompactContext;
+
+  constructor(diff: EditDiff, contextLines: number, theme: Theme, context: CompactContext) {
+    this.diff = diff;
+    this.contextLines = contextLines;
+    this.theme = theme;
+    this.context = context;
+  }
+
+  render(width: number): string[] {
+    const indentWidth = this.context.outputPad + 2;
+    const indent = " ".repeat(indentWidth);
+    const available = Math.max(1, width - indentWidth);
+    return renderDiff(this.diff.hunks, {
+      path: this.diff.path,
+      width: available,
+      theme: this.theme,
+      context: this.contextLines,
+    }).map((line) => truncateToWidth(`${indent}${line}`, width, "…"));
+  }
+
+  invalidate(): void {}
+}
+
 class GrepRowsComponent implements Component {
   private readonly result: AgentToolResult<GrepToolDetails | undefined>;
   private readonly theme: Theme;
@@ -201,6 +251,19 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
       context.state.meta = resultMeta(toolName, context.args, result, context.isError, output);
+      if (toolName === "edit") {
+        if (context.isError) return new ResultComponent(output, theme, context);
+        const diff = editDiffOf(result, context.args);
+        if (diff === undefined) {
+          context.state.meta = undefined;
+          return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
+        }
+        const stats = diffStats(diff.hunks);
+        const folded = !options.expanded && stats.added + stats.removed > EDIT_FOLD_LIMIT;
+        context.state.meta = editMeta(stats, folded);
+        if (folded) return new EmptyComponent();
+        return new DiffComponent(diff, options.expanded ? 3 : 1, theme, context);
+      }
       if (options.expanded && toolName === "grep") return new GrepRowsComponent(result, theme, context);
       if (options.expanded) {
         return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();

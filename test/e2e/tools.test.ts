@@ -205,3 +205,109 @@ test("summary task before pi-tune", { timeout: 180_000 }, async () => {
     await pi.shot("tools-summaries-before");
   });
 });
+
+const editServer = `import http from "node:http";
+
+const PORT = 3000;
+const HOST = "127.0.0.1";
+
+function requestHandler(req, res) {
+  res.setHeader("Content-Type", "text/plain");
+  res.end("ok");
+}
+
+function startServer() {
+  server.listen(PORT, HOST, () => {
+    console.log("Server started .");
+  });
+}
+`;
+
+const editBig = `${Array.from({ length: 40 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n")}\n`;
+const editBigOld = Array.from({ length: 10 }, (_, index) => `const value${index + 11} = ${index + 11};`).join("\n");
+const editBigNew = Array.from({ length: 10 }, (_, index) => `const value${index + 11} = ${(index + 11) * 10};`).join(
+  "\n",
+);
+
+const editFiles = { "src/server.ts": editServer, "src/big.ts": editBig };
+const editSettings = { defaultTools: ["read", "bash", "edit", "write", "grep", "find", "ls"] };
+const edits: Scenario = {
+  files: editFiles,
+  turns: [
+    [
+      {
+        tool: "edit",
+        args: {
+          path: "src/server.ts",
+          edits: [
+            { oldText: "const PORT = 3000;", newText: "const PORT = Number(process.env.PORT ?? 3000);" },
+            {
+              oldText: '    console.log("Server started .");',
+              newText: "    console.log(`Server started on port ${PORT}.`);",
+            },
+          ],
+        },
+      },
+    ],
+    [{ tool: "edit", args: { path: "src/big.ts", edits: [{ oldText: editBigOld, newText: editBigNew }] } }],
+    [{ text: "Edited." }],
+  ],
+};
+
+test("edit results show diffs and fold large changes", { timeout: 240_000 }, async () => {
+  const pi = await startPi({ scenario: edits, tune: true, cols: 100, rows: 50, settings: editSettings });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Edited.");
+    const lines = rows(pi.screen());
+
+    const first = rowIndex(lines, /^✓ edit src\/server\.ts\b/);
+    assert.ok(first >= 0, `server edit header not found:\n${lines.join("\n")}`);
+    assert.match(lines[first], /\+2 −2/);
+
+    const second = rowIndex(lines, /^✓ edit src\/big\.ts\b/, first + 1);
+    assert.ok(second >= 0, `big edit header not found:\n${lines.join("\n")}`);
+    assert.match(lines[second], /· ctrl\+o/);
+
+    const serverDiff = lines.slice(first + 1, second);
+    assert.ok(
+      serverDiff.some((line) => line.includes("│-const PORT = 3000;")),
+      `no removed server row:\n${lines.join("\n")}`,
+    );
+    assert.ok(
+      serverDiff.some((line) => line.includes("│+const PORT = Number")),
+      `no added server row:\n${lines.join("\n")}`,
+    );
+
+    const folded = lines.slice(second + 1);
+    assert.ok(
+      !folded.some((line) => line.includes("│-") || line.includes("│+")),
+      `folded big edit rendered diff rows:\n${lines.join("\n")}`,
+    );
+    await pi.shot("edit-diff");
+
+    pi.press("ctrl+o");
+    await pi.waitFor(/│-const value11 = 11;/);
+    await pi.shot("edit-diff-expanded");
+  });
+
+  const before = await startPi({ scenario: edits, tune: false, cols: 100, rows: 50, settings: editSettings });
+  await closeAfter(before, async () => {
+    before.type("run it\r");
+    await before.waitFor("Edited.");
+    await before.shot("edit-diff-before");
+  });
+
+  const light = await startPi({
+    scenario: edits,
+    tune: true,
+    cols: 100,
+    rows: 50,
+    settings: { ...editSettings, theme: "light" },
+  });
+  await closeAfter(light, async () => {
+    light.type("run it\r");
+    await light.waitFor("Edited.");
+    await light.shot("edit-diff-light");
+  });
+});

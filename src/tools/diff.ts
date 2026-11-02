@@ -2,7 +2,9 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
 import {
   backgroundAnsi,
+  type Color,
   mixColors,
+  rgbColor,
   sliceByColumn,
   truncateToWidth,
   visibleWidth,
@@ -52,8 +54,9 @@ interface RenderContext {
   theme: Theme;
 }
 
-const ROW_TINT = 0.18;
-const WORD_TINT = 0.4;
+// Tints mix the diff colors into black (dark themes) or white (light themes) rather than a theme
+// background token, so removed rows read as red and added rows as green on any terminal background.
+const TINTS = { dark: { row: 0.25, word: 0.45 }, light: { row: 0.15, word: 0.3 } } as const;
 const ESC = String.fromCharCode(27);
 const SGR = new RegExp(`${ESC}\\[[0-9;:]*m`, "g");
 const RESET = `${ESC}[0m`;
@@ -271,14 +274,16 @@ function numberColumnWidth(numbers: Array<number | undefined>): number {
 }
 
 function rowTints(theme: Theme): RowTints {
-  const base = theme.colors.toolPendingBg;
+  const light = theme.appearance === "light";
+  const base = light ? rgbColor(255, 255, 255) : rgbColor(0, 0, 0);
+  const amounts = light ? TINTS.light : TINTS.dark;
   const mode = theme.getColorMode();
-  const tint = (color: typeof base, amount: number): string => backgroundAnsi(mixColors(color, base, 1 - amount), mode);
+  const tint = (color: Color, amount: number): string => backgroundAnsi(mixColors(color, base, 1 - amount), mode);
   return {
-    removed: tint(theme.colors.toolDiffRemoved, ROW_TINT),
-    added: tint(theme.colors.toolDiffAdded, ROW_TINT),
-    removedWord: tint(theme.colors.toolDiffRemoved, WORD_TINT),
-    addedWord: tint(theme.colors.toolDiffAdded, WORD_TINT),
+    removed: tint(theme.colors.toolDiffRemoved, amounts.row),
+    added: tint(theme.colors.toolDiffAdded, amounts.row),
+    removedWord: tint(theme.colors.toolDiffRemoved, amounts.word),
+    addedWord: tint(theme.colors.toolDiffAdded, amounts.word),
   };
 }
 

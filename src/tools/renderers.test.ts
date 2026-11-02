@@ -3,21 +3,37 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { AgentToolResult, BashToolDetails, ToolRenderers } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, BashToolDetails, EditToolDetails, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
+  createEditTool,
   createFindTool,
   createGrepTool,
   createLsTool,
   createReadTool,
+  initTheme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  type Component,
+  KeybindingsManager,
+  setKeybindings,
+  stripTerminalSequences,
+  TUI_KEYBINDINGS,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { toolRenderers } from "./renderers.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-tune-tools-"));
 const bash = createBashTool(cwd);
 const theme = testTheme();
+initTheme("dark");
+setKeybindings(
+  new KeybindingsManager({
+    ...TUI_KEYBINDINGS,
+    "app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
+  }),
+);
 
 type BashResult = AgentToolResult<BashToolDetails | undefined>;
 
@@ -420,4 +436,141 @@ test("expanded grep cuts its rows to the width", async () => {
     assert.ok(row.includes("…"), row);
     assert.ok(visibleWidth(row) <= 40, row);
   }
+});
+
+const EDIT_SERVER = `import http from "node:http";
+
+const PORT = 3000;
+const HOST = "127.0.0.1";
+
+function requestHandler(req, res) {
+  res.setHeader("Content-Type", "text/plain");
+  res.end("ok");
+}
+
+function startServer() {
+  server.listen(PORT, HOST, () => {
+    console.log("Server started .");
+  });
+}
+`;
+
+interface Edit {
+  oldText: string;
+  newText: string;
+}
+
+async function realEdit(
+  name: string,
+  source: string,
+  edits: Edit[],
+): Promise<{ result: AgentToolResult<unknown>; path: string }> {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-edit-"));
+  const path = join(dir, name);
+  writeFileSync(path, source);
+  const result = await createEditTool(dir).execute("renderers-test", { path, edits });
+  return { result, path };
+}
+
+const SERVER_EDITS: Edit[] = [
+  { oldText: "const PORT = 3000;", newText: "const PORT = Number(process.env.PORT ?? 3000);" },
+  {
+    oldText: '    console.log("Server started .");',
+    newText: "    console.log(`Server started on port ${PORT}.`);",
+  },
+];
+
+test("edit results show a small diff below the +added −removed header meta", async () => {
+  const { result, path } = await realEdit("server.ts", EDIT_SERVER, SERVER_EDITS);
+  const ctx = context({ args: { path } });
+  const body = resultLines("edit", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("edit", { path }, ctx, 80)[0];
+
+  assert.ok(header.endsWith(" +2 −2"), header);
+  assert.ok(body.length > 0);
+  for (const line of body) assert.ok(line.startsWith("  "), line);
+  assert.ok(
+    body.some((line) => line.includes("│-const PORT = 3000;")),
+    body.join("\n"),
+  );
+  assert.ok(
+    body.some((line) => line.includes("│+const PORT = Number")),
+    body.join("\n"),
+  );
+});
+
+test("more than eight changed lines fold the edit and add the expand key to the meta", async () => {
+  const source = `${Array.from({ length: 12 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n")}\n`;
+  const oldBlock = Array.from({ length: 6 }, (_, index) => `const value${index + 4} = ${index + 4};`).join("\n");
+  const newBlock = Array.from({ length: 6 }, (_, index) => `const value${index + 4} = ${(index + 4) * 10};`).join("\n");
+  const { result } = await realEdit("large.ts", source, [{ oldText: oldBlock, newText: newBlock }]);
+  const args = { path: "large.ts" };
+  const ctx = context({ args });
+  const body = resultLines("edit", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("edit", args, ctx, 80)[0];
+
+  assert.deepEqual(body, []);
+  assert.ok(header.endsWith(" +6 −6 · ctrl+o"), header);
+});
+
+test("expanded edits show the diff with three context lines", async () => {
+  const source = `${Array.from({ length: 8 }, (_, index) => `const line${index + 1} = ${index + 1};`)
+    .map((line, index) => (index === 4 ? "const old = 5;" : line))
+    .join("\n")}\n`;
+  const { result, path } = await realEdit("context.ts", source, [
+    { oldText: "const old = 5;", newText: "const now = 50;" },
+  ]);
+  const args = { path };
+  const collapsedCtx = context({ args });
+  const collapsed = resultLines("edit", result, { expanded: false, isPartial: false }, collapsedCtx, 80);
+  const expandedCtx = context({ args });
+  const expanded = resultLines("edit", result, { expanded: true, isPartial: false }, expandedCtx, 80);
+
+  assert.equal(collapsed.length, 4);
+  assert.ok(!collapsed.some((line) => line.includes("const line2 = 2;")), collapsed.join("\n"));
+  assert.equal(expanded.length, 8);
+  assert.ok(
+    expanded.some((line) => line.includes("const line2 = 2;")),
+    expanded.join("\n"),
+  );
+  assert.ok(callLines("edit", args, expandedCtx, 80)[0].endsWith(" +1 −1"));
+});
+
+test("edit diff lines stay within the width at 80 and 40", async () => {
+  const source = `const one = 1;\nexport const message = "short";\nconst three = 3;\n`;
+  const { result, path } = await realEdit("long.ts", source, [
+    {
+      oldText: 'export const message = "short";',
+      newText: 'export const message = "a much longer message that will not fit on one rendered row";',
+    },
+  ]);
+  const args = { path };
+
+  for (const width of [80, 40]) {
+    for (const expanded of [false, true]) {
+      const ctx = context({ args, outputPad: 2 });
+      const body = resultLines("edit", result, { expanded, isPartial: false }, ctx, width);
+      assert.ok(body.length > 0);
+      for (const line of body) {
+        assert.ok(line.startsWith("    "), line);
+        assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(line)}`);
+      }
+      const header = callLines("edit", args, ctx, width)[0];
+      assert.ok(visibleWidth(header) <= width, `width ${width}: ${JSON.stringify(header)}`);
+    }
+  }
+});
+
+test("an edit result without a patch falls back to Pi's renderer and has no meta", () => {
+  const result = {
+    content: [{ type: "text", text: "Successfully edited a.ts" }],
+    details: { diff: "1 file changed" },
+  } as unknown as AgentToolResult<EditToolDetails>;
+  const args = { path: "a.ts" };
+  const ctx = context({ args });
+
+  assert.deepEqual(resultLines("edit", result, { expanded: false, isPartial: false }, ctx, 80), ["BASE RESULT"]);
+  assert.equal(ctx.state.meta, undefined);
+  const header = callLines("edit", args, ctx, 80)[0];
+  assert.ok(!header.includes("+0 −0"), header);
 });
