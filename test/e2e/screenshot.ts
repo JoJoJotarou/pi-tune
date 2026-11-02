@@ -121,6 +121,8 @@ export function renderPng(term: Terminal, file: string, appearance: Appearance =
       chrome,
       [
         "--headless=new",
+        // A private profile, so another headless Chrome holding the default profile cannot block this one.
+        `--user-data-dir=${join(dir, "profile")}`,
         "--disable-gpu",
         "--hide-scrollbars",
         "--force-device-scale-factor=2",
