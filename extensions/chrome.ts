@@ -3,7 +3,6 @@ import type { Usage } from "@earendil-works/pi-ai";
 import {
   type ExtensionAPI,
   type ExtensionContext,
-  keyText,
   type SessionEntry,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
