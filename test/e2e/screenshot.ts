@@ -5,8 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { IBufferCell, Terminal } from "@xterm/headless";
 
-const BG = "#1e1f29";
-const FG = "#d6d8e0";
+export type Appearance = "dark" | "light";
+// Default terminal colors, matched to the Pi theme in use so untinted text stays readable.
+const DEFAULTS: Record<Appearance, { bg: string; fg: string }> = {
+  dark: { bg: "#1e1f29", fg: "#d6d8e0" },
+  light: { bg: "#fbfbf8", fg: "#24262e" },
+};
 const CELL_WIDTH = 8.4;
 const CELL_HEIGHT = 19;
 const PADDING = 8;
@@ -45,13 +49,13 @@ function palette(index: number): string {
   return hex((level << 16) | (level << 8) | level);
 }
 
-function foreground(cell: IBufferCell | undefined): string {
-  if (!cell || cell.isFgDefault()) return FG;
+function foreground(cell: IBufferCell | undefined, appearance: Appearance): string {
+  if (!cell || cell.isFgDefault()) return DEFAULTS[appearance].fg;
   return cell.isFgRGB() ? hex(cell.getFgColor()) : palette(cell.getFgColor());
 }
 
-function background(cell: IBufferCell | undefined): string {
-  if (!cell || cell.isBgDefault()) return BG;
+function background(cell: IBufferCell | undefined, appearance: Appearance): string {
+  if (!cell || cell.isBgDefault()) return DEFAULTS[appearance].bg;
   return cell.isBgRGB() ? hex(cell.getBgColor()) : palette(cell.getBgColor());
 }
 
@@ -59,7 +63,7 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function buildHtml(term: Terminal): string {
+function buildHtml(term: Terminal, appearance: Appearance): string {
   const buffer = term.buffer.active;
   const rows: string[] = [];
   for (let y = 0; y < term.rows; y++) {
@@ -70,8 +74,8 @@ function buildHtml(term: Terminal): string {
       if (!cell) break;
       const width = cell.getWidth();
       if (width === 0) continue;
-      let fg = foreground(cell);
-      let bg = background(cell);
+      let fg = foreground(cell, appearance);
+      let bg = background(cell, appearance);
       if (cell.isInverse()) [fg, bg] = [bg, fg];
       const style = [
         `left:${(x * CELL_WIDTH).toFixed(2)}px`,
@@ -92,7 +96,7 @@ function buildHtml(term: Terminal): string {
   const height = Math.ceil(term.rows * CELL_HEIGHT + PADDING * 2);
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
-html, body { margin: 0; padding: 0; background: ${BG}; overflow: hidden; }
+html, body { margin: 0; padding: 0; background: ${DEFAULTS[appearance].bg}; overflow: hidden; }
 body { padding: ${PADDING}px; }
 #grid { position: relative; width: ${width - PADDING * 2}px; height: ${height - PADDING * 2}px; }
 .cell {
@@ -102,7 +106,7 @@ body { padding: ${PADDING}px; }
 </style></head><body><div id="grid">${rows.join("")}</div></body></html>`;
 }
 
-export function renderPng(term: Terminal, file: string): void {
+export function renderPng(term: Terminal, file: string, appearance: Appearance = "dark"): void {
   const chrome = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   const width = Math.ceil(term.cols * CELL_WIDTH + PADDING * 2);
   const height = Math.ceil(term.rows * CELL_HEIGHT + PADDING * 2);
@@ -112,7 +116,7 @@ export function renderPng(term: Terminal, file: string): void {
   const dir = mkdtempSync(join(tmpdir(), "pi-tune-shot-"));
   try {
     const htmlPath = join(dir, "screen.html");
-    writeFileSync(htmlPath, buildHtml(term));
+    writeFileSync(htmlPath, buildHtml(term, appearance));
     const result = spawnSync(
       chrome,
       [
