@@ -54,10 +54,11 @@ function borderTheme(borderColor: (text: string) => string): Theme {
 /** Pi's top border carries the working status between dashes; reuse it as the frame's title. */
 function topBorderLabel(line: string): string | undefined {
   const plain = stripTerminalSequences(line);
-  const start = plain.search(/[^─]/);
+  // Pi pads the status with spaces inside its own color codes, so trim on the plain text, not the styled one.
+  const start = plain.search(/[^─\s]/);
   if (start < 0) return undefined;
   let end = plain.length;
-  while (end > start && plain[end - 1] === "─") end--;
+  while (end > start && /[─\s]/.test(plain[end - 1])) end--;
   const from = visibleWidth(plain.slice(0, start));
   const text = sliceByColumn(line, from, visibleWidth(plain.slice(0, end)) - from).trim();
   return text === "" ? undefined : text;
