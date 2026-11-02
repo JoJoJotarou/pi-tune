@@ -270,7 +270,8 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
   };
 
   try {
-    await waitFor("(faux)", 30_000);
+    // The footer names the model once Pi is ready; it omits "(faux)" when faux is the only provider.
+    await waitFor("scripted", 30_000);
     await sleep(1500);
   } catch (error) {
     await session.close();
