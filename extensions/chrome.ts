@@ -15,19 +15,18 @@ import { formatHints, hintFor } from "../src/chrome/hints.ts";
 import { type KeyGroup, KeysComponent } from "../src/chrome/keys.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
+// Global keys only; selector-specific ones (tree, session list, model scope) belong to those screens.
 const PI_KEYBINDINGS: readonly AppKeybinding[] = [
   "app.interrupt",
   "app.clear",
   "app.exit",
   "app.suspend",
   "app.thinking.cycle",
-  "app.thinking.save",
   "app.model.cycleForward",
   "app.model.cycleBackward",
   "app.model.select",
   "app.tools.expand",
   "app.thinking.toggle",
-  "app.session.toggleNamedFilter",
   "app.editor.external",
   "app.message.copy",
   "app.message.followUp",
@@ -37,28 +36,6 @@ const PI_KEYBINDINGS: readonly AppKeybinding[] = [
   "app.session.tree",
   "app.session.fork",
   "app.session.resume",
-  "app.tree.foldOrUp",
-  "app.tree.unfoldOrDown",
-  "app.tree.editLabel",
-  "app.tree.toggleLabelTimestamp",
-  "app.session.togglePath",
-  "app.session.toggleSort",
-  "app.session.rename",
-  "app.session.delete",
-  "app.session.deleteNoninvasive",
-  "app.models.save",
-  "app.models.enableAll",
-  "app.models.clearAll",
-  "app.models.toggleProvider",
-  "app.models.reorderUp",
-  "app.models.reorderDown",
-  "app.tree.filter.default",
-  "app.tree.filter.noTools",
-  "app.tree.filter.userOnly",
-  "app.tree.filter.labeledOnly",
-  "app.tree.filter.all",
-  "app.tree.filter.cycleForward",
-  "app.tree.filter.cycleBackward",
 ];
 
 interface UsageTotals {
