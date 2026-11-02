@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { Markdown, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { render } from "grok-mermaid";
-import mermaidExtension from "../../extensions/mermaid.ts";
+import mermaidExtension, { replaceMermaidFences } from "../../extensions/mermaid.ts";
 import { testTheme } from "../../test/theme.ts";
 import { previewFile } from "./preview-file.ts";
 import { mermaidMarkdown, previewHtml } from "./render.ts";
@@ -58,6 +58,16 @@ function load(settings: Record<string, unknown>): Wiring {
   onSessionStart?.({}, ctx);
   return { transformer, notices, end: (message) => onMessageEnd?.({ type: "message_end", message }, ctx) };
 }
+
+test("a mermaid fence inside a blockquote is replaced and stays quoted", () => {
+  const input = ["> ```mermaid", ...flowchart.split("\n").map((line) => `> ${line}`), "> ```", ""].join("\n");
+  const out = replaceMermaidFences(input, 100, theme);
+  assert.ok(!out.includes("```"), out);
+  assert.ok(out.includes(theme.fg("dim", "◇ mermaid · flowchart")), out);
+  for (const line of out.split("\n").filter((line) => line !== "")) {
+    assert.ok(line.startsWith(">"), line);
+  }
+});
 
 test("a diagram that fits renders art rows as code spans and the action row", () => {
   const out = mermaidMarkdown(flowchart, 100, theme, url);

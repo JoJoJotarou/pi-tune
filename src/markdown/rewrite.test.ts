@@ -112,6 +112,38 @@ test("relative, mailto and image links get no host", () => {
   }
 });
 
+test("a link in a blockquote gets its host and the quote prefix is kept", () => {
+  const input = "> First line\n> See [docs](https://example.com) here.\n";
+  assert.equal(
+    appendLinkDomains(input, theme),
+    `> First line\n> See [docs](https://example.com) ${dim("example.com")} here.\n`,
+  );
+  assert.equal(
+    appendLinkDomains("> See [docs](https://example.com) here.\n", theme),
+    `> See [docs](https://example.com) ${dim("example.com")} here.\n`,
+  );
+});
+
+test("a link in a nested blockquote keeps every quote prefix", () => {
+  const input = "> > See [docs](https://example.com).\n";
+  assert.equal(appendLinkDomains(input, theme), `> > See [docs](https://example.com) ${dim("example.com")}.\n`);
+});
+
+test("an H3 in a blockquote is rewritten inside the quote", () => {
+  assert.equal(rewriteHeadings("> ### Title\n"), "> **Title**\n");
+  assert.equal(rewriteHeadings("> > #### Deep\n"), "> > **Deep**\n");
+});
+
+test("a wide table in a blockquote becomes a quoted list", () => {
+  const input = [
+    "> | Tool | Language | UI | Grouping |",
+    "> |---|---|---|---|",
+    "> | Grok Build | Rust | ratatui | verb group |",
+    "",
+  ].join("\n");
+  assert.equal(tablesToLists(input, 40), "> - **Grok Build** — Language: Rust · UI: ratatui · Grouping: verb group\n");
+});
+
 test("links inside code get no host", () => {
   const input = "```\n[docs](https://example.com)\n```\n\nUse `[docs](https://example.com)` here.\n";
   assert.equal(appendLinkDomains(input, theme), input);
