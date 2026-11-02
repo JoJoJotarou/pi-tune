@@ -1,7 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { collectPrompts, type Prompt, type ScrollableTui } from "../internals/transcript.ts";
-import { RAIL_WIDTH } from "./timeline.ts";
+import { MIN_PROMPTS, MIN_TERMINAL_WIDTH, RAIL_WIDTH } from "./timeline.ts";
 
 export interface StickyPrompt {
   index: number;
@@ -9,6 +9,14 @@ export interface StickyPrompt {
 }
 
 const MAX_TEXT_ROWS = 3;
+/** Pi's scrollbar column, left uncovered while the timeline rail is hidden. */
+const SCROLLBAR_WIDTH = 1;
+
+interface StickyFrame {
+  prompt: StickyPrompt;
+  /** Right-hand columns left free for the rail or Pi's scrollbar. */
+  reserved: number;
+}
 
 /**
  * The prompt that owns the first visible row, when its own row has scrolled above the viewport. A prompt sitting
@@ -54,8 +62,8 @@ export class StickyBar implements Component {
   private readonly getTheme: () => Theme;
   private readonly onError: (error: Error) => void;
   private disabled = false;
-  /** Prompt computed by `visible()` and reused by the next render in the same frame. */
-  private pending: StickyPrompt | undefined;
+  /** Frame computed by `visible()` and reused by the next render in the same frame. */
+  private pending: StickyFrame | undefined;
 
   constructor(tui: ScrollableTui, getTheme: () => Theme, onError: (error: Error) => void) {
     this.tui = tui;
@@ -63,8 +71,9 @@ export class StickyBar implements Component {
     this.onError = onError;
   }
 
-  private current(): StickyPrompt | undefined {
-    const transcript = collectPrompts(this.tui, this.tui.terminal.columns);
+  private current(): StickyFrame | undefined {
+    const columns = this.tui.terminal.columns;
+    const transcript = collectPrompts(this.tui, columns);
     if (transcript instanceof Error) {
       if (!this.disabled) {
         this.disabled = true;
@@ -72,7 +81,11 @@ export class StickyBar implements Component {
       }
       return undefined;
     }
-    return stickyPrompt(transcript.prompts, this.tui.viewportTop);
+    const prompt = stickyPrompt(transcript.prompts, this.tui.viewportTop);
+    if (!prompt) return undefined;
+    // The timeline rail's own eligibility rule.
+    const railShown = columns >= MIN_TERMINAL_WIDTH && transcript.prompts.length >= MIN_PROMPTS;
+    return { prompt, reserved: railShown ? RAIL_WIDTH : SCROLLBAR_WIDTH };
   }
 
   /** Overlay gate: Pi's own scrollbar and selection work only while no overlay is visible. */
@@ -84,11 +97,10 @@ export class StickyBar implements Component {
 
   render(width: number): string[] {
     if (this.disabled) return [];
-    const sticky = this.pending ?? this.current();
+    const frame = this.pending ?? this.current();
     this.pending = undefined;
-    if (!sticky) return [];
-    // The last columns stay free for the timeline rail.
-    return stickyRows(sticky, Math.max(0, width - RAIL_WIDTH), this.getTheme());
+    if (!frame) return [];
+    return stickyRows(frame.prompt, Math.max(0, width - frame.reserved), this.getTheme());
   }
 
   invalidate(): void {}
