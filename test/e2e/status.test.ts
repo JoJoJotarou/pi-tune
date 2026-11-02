@@ -18,7 +18,7 @@ test("working line names the running bash tool", { timeout: 180_000 }, async () 
     // The status is embedded in the editor's top border, not drawn as an extra row.
     assert.match(statusRow.trim(), /^─+ .*to stop.* ─+$/);
     await new Promise((done) => setTimeout(done, 1500));
-    await pi.shot("status-tool");
+    await pi.shot("status-tools");
     const screen = pi.screen().join("\n");
     assert.ok(screen.includes("bash sleep 3"), screen);
     assert.ok(screen.includes("to stop"), screen);
@@ -37,14 +37,14 @@ test("working line shows Thinking while the model streams thinking", { timeout: 
   });
   try {
     pi.type("think\r");
-    await pi.waitFor(/Thinking.*to stop/);
+    await pi.waitFor(/Thinking +.*to stop/);
     await pi.shot("status-thinking");
   } finally {
     await pi.close();
   }
 });
 
-test("working line shows Writing while the model streams the answer", { timeout: 180_000 }, async () => {
+test("working line shows Writing with the token rate", { timeout: 180_000 }, async () => {
   const pi = await startPi({
     scenario: {
       files: { "README.md": "# demo\n" },
@@ -54,9 +54,8 @@ test("working line shows Writing while the model streams the answer", { timeout:
   });
   try {
     pi.type("write\r");
-    await pi.waitFor(/Writing.*to stop/);
-    await new Promise((done) => setTimeout(done, 1500));
-    assert.match(pi.screen().join("\n"), /Writing.*to stop/);
+    await pi.waitFor(/Writing +.*to stop/);
+    await pi.waitFor(/Writing \d+ tok\/s +.*to stop/);
     await pi.shot("status-writing");
   } finally {
     await pi.close();

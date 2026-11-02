@@ -1,7 +1,9 @@
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
 const SUMMARY_WIDTH = 40;
+const COLUMN_GAP = "   ";
 
 export type ActivityPhase = "thinking" | "writing" | "tool";
 
@@ -13,23 +15,24 @@ export interface RunningTool {
 
 export interface ActivityState {
   running: boolean;
-  /** When `agent_start` fired. */
+  /** When `agent_start` fired; the only timer on the status line. */
   startedAt: number;
   phase: ActivityPhase;
-  /** When the current phase began; `{step}` in the working message. */
-  phaseStartedAt: number;
   /** Running tools in start order; the last one is the most recent. */
   tools: RunningTool[];
+  /** Output tokens of the current message. */
   outputTokens: number;
+  /** First text token of the current message, `0` before it arrives. */
+  writingStartedAt: number;
 }
 
 export const initialState: ActivityState = {
   running: false,
   startedAt: 0,
   phase: "thinking",
-  phaseStartedAt: 0,
   tools: [],
   outputTokens: 0,
+  writingStartedAt: 0,
 };
 
 export type ActivityEvent =
@@ -77,51 +80,90 @@ export function summarizeTool(name: string, args: unknown): string {
   }
 }
 
-function phaseChanged(state: ActivityState, phase: ActivityPhase, now: number): ActivityState {
-  return phase === state.phase ? state : { ...state, phase, phaseStartedAt: now };
-}
-
 export function reduce(state: ActivityState, event: ActivityEvent, now: number): ActivityState {
   switch (event.type) {
     case "agent_start":
-      return { running: true, startedAt: now, phase: "thinking", phaseStartedAt: now, tools: [], outputTokens: 0 };
+      return {
+        running: true,
+        startedAt: now,
+        phase: "thinking",
+        tools: [],
+        outputTokens: 0,
+        writingStartedAt: 0,
+      };
     case "turn_start":
-      return { ...state, phase: "thinking", phaseStartedAt: now, tools: [], outputTokens: 0 };
+      return { ...state, phase: "thinking", tools: [], outputTokens: 0, writingStartedAt: 0 };
     case "message_update": {
-      const withTokens = { ...state, outputTokens: event.outputTokens };
-      return phaseChanged(withTokens, event.kind === "text" ? "writing" : "thinking", now);
+      if (event.kind === "thinking") {
+        return { ...state, phase: "thinking", outputTokens: event.outputTokens };
+      }
+      return {
+        ...state,
+        phase: "writing",
+        outputTokens: event.outputTokens,
+        writingStartedAt: state.writingStartedAt === 0 ? now : state.writingStartedAt,
+      };
     }
     case "tool_execution_start": {
       const tools = [
         ...state.tools.filter((tool) => tool.id !== event.id),
         { id: event.id, name: event.name, summary: summarizeTool(event.name, event.args) },
       ];
-      return phaseChanged({ ...state, tools }, "tool", now);
+      return { ...state, phase: "tool", tools };
     }
     case "tool_execution_end": {
       const tools = state.tools.filter((tool) => tool.id !== event.id);
-      return phaseChanged({ ...state, tools }, tools.length === 0 ? "thinking" : "tool", now);
+      return { ...state, phase: tools.length === 0 ? "thinking" : "tool", tools };
     }
     case "agent_settled":
       return { ...state, running: false, tools: [] };
   }
 }
 
-/** One line for `ctx.ui.setWorkingMessage()`, or `""` when no run is active. */
-export function describe(state: ActivityState, now: number, interruptKey: string): string {
+/** Output tokens per second of the current message, once it has written for at least a second. */
+function tokenRate(state: ActivityState, now: number): number | undefined {
+  if (state.writingStartedAt === 0) return undefined;
+  const elapsedMs = now - state.writingStartedAt;
+  if (elapsedMs < 1000 || state.outputTokens <= 0) return undefined;
+  return Math.round(state.outputTokens / (elapsedMs / 1000));
+}
+
+export interface DescribeOptions {
+  /** Available columns for the whole line. */
+  width: number;
+  /** Key that stops the run, from `keyText("app.interrupt")`. */
+  interruptKey: string;
+  theme: Theme;
+}
+
+/**
+ * One line for `ctx.ui.setWorkingMessage()`, or `""` when no run is active.
+ * Same colors in every phase: phase `text`, detail `muted`, total and hint `dim`.
+ */
+export function describe(state: ActivityState, now: number, options: DescribeOptions): string {
   if (!state.running) return "";
-  const step = formatDuration(Math.max(0, now - state.phaseStartedAt));
-  const total = formatDuration(Math.max(0, now - state.startedAt));
-  let phase: string;
+  const { width, interruptKey, theme } = options;
+  if (width <= 0) return "";
+
+  let phase = "Thinking";
+  let detail = "";
   if (state.phase === "writing") {
-    phase = state.outputTokens > 0 ? `Writing ↓${state.outputTokens} ${step}` : `Writing ${step}`;
+    const rate = tokenRate(state, now);
+    phase = "Writing";
+    if (rate !== undefined) detail = `${rate} tok/s`;
   } else if (state.phase === "tool" && state.tools.length > 0) {
     const latest = state.tools[state.tools.length - 1];
     const others = state.tools.length - 1;
-    const label = [latest.name, latest.summary].filter((part) => part !== "").join(" ");
-    phase = `${label}${others > 0 ? ` +${others}` : ""} ${step}`;
-  } else {
-    phase = `Thinking ${step}`;
+    phase = latest.name;
+    detail = [latest.summary, others > 0 ? `+${others}` : ""].filter((part) => part !== "").join(" ");
   }
-  return `${phase} · ${total} · ${interruptKey} to stop`;
+
+  const rightPlain = `${formatDuration(Math.max(0, now - state.startedAt))} · ${interruptKey} to stop`;
+  const right = theme.fg("dim", rightPlain);
+  if (width <= visibleWidth(right)) return truncateToWidth(right, width, "…");
+
+  const left = theme.fg("text", phase) + (detail === "" ? "" : ` ${theme.fg("muted", detail)}`);
+  const available = width - visibleWidth(right) - COLUMN_GAP.length;
+  if (available <= 0) return right;
+  return `${truncateToWidth(left, available, "…")}${COLUMN_GAP}${right}`;
 }
