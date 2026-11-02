@@ -91,7 +91,7 @@ test("the collapsed failure keeps the last lines and counts the hidden ones", ()
 
 test("the script keeps every line, highlighted, and the options line", () => {
   const script = '// @options: {"timeout_ms": 60000}\ntext("hi");\n';
-  const lines = scriptLines(script, 40, theme);
+  const lines = scriptLines(script, 40);
   assert.equal(lines.length, 2);
   assert.equal(plain(lines)[0], '// @options: {"timeout_ms": 60000}');
   assert.equal(plain(lines)[1], 'text("hi");');
@@ -100,7 +100,7 @@ test("the script keeps every line, highlighted, and the options line", () => {
 
 test("a long script line wraps instead of being cut", () => {
   const long = `const value = "${"x".repeat(80)}";`;
-  const lines = plain(scriptLines(long, 40, theme));
+  const lines = plain(scriptLines(long, 40));
   assert.ok(lines.length > 1, lines.join("\n"));
   for (const line of lines) assert.ok(visibleWidth(line) <= 40, line);
 });

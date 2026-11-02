@@ -9,12 +9,6 @@ export function truncationLine(hidden: number, theme: Theme): string {
   return theme.fg("dim", `… ${hidden} more line${hidden === 1 ? "" : "s"} · click to expand`);
 }
 
-/** The whole body when it fits or when expanded; otherwise its head plus the truncation line. */
-export function previewLines(lines: string[], expanded: boolean, theme: Theme, limit = PREVIEW_LINES): string[] {
-  if (expanded || lines.length <= limit) return lines;
-  return [...lines.slice(0, limit), truncationLine(lines.length - limit, theme)];
-}
-
 /** Index of the first added or removed line in Pi's diff text, which renders as ` 1 ctx`, `-2 old`, `+2 new`. */
 export function firstChange(diffText: string): number {
   return Math.max(

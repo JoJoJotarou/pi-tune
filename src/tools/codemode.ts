@@ -96,7 +96,7 @@ export function errorTail(output: string[], limit: number): { lines: string[]; h
 }
 
 /** The whole script, highlighted, wrapped so no line is wider than `width`. */
-export function scriptLines(code: string, width: number, theme: Theme): string[] {
+export function scriptLines(code: string, width: number): string[] {
   const source = code.replace(/\n$/, "");
   const plain = source.split("\n");
   const highlighted = highlightCode(source, "javascript");
@@ -140,7 +140,7 @@ export function codemodeBody(
   theme: Theme,
 ): string[] {
   const sections = [
-    scriptLines(code, width, theme),
+    scriptLines(code, width),
     callLines(calls, width, theme),
     output.map((line) => truncateToWidth(line, width, "…")),
   ].filter((section) => section.length > 0);

@@ -12,15 +12,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
-import {
-  bashCommandLines,
-  diffMeta,
-  firstChange,
-  PREVIEW_LINES,
-  previewLines,
-  trimOutput,
-  truncationLine,
-} from "./body.ts";
+import { bashCommandLines, diffMeta, firstChange, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
 import {
   codemodeBody,
   codemodeCalls,

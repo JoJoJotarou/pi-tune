@@ -2,15 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import {
-  bashCommandLines,
-  diffCounts,
-  diffMeta,
-  firstChange,
-  previewLines,
-  trimOutput,
-  truncationLine,
-} from "./body.ts";
+import { bashCommandLines, diffCounts, diffMeta, firstChange, trimOutput, truncationLine } from "./body.ts";
 
 const theme = testTheme();
 
@@ -24,20 +16,6 @@ test("the truncation line says exactly how much is hidden and never names a key"
   assert.equal(stripTerminalSequences(many), "… 27 more lines · click to expand");
   assert.equal(stripTerminalSequences(truncationLine(1, theme)), "… 1 more line · click to expand");
   assert.ok(!many.includes("ctrl+o"));
-});
-
-test("previewLines shows everything that fits and folds the rest to three lines", () => {
-  const three = ["a", "b", "c"];
-  assert.deepEqual(previewLines(three, false, theme), three);
-
-  const five = ["a", "b", "c", "d", "e"];
-  assert.deepEqual(previewLines(five, true, theme), five);
-  assert.deepEqual(previewLines(five, false, theme).map(stripTerminalSequences), [
-    "a",
-    "b",
-    "c",
-    "… 2 more lines · click to expand",
-  ]);
 });
 
 test("diffCounts counts Pi's diff lines into additions and removals", () => {
