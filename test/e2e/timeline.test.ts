@@ -137,6 +137,18 @@ test("the rail ticks jump between prompts", { timeout: 180_000 }, async () => {
     pi.move(cols - 1, 0);
     await pi.waitForGone("third question");
 
+    // The card sits directly left of the rail, so a sideways step onto it hides it at once.
+    pi.move(cols - 1, marks.ticks[2]);
+    await pi.waitFor("third question");
+    pi.move(cols - 3, marks.ticks[2]);
+    await pi.waitForGone("third question", 1000);
+
+    // A single step past the card leaves no overlay to tell; the idle timer hides it.
+    pi.move(cols - 1, marks.ticks[2]);
+    await pi.waitFor("third question");
+    pi.move(10, marks.ticks[2]);
+    await pi.waitForGone("third question", 2500);
+
     // A wheel over the rail scrolls the transcript natively.
     const before = rowOf(pi, "15. answer 1 line 15");
     assert.ok(before > 0, `answer line not visible\n${pi.screen().join("\n")}`);

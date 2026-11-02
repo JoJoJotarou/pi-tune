@@ -141,13 +141,30 @@ test("hover card sits left of the rail, centered on the tick and clamped to the 
   const middle = hoverCardState("a question", 10, 100, 30);
   assert.ok(middle);
   assert.equal(middle.width, "a question".length + 4);
-  assert.equal(middle.col, 100 - 2 - middle.width - 1);
+  assert.equal(middle.col, 100 - 2 - middle.width);
   assert.equal(middle.row, 10 - 1);
 
   const top = hoverCardState("a question", 0, 100, 30);
   assert.equal(top?.row, 0);
   const bottom = hoverCardState("a question", 29, 100, 30);
   assert.equal(bottom?.row, 30 - 3);
+});
+
+test("the hover card hides itself when the pointer reaches it", () => {
+  const card = new TimelineHoverCard(() => testTheme("dark"));
+  const state = hoverCardState("a question", 10, 100, 30);
+  assert.ok(state);
+  let dismissed = 0;
+  card.onDismiss = () => dismissed++;
+  card.show(state);
+
+  assert.deepEqual(card.handleMouse(mouse({ type: "move", button: "none" })), { handled: true, render: true });
+  assert.deepEqual(card.render(state.width), []);
+  assert.equal(dismissed, 1);
+
+  card.show(state);
+  assert.equal(card.handleMouse(mouse({ type: "wheel", button: "none", wheelDelta: -1 })), undefined);
+  assert.deepEqual(card.render(state.width), []);
 });
 
 test("the hover card renders a rounded frame no wider than its width", () => {

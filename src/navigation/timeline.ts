@@ -28,6 +28,8 @@ const CHEVRON_DOWN = "▾";
 const CARD_BORDER = 2;
 const CARD_PADDING = 2;
 const MAX_CARD_LINES = 2;
+/** Idle time after the last pointer event before a tick drops its preview. */
+const HOVER_HIDE_MS = 2000;
 
 export function promptLabel(index: number, text: string): string {
   return `${index + 1}  ${truncateToWidth(text.replace(/\s+/g, " "), 60)}`;
@@ -181,13 +183,15 @@ export function hoverCardState(
     lines,
     width,
     row: Math.min(Math.max(0, tickRow - Math.floor(height / 2)), Math.max(0, rows - height)),
-    col: Math.max(0, columns - RAIL_WIDTH - width - 1),
+    col: Math.max(0, columns - RAIL_WIDTH - width),
   };
 }
 
 /** Floating prompt preview; the overlay options are mutated in place and read on every render. */
 export class TimelineHoverCard implements Component {
   readonly options: OverlayOptions;
+  /** Called when the pointer reaches the card, so the rail drops the tick it was previewing. */
+  onDismiss: (() => void) | undefined;
   private state: HoverCardState | undefined;
   private readonly getTheme: () => Theme;
 
@@ -219,6 +223,13 @@ export class TimelineHoverCard implements Component {
     return frame(state.lines, width, this.getTheme(), { color: "border" });
   }
 
+  /** The pointer left the rail onto the card: drop the preview, but let a wheel scroll Pi's transcript. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    this.hide();
+    this.onDismiss?.();
+    return event.type === "wheel" ? undefined : { handled: true, render: true };
+  }
+
   invalidate(): void {}
 }
 
@@ -234,6 +245,7 @@ export class TimelineRail implements Component {
   private readonly card: TimelineHoverCard | undefined;
   private hovered: TimelineHit | undefined;
   private disabled = false;
+  private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   /** Layout computed by `visible()` (or by the last render) and reused by the next render in the same frame. */
   private layoutCache: Layout | undefined;
 
@@ -242,6 +254,7 @@ export class TimelineRail implements Component {
     this.getTheme = getTheme;
     this.onError = onError;
     this.card = card;
+    if (card) card.onDismiss = () => this.clearHover();
   }
 
   private layout(): Layout | undefined {
@@ -264,7 +277,7 @@ export class TimelineRail implements Component {
   private disable(error: Error): void {
     if (this.disabled) return;
     this.disabled = true;
-    this.card?.hide();
+    this.resetHover();
     this.onError(error);
   }
 
@@ -274,8 +287,7 @@ export class TimelineRail implements Component {
     const layout = this.tui.terminal.columns >= MIN_TERMINAL_WIDTH ? this.layout() : undefined;
     if (!layout) {
       this.layoutCache = undefined;
-      this.hovered = undefined;
-      this.card?.hide();
+      this.resetHover();
       return false;
     }
     this.layoutCache = layout;
@@ -299,6 +311,35 @@ export class TimelineRail implements Component {
     const state = hit?.kind === "tick" ? this.cardState(layout, hit.index) : undefined;
     if (state) this.card?.show(state);
     else this.card?.hide();
+    this.armHoverTimer();
+  }
+
+  private resetHover(): void {
+    this.clearHoverTimer();
+    this.hovered = undefined;
+    this.card?.hide();
+  }
+
+  private clearHover(): void {
+    this.resetHover();
+    this.tui.requestRender();
+  }
+
+  /** A fast pointer can skip the cells between the rail and the card, so an idle tick drops its preview. */
+  private armHoverTimer(): void {
+    this.clearHoverTimer();
+    if (this.hovered?.kind !== "tick") return;
+    const timer = setTimeout(() => {
+      this.hoverTimer = undefined;
+      this.clearHover();
+    }, HOVER_HIDE_MS);
+    (timer as { unref?: () => void }).unref?.();
+    this.hoverTimer = timer;
+  }
+
+  private clearHoverTimer(): void {
+    if (this.hoverTimer !== undefined) clearTimeout(this.hoverTimer);
+    this.hoverTimer = undefined;
   }
 
   render(width: number): string[] {
@@ -322,11 +363,7 @@ export class TimelineRail implements Component {
     if (this.disabled) return undefined;
     // A wheel over the rail scrolls the transcript natively.
     if (event.type === "wheel") {
-      if (this.hovered) {
-        this.hovered = undefined;
-        this.card?.hide();
-        this.tui.requestRender();
-      }
+      if (this.hovered) this.clearHover();
       return undefined;
     }
 
@@ -336,8 +373,12 @@ export class TimelineRail implements Component {
     const hit = hitTest(layout.geometry, event.y);
 
     if (event.type === "move") {
-      const changed = !sameHit(hit, this.hovered);
-      if (changed) this.setHovered(layout, hit);
+      // While a press is held Pi keeps routing moves here even outside the rail; those are a leave.
+      const inside = event.x >= 0 && event.x < RAIL_WIDTH;
+      const next = inside ? hit : undefined;
+      const changed = !sameHit(next, this.hovered);
+      if (changed) this.setHovered(layout, next);
+      else this.armHoverTimer();
       return { handled: true, render: changed };
     }
 
@@ -348,6 +389,7 @@ export class TimelineRail implements Component {
       return { handled: true };
     }
 
+    this.armHoverTimer();
     return { handled: true };
   }
 
