@@ -29,6 +29,8 @@ export interface StartOptions {
   rows?: number;
   tune?: boolean;
   settings?: Record<string, unknown>;
+  /** Extra extension files, loaded with `-e` after pi-tune; relative paths resolve against the project dir. */
+  extensions?: string[];
 }
 
 export interface PiSession {
@@ -154,6 +156,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     fauxExtension,
   ];
   if (options.tune ?? true) args.push("-e", repoRoot);
+  for (const extension of options.extensions ?? []) args.push("-e", resolve(projectDir, extension));
   args.push("--provider", "faux", "--model", "scripted");
 
   const env = Object.fromEntries(
@@ -173,6 +176,11 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     queue = queue.then(() => new Promise<void>((done) => term.write(data, done)));
   });
 
+  let exited = false;
+  pty.onExit(() => {
+    exited = true;
+  });
+
   async function settledScreen(): Promise<string[]> {
     await queue;
     return readScreen();
@@ -188,9 +196,10 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     for (;;) {
       const current = await settledScreen();
       if (matches(current.join("\n"), text) !== gone) return;
-      if (Date.now() >= deadline) {
+      if (exited || Date.now() >= deadline) {
+        const reason = exited ? "Pi exited" : `timed out after ${timeoutMs}ms`;
         throw new Error(
-          `${gone ? "waitForGone" : "waitFor"} timed out after ${timeoutMs}ms: ${String(text)}\n--- screen ---\n${current.join("\n")}`,
+          `${gone ? "waitForGone" : "waitFor"} ${reason}: ${String(text)}\n--- screen ---\n${current.join("\n")}`,
         );
       }
       await sleep(50);

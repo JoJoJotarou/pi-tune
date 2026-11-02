@@ -59,6 +59,7 @@ export default function (pi: ExtensionAPI) {
           });
         },
       });
+      pi.events.emit("pi-tune:editor-ready", undefined);
       return editor;
     });
   });

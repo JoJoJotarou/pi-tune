@@ -5,7 +5,20 @@ export interface HintKeys {
   followUp: string;
 }
 
-export function hintFor(state: HintState, keys: HintKeys): string {
-  if (state === "idle") return "/ commands · @ files · ! shell · ctrl+s stash · alt+o view";
-  return `${keys.interrupt} stop · enter steer · ${keys.followUp} queue · alt+o view`;
+/** Which optional extensions are loaded, so their keys are only advertised when they work. */
+export interface HintAvailability {
+  stash: boolean;
+  view: boolean;
+}
+
+export function hintFor(state: HintState, keys: HintKeys, available: HintAvailability): string {
+  const hints: string[] = [];
+  if (state === "idle") {
+    hints.push("/ commands", "@ files", "! shell");
+    if (available.stash) hints.push("ctrl+s stash");
+  } else {
+    hints.push(`${keys.interrupt} stop`, "enter steer", `${keys.followUp} queue`);
+  }
+  if (available.view) hints.push("alt+o view");
+  return hints.join(" · ");
 }

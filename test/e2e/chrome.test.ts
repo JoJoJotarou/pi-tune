@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 import test from "node:test";
 import { type Scenario, startPi } from "./harness.ts";
 
@@ -59,4 +60,33 @@ test("Pi without pi-tune keeps its built-in chrome", { timeout: 180_000 }, async
   } finally {
     await pi.close();
   }
+});
+
+test("chrome alone advertises no disabled keys", { timeout: 180_000 }, async () => {
+  const chrome = resolve(import.meta.dirname, "../../extensions/chrome.ts");
+  const pi = await startPi({ scenario: scenario(), cols: 100, rows: 30, tune: false, extensions: [chrome] });
+  try {
+    await pi.waitFor("/ commands");
+    const screen = pi.screen().join("\n");
+    assert.equal(screen.includes("stash"), false, screen);
+    assert.equal(screen.includes("view"), false, screen);
+    await pi.shot("chrome-no-disabled-keys");
+  } finally {
+    await pi.close();
+  }
+});
+
+// Pi prints extension load failures and exits before its TUI starts, so pi-tune's header cannot hide them.
+test("extension load errors stay visible", { timeout: 180_000 }, async () => {
+  const broken: Scenario = {
+    files: {
+      "README.md": "# demo\n",
+      "broken.ts": 'export default function () {\n  throw new Error("pi-tune e2e load failure");\n}\n',
+    },
+    turns: [[{ text: "ready" }]],
+  };
+  await assert.rejects(
+    startPi({ scenario: broken, cols: 100, rows: 30, extensions: ["broken.ts"] }),
+    /Pi exited[\s\S]*Failed to load extension[\s\S]*pi-tune e2e load failure/,
+  );
 });

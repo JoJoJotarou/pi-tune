@@ -16,7 +16,13 @@ function displayPath(cwd: string): string {
 
 export default function (pi: ExtensionAPI) {
   let running = false;
+  let stashReady = false;
   let tui: TUI | undefined;
+
+  pi.events.on("pi-tune:editor-ready", () => {
+    stashReady = true;
+    tui?.requestRender();
+  });
 
   pi.on("agent_start", () => {
     running = true;
@@ -58,13 +64,20 @@ export default function (pi: ExtensionAPI) {
           }
 
           const totalInput = input + cacheRead;
+          const viewReady = pi
+            .getCommands()
+            .some((command) => command.name === "view" && command.source === "extension");
           const parts: FooterParts = {
             path,
             branch: footerData.getGitBranch() ?? undefined,
-            hints: hintFor(running ? "running" : "idle", {
-              interrupt: keyText("app.interrupt"),
-              followUp: keyText("app.message.followUp"),
-            }),
+            hints: hintFor(
+              running ? "running" : "idle",
+              {
+                interrupt: keyText("app.interrupt"),
+                followUp: keyText("app.message.followUp"),
+              },
+              { stash: stashReady, view: viewReady },
+            ),
             tokens: { input, output },
             cachePercent: totalInput > 0 ? (cacheRead / totalInput) * 100 : null,
             cost,

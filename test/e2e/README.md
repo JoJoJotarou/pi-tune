@@ -30,6 +30,10 @@ try {
 `press`, `paste`, `click`, and `clickText` drive the keyboard and mouse. `waitFor`/`waitForGone` default to
 20 s and throw with a screen dump on timeout. `shot(name)` is a no-op unless `PI_TUNE_SHOTS` is set.
 
+`extensions: ["broken.ts"]` loads extra extension files with `-e` after the pi-tune package. Relative paths
+resolve against the scenario's project dir, so `files` can ship the extension; `tune: false` plus an absolute
+path loads one pi-tune extension alone.
+
 ## Run
 
 ```sh
