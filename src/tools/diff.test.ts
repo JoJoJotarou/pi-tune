@@ -340,7 +340,7 @@ test("a pure deletion drops rows and marks nothing before the first region", asy
   const hunks = await hunksFor("delete.ts", DELETE_TS, [{ oldText: "  step: 2,\n", newText: "" }]);
   const lines = plain(render(hunks, { path: "delete.ts", width: 100 }));
 
-  assert.deepEqual(lines, ["3 3 │   max: 10,", "4   │-  step: 2,", "5 5 │ };"]);
+  assert.deepEqual(lines, ["3 3 │   max: 10,", "4   │-  step: 2,", "5 4 │ };"]);
   assert.ok(
     lines.every((line) => !line.startsWith("┄")),
     "no marker before the first or after the last region",
@@ -360,7 +360,7 @@ test("a pure insertion adds rows with only the new number", async () => {
   assert.deepEqual(lines, [
     "1 1 │ function greet(name) {",
     "  2 │+  const trimmed = name.trim();",
-    "3 3 │   return `hello ${name}`;",
+    "2 3 │   return `hello ${name}`;",
   ]);
   assert.ok(
     lines.every((line) => !line.includes("│-")),
