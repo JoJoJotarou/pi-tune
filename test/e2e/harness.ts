@@ -51,6 +51,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 const sdkDir = join(repoRoot, "node_modules/@earendil-works/pi-coding-agent");
 const piCli = join(sdkDir, JSON.parse(readFileSync(join(sdkDir, "package.json"), "utf8")).bin.pi);
 const fauxExtension = join(import.meta.dirname, "faux-provider.ts");
+const HOST_TERMINAL_ENV = /^(TERM_PROGRAM|KITTY_|GHOSTTY_|ITERM_|WEZTERM_|LC_TERMINAL|TMUX)/;
 
 const KEYS: Record<string, string> = {
   enter: "\r",
@@ -160,14 +161,24 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
   args.push("--provider", "faux", "--model", "scripted");
 
   const env = Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && !HOST_TERMINAL_ENV.test(entry[0]),
+    ),
   );
   const pty = spawn(process.execPath, args, {
     name: "xterm-256color",
     cols,
     rows,
     cwd: projectDir,
-    env: { ...env, COLORTERM: "truecolor", PI_CODING_AGENT_DIR: agentDir, PI_TUNE_SCENARIO: scenarioPath },
+    env: {
+      ...env,
+      // Pi detects terminal features (OSC 8 links, image protocols) from these; @xterm/headless is the emulator
+      // behind VS Code's terminal, so name that instead of whatever terminal runs the tests.
+      TERM_PROGRAM: "vscode",
+      COLORTERM: "truecolor",
+      PI_CODING_AGENT_DIR: agentDir,
+      PI_TUNE_SCENARIO: scenarioPath,
+    },
   });
   const term = new xterm.Terminal({ cols, rows, allowProposedApi: true });
 
