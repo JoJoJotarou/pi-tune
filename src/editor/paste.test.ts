@@ -6,12 +6,14 @@ test("finds line and character paste markers at the cursor", () => {
   const lines = "before [paste #1 +28 lines] after";
   assert.deepEqual(markerAt(lines, 7), { id: 1, start: 7, end: 27 });
   assert.deepEqual(markerAt(lines, 26), { id: 1, start: 7, end: 27 });
-  assert.deepEqual(markerAt(lines, 27), { id: 1, start: 7, end: 27 });
+  assert.equal(markerAt(lines, 27), undefined);
   assert.equal(markerAt(lines, 6), undefined);
   assert.equal(markerAt(lines, 28), undefined);
 
   const chars = "x [paste #4 512 chars]";
   assert.deepEqual(markerAt(chars, 4), { id: 4, start: 2, end: 22 });
+  assert.deepEqual(markerAt(chars, 21), { id: 4, start: 2, end: 22 });
+  assert.equal(markerAt(chars, 22), undefined);
 });
 
 test("replaces and removes only the requested paste marker", () => {
