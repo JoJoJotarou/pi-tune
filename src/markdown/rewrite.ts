@@ -1,62 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
-import type { Token, Tokens } from "marked";
-import { Lexer } from "marked";
-
-interface Edit {
-  start: number;
-  end: number;
-  text: string;
-}
-
-type Visitor = (token: Token, start: number, end: number) => boolean | undefined;
-
-interface Child {
-  tokens: Token[];
-  source: string;
-  base: number;
-}
-
-const SKIP = new Set(["code", "codespan", "html"]);
-
-function childrenOf(token: Token, start: number): Child[] {
-  if (token.type === "list") {
-    return [{ tokens: (token as Tokens.List).items, source: token.raw, base: start }];
-  }
-  if (token.type === "table") {
-    const table = token as Tokens.Table;
-    const cells = [...table.header, ...table.rows.flat()];
-    return [{ tokens: cells.flatMap((cell) => cell.tokens), source: table.raw, base: start }];
-  }
-  const nested = (token as { tokens?: Token[] }).tokens;
-  return nested ? [{ tokens: nested, source: token.raw, base: start }] : [];
-}
-
-/** Walk tokens in document order, giving each one its absolute span in `source`. */
-function walk(tokens: Token[], source: string, base: number, visit: Visitor): void {
-  let cursor = 0;
-  for (const token of tokens) {
-    const index = source.indexOf(token.raw, cursor);
-    const offset = index === -1 ? cursor : index;
-    cursor = offset + token.raw.length;
-    if (SKIP.has(token.type)) continue;
-    const start = base + offset;
-    if (visit(token, start, start + token.raw.length)) continue;
-    for (const child of childrenOf(token, start)) walk(child.tokens, child.source, child.base, visit);
-  }
-}
-
-function applyEdits(source: string, edits: readonly Edit[]): string {
-  const ordered = [...edits].sort((a, b) => a.start - b.start || a.end - b.end);
-  let out = "";
-  let cursor = 0;
-  for (const edit of ordered) {
-    if (edit.start < cursor) continue;
-    out += source.slice(cursor, edit.start) + edit.text;
-    cursor = edit.end;
-  }
-  return out + source.slice(cursor);
-}
+import { type Token, type Tokens, visibleWidth } from "@earendil-works/pi-tui";
+import { applyEdits, type Edit, lex, walk } from "./tokens.ts";
 
 function plainText(tokens: readonly Token[]): string {
   let out = "";
@@ -115,7 +59,7 @@ function linkDomain(link: Tokens.Link): string | undefined {
 
 export function rewriteHeadings(markdown: string): string {
   const edits: Edit[] = [];
-  walk(Lexer.lex(markdown), markdown, 0, (token, start, end) => {
+  walk(lex(markdown), markdown, 0, (token, start, end) => {
     if (token.type !== "heading") return;
     const heading = token as Tokens.Heading;
     if (heading.depth < 3) return;
@@ -132,7 +76,7 @@ export function rewriteHeadings(markdown: string): string {
 
 export function appendLinkDomains(markdown: string, theme: Theme): string {
   const edits: Edit[] = [];
-  walk(Lexer.lex(markdown), markdown, 0, (token, _start, end) => {
+  walk(lex(markdown), markdown, 0, (token, _start, end) => {
     if (token.type !== "link") return;
     const host = linkDomain(token as Tokens.Link);
     if (!host) return;
@@ -144,7 +88,7 @@ export function appendLinkDomains(markdown: string, theme: Theme): string {
 
 export function tablesToLists(markdown: string, availableWidth: number): string {
   const edits: Edit[] = [];
-  walk(Lexer.lex(markdown), markdown, 0, (token, start, end) => {
+  walk(lex(markdown), markdown, 0, (token, start, end) => {
     if (token.type !== "table") return;
     const table = token as Tokens.Table;
     if (tableWidth(table) <= availableWidth) return true;
