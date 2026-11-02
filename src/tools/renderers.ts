@@ -21,12 +21,21 @@ import {
   trimOutput,
   truncationLine,
 } from "./body.ts";
+import {
+  codemodeBody,
+  codemodeCalls,
+  codemodeMeta,
+  codemodeSummary,
+  errorTail,
+  scriptOutput,
+  scriptToolNames,
+} from "./codemode.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
 import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
-const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
+const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls", "codemode"]);
 
 /** Body lines start under the tool name: the header is indented by `outputPad`, the body by two more. */
 const BODY_INDENT = 2;
@@ -110,6 +119,10 @@ function summaryFor(toolName: string, rawArgs: unknown): string {
     }
     case "ls":
       return stringArg(args, "path") ?? ".";
+    case "codemode": {
+      const code = stringArg(args, "code");
+      return code === undefined ? "" : scriptToolNames(code).join(", ");
+    }
     default:
       return "";
   }
@@ -138,12 +151,13 @@ class HeaderComponent implements Component {
 
   render(width: number): string[] {
     const meta = this.context.state.meta;
+    const summary = this.context.state.summary;
     return [
       renderHeader(
         {
           status: toolStatus(this.context),
           name: this.toolName,
-          summary: this.summary,
+          summary: typeof summary === "string" ? summary : this.summary,
           meta: typeof meta === "string" ? meta : undefined,
           durationMs: this.context.durationMs,
         },
@@ -269,8 +283,27 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
       new HeaderBoxComponent(new HeaderComponent(toolName, summaryFor(toolName, args), theme, context), theme, context),
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
-      context.state.meta = resultMeta(toolName, context.args, result, context.isError, output);
       const expanded = options.expanded;
+
+      if (toolName === "codemode") {
+        const code = stringArg(textArgs(context.args), "code") ?? "";
+        const calls = codemodeCalls(result.details);
+        const lines = scriptOutput(output);
+        context.state.summary = codemodeSummary(code, calls);
+        context.state.meta = codemodeMeta(calls);
+        return new BodyBoxComponent(
+          (width) => {
+            if (expanded) return codemodeBody(code, calls, lines, width, theme);
+            if (toolStatus(context) !== "error") return [];
+            const tail = errorTail(lines, FAILURE_LINES);
+            return tail.hidden > 0 ? [...tail.lines, truncationLine(tail.hidden, theme)] : tail.lines;
+          },
+          theme,
+          context,
+        );
+      }
+
+      context.state.meta = resultMeta(toolName, context.args, result, context.isError, output);
 
       if (toolName === "edit") {
         if (context.isError) return new BodyBoxComponent(errorSource(output, theme), theme, context);
