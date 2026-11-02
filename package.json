@@ -1,0 +1,40 @@
+{
+  "name": "pi-tune",
+  "version": "0.1.0",
+  "description": "Tune Pi Agent's interactive TUI",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/*.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "fix": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "smoke": "node scripts/smoke.mjs",
+    "ci": "npm run lint && npm run typecheck && npm test && npm run smoke"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}
