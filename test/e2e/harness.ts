@@ -28,6 +28,7 @@ export interface StartOptions {
   cols?: number;
   rows?: number;
   tune?: boolean;
+  codemode?: boolean;
   settings?: Record<string, unknown>;
 }
 
@@ -155,6 +156,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     fauxExtension,
   ];
   if (options.tune ?? true) args.push("-e", repoRoot);
+  if (options.codemode) args.push("-e", "builtin:codemode");
   args.push("--provider", "faux", "--model", "scripted");
 
   const env = Object.fromEntries(
