@@ -55,6 +55,8 @@ test("working line shows Writing while the model streams the answer", { timeout:
   try {
     pi.type("write\r");
     await pi.waitFor(/Writing.*to stop/);
+    await new Promise((done) => setTimeout(done, 1500));
+    assert.match(pi.screen().join("\n"), /Writing.*to stop/);
     await pi.shot("status-writing");
   } finally {
     await pi.close();
