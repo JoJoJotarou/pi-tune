@@ -7,9 +7,9 @@ import { StickyBar, stickyPrompt, stickyRows } from "./sticky.ts";
 
 initTheme("dark", false);
 
-function stickyTui(columns: number) {
+function stickyTui(columns: number, questions = ["first question"]) {
   const chat: { children: Component[]; render: () => string[] } = {
-    children: [new UserMessageComponent("first question")],
+    children: questions.map((question) => new UserMessageComponent(question)),
     render: () => [],
   };
   const document = {
@@ -110,18 +110,26 @@ test("cuts a long prompt with an ellipsis instead of overflowing", () => {
   assert.ok(plain(rows[3]).trimEnd().endsWith("…"), JSON.stringify(plain(rows[3])));
 });
 
-test("leaves the rail columns free", () => {
-  const bar = new StickyBar(
-    stickyTui(80) as never,
-    () => testTheme("dark"),
-    () => {},
-  );
+const twoQuestions = ["first question", "second question"];
 
-  const lines = bar.render(80);
+for (const [columns, questions, width] of [
+  [80, twoQuestions, 78],
+  [50, twoQuestions, 49],
+  [80, ["first question"], 79],
+] as const) {
+  test(`leaves the rail or scrollbar columns free (${columns} columns, ${questions.length} prompts)`, () => {
+    const bar = new StickyBar(
+      stickyTui(columns, [...questions]) as never,
+      () => testTheme("dark"),
+      () => {},
+    );
 
-  assert.equal(lines.length, 3);
-  for (const line of lines) assert.equal(visibleWidth(line), 78);
-});
+    const lines = bar.render(columns);
+
+    assert.equal(lines.length, 3);
+    for (const line of lines) assert.equal(visibleWidth(line), width);
+  });
+}
 
 test("renders with the theme current at render time", () => {
   const themes = [testTheme("dark"), testTheme("light")];
