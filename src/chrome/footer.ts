@@ -12,7 +12,7 @@ export interface FooterStats {
   contextPercent: number | null;
   contextWindow: number;
   autoCompact: boolean;
-  /** Output tokens of the last finished assistant message per streaming second. */
+  /** Output tokens per second of the streaming or last finished assistant message. */
   rate?: number;
 }
 
@@ -33,6 +33,17 @@ export function compactNumber(count: number): string {
   if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
   if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   return `${Math.round(count / 1_000_000)}M`;
+}
+
+/**
+ * Output tokens per second since the first text or thinking token, or `undefined` before one second
+ * of streaming or before any token.
+ */
+export function streamRate(outputTokens: number, startedAt: number, now: number): number | undefined {
+  if (startedAt <= 0 || outputTokens <= 0) return undefined;
+  const elapsedMs = now - startedAt;
+  if (elapsedMs < 1000) return undefined;
+  return Math.round(outputTokens / (elapsedMs / 1000));
 }
 
 export interface StatsOptions {

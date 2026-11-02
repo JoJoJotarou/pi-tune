@@ -1,8 +1,8 @@
 import { basename } from "node:path";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, type SessionEntry, VERSION } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { type FooterParts, type FooterStats, footerLine } from "../src/chrome/footer.ts";
+import { type FooterParts, type FooterStats, footerLine, streamRate } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
 import { formatHints, hintFor } from "../src/chrome/hints.ts";
 
@@ -50,8 +50,27 @@ export default function (pi: ExtensionAPI) {
   let running = false;
   let stashReady = false;
   let tui: TUI | undefined;
+  /** First text or thinking token of the streaming message, cleared when it ends. */
   let streamStartedAt: number | undefined;
+  /** Output tokens of the streaming message, from its partial usage. */
+  let streamOutputTokens = 0;
+  /** Final rate of the last finished message, shown until the next one streams. */
   let rate: number | undefined;
+
+  /** Text and thinking tokens only; tool-call streaming does not start the clock. */
+  function isWriting(event: AssistantMessageEvent): boolean {
+    switch (event.type) {
+      case "thinking_start":
+      case "thinking_delta":
+      case "thinking_end":
+      case "text_start":
+      case "text_delta":
+      case "text_end":
+        return true;
+      default:
+        return false;
+    }
+  }
 
   pi.events.on("pi-tune:editor-ready", () => {
     stashReady = true;
@@ -61,6 +80,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", () => {
     running = true;
     streamStartedAt = undefined;
+    streamOutputTokens = 0;
     tui?.requestRender();
   });
 
@@ -71,17 +91,19 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("message_update", (event) => {
     if (event.message.role !== "assistant") return;
-    if (streamStartedAt === undefined) streamStartedAt = Date.now();
+    if (!isWriting(event.assistantMessageEvent)) return;
+    streamStartedAt ??= Date.now();
+    streamOutputTokens = event.message.usage.output;
+    tui?.requestRender();
   });
 
   pi.on("message_end", (event) => {
     if (event.message.role !== "assistant") return;
     const started = streamStartedAt;
     streamStartedAt = undefined;
+    streamOutputTokens = 0;
     if (started === undefined) return;
-    const seconds = (Date.now() - started) / 1000;
-    if (seconds <= 0) return;
-    rate = event.message.usage.output / seconds;
+    rate = streamRate(event.message.usage.output, started, Date.now());
     tui?.requestRender();
   });
 
@@ -91,6 +113,7 @@ export default function (pi: ExtensionAPI) {
     running = false;
     stashReady = false;
     streamStartedAt = undefined;
+    streamOutputTokens = 0;
     rate = undefined;
 
     ctx.ui.setHeader((_headerTui, theme) => ({
@@ -122,7 +145,7 @@ export default function (pi: ExtensionAPI) {
             contextPercent: context?.percent ?? null,
             contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
             autoCompact: settings.compaction?.enabled !== false,
-            rate,
+            rate: streamStartedAt === undefined ? rate : streamRate(streamOutputTokens, streamStartedAt, Date.now()),
           };
           const state = running ? (session.ui.getEditorText().trim() ? "busy-typing" : "busy-empty") : "idle";
           const hints = formatHints(hintFor(state, { stash: stashReady }), theme);
@@ -146,6 +169,7 @@ export default function (pi: ExtensionAPI) {
     running = false;
     stashReady = false;
     streamStartedAt = undefined;
+    streamOutputTokens = 0;
     rate = undefined;
     tui?.requestRender();
   });

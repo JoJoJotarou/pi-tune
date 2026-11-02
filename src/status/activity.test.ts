@@ -31,34 +31,19 @@ test("turn_start keeps the run timer", () => {
 test("streaming thinking stays Thinking", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "message_update", kind: "thinking", outputTokens: 12 }],
+    [t0 + 1000, { type: "message_update", kind: "thinking" }],
   ]);
   assert.equal(line(state, t0 + 2000), "Thinking   2.0s · esc to stop");
 });
 
-test("Writing has no rate before a full second of writing", () => {
+test("Writing shows only the phase name, never the token rate", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "message_update", kind: "text", outputTokens: 10 }],
+    [t0 + 1000, { type: "message_update", kind: "text" }],
+    [t0 + 3000, { type: "message_update", kind: "text" }],
   ]);
-  assert.equal(line(state, t0 + 1500), "Writing   1.5s · esc to stop");
-});
-
-test("Writing shows the token rate of the current message", () => {
-  const state = run([
-    [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "message_update", kind: "text", outputTokens: 96 }],
-  ]);
-  assert.equal(line(state, t0 + 3000), "Writing 48 tok/s   3.0s · esc to stop");
-});
-
-test("message_update updates the token count used by the rate", () => {
-  const state = run([
-    [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "message_update", kind: "text", outputTokens: 20 }],
-    [t0 + 3000, { type: "message_update", kind: "text", outputTokens: 90 }],
-  ]);
-  assert.equal(line(state, t0 + 3000), "Writing 45 tok/s   3.0s · esc to stop");
+  assert.equal(line(state, t0 + 3000), "Writing   3.0s · esc to stop");
+  assert.equal(line(state, t0 + 4000).includes("tok/s"), false);
 });
 
 test("a running tool shows name and first command line", () => {
@@ -109,11 +94,11 @@ test("colors come from the theme: phase text, detail muted, total dim", () => {
 
   const writing = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "message_update", kind: "text", outputTokens: 96 }],
+    [t0 + 1000, { type: "message_update", kind: "text" }],
   ]);
   assert.equal(
     describe(writing, t0 + 3000, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "Writing")} ${theme.fg("muted", "48 tok/s")}   ${theme.fg("dim", "3.0s · esc to stop")}`,
+    `${theme.fg("text", "Writing")}   ${theme.fg("dim", "3.0s · esc to stop")}`,
   );
 });
 

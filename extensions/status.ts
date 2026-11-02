@@ -7,18 +7,16 @@ import { sendNotification, shouldNotify } from "../src/status/notify.ts";
 
 const REFRESH_MS = 250;
 
-function messageProgress(
-  event: AssistantMessageEvent,
-): { kind: "thinking" | "text"; outputTokens: number } | undefined {
+function messageProgress(event: AssistantMessageEvent): "thinking" | "text" | undefined {
   switch (event.type) {
     case "thinking_start":
     case "thinking_delta":
     case "thinking_end":
-      return { kind: "thinking", outputTokens: event.partial.usage.output };
+      return "thinking";
     case "text_start":
     case "text_delta":
     case "text_end":
-      return { kind: "text", outputTokens: event.partial.usage.output };
+      return "text";
     default:
       return undefined;
   }
@@ -79,8 +77,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("message_update", async (event) => {
-    const progress = messageProgress(event.assistantMessageEvent);
-    if (progress) apply({ type: "message_update", ...progress });
+    const kind = messageProgress(event.assistantMessageEvent);
+    if (kind) apply({ type: "message_update", kind });
   });
 
   pi.on("tool_execution_start", async (event) => {

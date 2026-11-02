@@ -62,6 +62,22 @@ test("busy chrome shows steer and follow-up only while text is typed", { timeout
   }
 });
 
+test("footer shows the live token rate while a message streams", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: scenario(30), cols: 100, rows: 30 });
+  try {
+    pi.type("write\r");
+    await pi.waitFor(/tok\/s/, 60_000);
+    const footer = pi.screen().find((line) => line.includes("tok/s")) ?? "";
+    assert.ok(footer.includes("%/"), footer);
+    assert.ok(footer.includes("(auto)"), footer);
+    const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
+    assert.equal(statusRow.includes("tok/s"), false, statusRow);
+    await pi.shot("footer-rate");
+  } finally {
+    await pi.close();
+  }
+});
+
 test("narrow chrome keeps the footer inside 40 columns", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: scenario(), cols: 40, rows: 30 });
   try {

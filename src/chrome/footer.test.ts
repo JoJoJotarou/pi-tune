@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { compactNumber, type FooterParts, type FooterStats, footerLine, formatStats } from "./footer.ts";
+import { compactNumber, type FooterParts, type FooterStats, footerLine, formatStats, streamRate } from "./footer.ts";
 
 const theme = testTheme("dark");
 
@@ -61,6 +61,15 @@ test("formatStats mirrors Pi's cache and context rules", () => {
   assert.equal(formatStats({ ...base, cacheRead: 1000 }), "R1.0k · ?/1.0M (auto)");
   assert.equal(formatStats({ ...base, cacheWrite: 500, cacheHitPercent: 50 }), "W500 CH50.0% · ?/1.0M (auto)");
   assert.equal(formatStats({ ...base, rate: 0 }), "?/1.0M (auto)");
+});
+
+test("streamRate shows the live rate only after a full second of writing", () => {
+  const t0 = 1_000_000;
+  assert.equal(streamRate(96, t0, t0 + 999), undefined);
+  assert.equal(streamRate(96, t0, t0 + 2000), 48);
+  assert.equal(streamRate(30, t0, t0 + 3000), 10);
+  assert.equal(streamRate(0, t0, t0 + 2000), undefined);
+  assert.equal(streamRate(96, 0, t0 + 2000), undefined);
 });
 
 test("compactNumber uses Pi's k and M thresholds", () => {
