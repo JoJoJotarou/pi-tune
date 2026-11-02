@@ -1,6 +1,6 @@
 import { UserMessageComponent } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { type FlipState, startFlip, updateFlip, userScrolled } from "../navigation/flip.ts";
+import { type FlipState, startFlip, updateFlip } from "../navigation/flip.ts";
 
 /**
  * Pi internals this module relies on, verified against Pi 1.4.0:
@@ -150,7 +150,7 @@ export class FlipSpacer implements Component {
       return [];
     }
     if (this.landed && this.tui.viewportTop !== flip.promptRow) {
-      this.flip = userScrolled(flip);
+      this.flip = undefined;
       this.padding = 0;
       this.landed = false;
       return [];

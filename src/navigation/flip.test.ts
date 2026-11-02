@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { startFlip, updateFlip, userScrolled } from "./flip.ts";
+import { startFlip, updateFlip } from "./flip.ts";
 
 test("a flip starts with enough padding to put the prompt at the viewport top", () => {
   const state = startFlip(10, 12, 30);
@@ -26,11 +26,4 @@ test("a chat that already fills the viewport starts done", () => {
   assert.equal(state.padding, 0);
   assert.equal(state.done, true);
   assert.equal(updateFlip(state, 60).done, true);
-});
-
-test("user scroll ends the flip without padding", () => {
-  const state = userScrolled(startFlip(10, 12, 30));
-
-  assert.equal(state.padding, 0);
-  assert.equal(state.done, true);
 });
