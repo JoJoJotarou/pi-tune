@@ -70,6 +70,15 @@ test("a fence inside a list item is folded in place", () => {
   assert.equal(fold(input), expected);
 });
 
+test("a fence in a blockquote is folded and every emitted line stays quoted", () => {
+  const lines = codeLines(21);
+  const input = ["> ```ts", ...lines.map((line) => `> ${line}`), "> ```", ""].join("\n");
+  const expected = ["> ```ts", ...lines.slice(0, 12).map((line) => `> ${line}`), "> ```", `> ${foldLine(9)}`, ""].join(
+    "\n",
+  );
+  assert.equal(fold(input), expected);
+});
+
 test("two long blocks in one message are both folded", () => {
   const first = codeLines(21).map((line) => line.replace("value", "alpha"));
   const second = codeLines(30).map((line) => line.replace("value", "beta"));

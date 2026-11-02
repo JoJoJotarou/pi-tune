@@ -1,4 +1,4 @@
-import { Marked, type Token } from "@earendil-works/pi-tui";
+import { Marked, type Token, type Tokens } from "@earendil-works/pi-tui";
 
 export interface Edit {
   start: number;
@@ -86,6 +86,28 @@ export function walk(tokens: Token[], source: string, from: number, visit: Visit
     if (visit(token, span.start, span.end)) continue;
     walk(childrenOf(token), source, span.start, visit);
   }
+}
+
+/**
+ * Build the edit that replaces a blockquote with its transformed inner text. A blockquote's children are
+ * lexed from `token.text`, which has the `> ` prefixes removed, so transforms must run on that text and
+ * the prefix must go back on every line they emit. Nested quotes recurse through the same helper because
+ * the inner text still carries them.
+ */
+export function transformBlockquote(
+  token: Token,
+  markdown: string,
+  start: number,
+  end: number,
+  transform: (markdown: string) => string,
+): Edit | undefined {
+  if (token.type !== "blockquote") return undefined;
+  const raw = markdown.slice(start, end);
+  const marker = /^[ \t]*>/.exec(raw)?.[0];
+  if (marker === undefined) return undefined;
+  const inner = transform((token as Tokens.Blockquote).text).replace(/\n+$/, "");
+  const lines = inner.split("\n").map((line) => (line === "" ? marker : `${marker} ${line}`));
+  return { start, end, text: lines.join("\n") + (raw.endsWith("\n") ? "\n" : "") };
 }
 
 export function applyEdits(source: string, edits: readonly Edit[]): string {

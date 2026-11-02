@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Tokens } from "@earendil-works/pi-tui";
-import { applyEdits, type Edit, lex, walk } from "./tokens.ts";
+import { applyEdits, type Edit, lex, transformBlockquote, walk } from "./tokens.ts";
 
 const MAX_LINES = 20;
 const KEEP_LINES = 12;
@@ -33,6 +33,11 @@ function foldBlock(block: string, theme: Theme): string | undefined {
 export function foldLongCode(markdown: string, theme: Theme): string {
   const edits: Edit[] = [];
   walk(lex(markdown), markdown, 0, (token, start, end) => {
+    if (token.type === "blockquote") {
+      const edit = transformBlockquote(token, markdown, start, end, (inner) => foldLongCode(inner, theme));
+      if (edit) edits.push(edit);
+      return true;
+    }
     if (token.type !== "code") return;
     const code = token as Tokens.Code;
     if (code.codeBlockStyle === "indented") return true;

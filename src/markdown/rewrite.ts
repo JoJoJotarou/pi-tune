@@ -1,6 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Token, type Tokens, visibleWidth } from "@earendil-works/pi-tui";
-import { applyEdits, type Edit, lex, walk } from "./tokens.ts";
+import { applyEdits, type Edit, lex, transformBlockquote, walk } from "./tokens.ts";
 
 function plainText(tokens: readonly Token[]): string {
   let out = "";
@@ -60,6 +60,11 @@ function linkDomain(link: Tokens.Link): string | undefined {
 export function rewriteHeadings(markdown: string): string {
   const edits: Edit[] = [];
   walk(lex(markdown), markdown, 0, (token, start, end) => {
+    if (token.type === "blockquote") {
+      const edit = transformBlockquote(token, markdown, start, end, rewriteHeadings);
+      if (edit) edits.push(edit);
+      return true;
+    }
     if (token.type !== "heading") return;
     const heading = token as Tokens.Heading;
     if (heading.depth < 3) return;
@@ -76,7 +81,12 @@ export function rewriteHeadings(markdown: string): string {
 
 export function appendLinkDomains(markdown: string, theme: Theme): string {
   const edits: Edit[] = [];
-  walk(lex(markdown), markdown, 0, (token, _start, end) => {
+  walk(lex(markdown), markdown, 0, (token, start, end) => {
+    if (token.type === "blockquote") {
+      const edit = transformBlockquote(token, markdown, start, end, (inner) => appendLinkDomains(inner, theme));
+      if (edit) edits.push(edit);
+      return true;
+    }
     if (token.type !== "link") return;
     const host = linkDomain(token as Tokens.Link);
     if (!host) return;
@@ -89,6 +99,11 @@ export function appendLinkDomains(markdown: string, theme: Theme): string {
 export function tablesToLists(markdown: string, availableWidth: number): string {
   const edits: Edit[] = [];
   walk(lex(markdown), markdown, 0, (token, start, end) => {
+    if (token.type === "blockquote") {
+      const edit = transformBlockquote(token, markdown, start, end, (inner) => tablesToLists(inner, availableWidth));
+      if (edit) edits.push(edit);
+      return true;
+    }
     if (token.type !== "table") return;
     const table = token as Tokens.Table;
     if (tableWidth(table) <= availableWidth) return true;
