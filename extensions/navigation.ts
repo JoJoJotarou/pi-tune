@@ -5,9 +5,9 @@ import { promptLabel, TimelineRail } from "../src/navigation/timeline.ts";
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;
   let disabledReason: string | undefined;
-  const disable = (reason: string, notify: (message: string, type: "warning") => void) => {
+  const disable = (reason: string, ui: { notify(message: string, type: "warning"): void }) => {
     disabledReason = reason;
-    notify(`pi-tune timeline disabled: ${reason}`, "warning");
+    ui.notify(`pi-tune timeline disabled: ${reason}`, "warning");
   };
 
   pi.on("session_start", async (_event, ctx) => {
@@ -18,7 +18,7 @@ export default function (pi: ExtensionAPI) {
         if (scrollable) {
           tuiRef = scrollable;
           const rail = new TimelineRail(scrollable, theme, (error) => {
-            if (disabledReason === undefined) disable(error.message, ctx.ui.notify);
+            if (disabledReason === undefined) disable(error.message, ctx.ui);
           });
           tui.showOverlay(rail, { anchor: "top-right", width: 1, nonCapturing: true });
         }
@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI) {
       }
       const transcript = collectPrompts(tui, tui.terminal.columns);
       if (transcript instanceof Error) {
-        disable(transcript.message, ctx.ui.notify);
+        disable(transcript.message, ctx.ui);
         return;
       }
       const labels = transcript.prompts.map((prompt, index) => promptLabel(index, prompt.text));
