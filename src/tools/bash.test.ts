@@ -69,3 +69,10 @@ test("failureExcerpt leaves Pi's exit-code trailer out of the output", async () 
   assert.equal(lines[2], "┄ 15 lines folded · ctrl+o");
   assert.ok(!lines.some((line) => line.includes("Command exited")));
 });
+
+test("failureExcerpt drops Pi's (no output) placeholder", async () => {
+  const result = await bashResult("sh -c 'exit 3'");
+  const text = resultText(result);
+  assert.match(text, /^\(no output\)/);
+  assert.deepEqual(failureExcerpt(text, "ctrl+o"), []);
+});

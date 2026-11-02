@@ -746,3 +746,40 @@ test("write rows stay within the width at 80 and 40", async () => {
     }
   }
 });
+
+test("a failed grep shows the error in both views", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-grep-error-"));
+  writeFileSync(join(dir, "a.txt"), "alpha\n");
+  const message = await createGrepTool(dir)
+    .execute("renderers-test", { pattern: "(" })
+    .then(
+      () => "",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+  assert.match(message, /regex parse error/);
+
+  const result: AgentToolResult<unknown> = {
+    content: [{ type: "text", text: message }],
+    details: undefined,
+    isError: true,
+  };
+  const args = { pattern: "(" };
+  const collapsed = resultLines(
+    "grep",
+    result,
+    { expanded: false, isPartial: false },
+    context({ args, isError: true }),
+    80,
+  );
+  assert.ok(collapsed.length > 0);
+  assert.match(collapsed[0], /^ {2}│ rg: regex parse error:/);
+
+  const expanded = resultLines(
+    "grep",
+    result,
+    { expanded: true, isPartial: false },
+    context({ args, isError: true }),
+    80,
+  );
+  assert.deepEqual(expanded, ["BASE RESULT"]);
+});

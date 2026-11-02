@@ -20,14 +20,23 @@ export function resultText(result: { content: Array<{ type: string; text?: strin
 }
 
 /**
- * Splits a tool result into the body and the note Pi appends after a blank line (a limit or
- * truncation notice, e.g. `[1 results limit reached. Use limit=2 for more]`). Tool rows never
- * contain a blank line, so the note is the last `[`-block after one.
+ * The notes Pi's tools append after a blank line: a read offset/truncation notice, or a limit notice
+ * from grep, find, or ls. Only these exact shapes are notes; file content may also start a `[`-block
+ * after a blank line.
  */
+const NOTES = [
+  /^\[\d+ more lines in file\. Use offset=\d+ to continue\.\]$/,
+  /^\[Showing lines \d+-\d+ of \d+\. Use offset=\d+ to continue\.\]$/,
+  /^\[\d+ (?:matches|results|entries) limit reached\. Use limit=\d+ for more(?:, or refine pattern)?\]$/,
+];
+
+/** Splits a tool result into the body and the note Pi appends after a blank line. */
 export function splitNote(text: string): { body: string; note: string } {
   const index = text.lastIndexOf("\n\n[");
   if (index < 0) return { body: text, note: "" };
-  return { body: text.slice(0, index), note: text.slice(index + 2) };
+  const note = text.slice(index + 2);
+  if (!NOTES.some((pattern) => pattern.test(note))) return { body: text, note: "" };
+  return { body: text.slice(0, index), note };
 }
 
 /** Lines in a tool result text: a trailing newline does not start another line. */
