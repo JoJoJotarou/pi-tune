@@ -1,23 +1,133 @@
-import { homedir } from "node:os";
-import { sep } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, keyText, VERSION } from "@earendil-works/pi-coding-agent";
+import { basename } from "node:path";
+import type { Usage } from "@earendil-works/pi-ai";
+import {
+  type AppKeybinding,
+  type ExtensionAPI,
+  type ExtensionContext,
+  keyText,
+  type SessionEntry,
+  VERSION,
+} from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { type FooterParts, footerLine } from "../src/chrome/footer.ts";
+import { type FooterParts, type FooterStats, footerLine } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
-import { hintFor } from "../src/chrome/hints.ts";
+import { formatHints, hintFor } from "../src/chrome/hints.ts";
+import { type KeyGroup, KeysComponent } from "../src/chrome/keys.ts";
+import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
-function displayPath(cwd: string): string {
-  const home = homedir();
-  if (cwd === home) return "~";
-  if (cwd.startsWith(`${home}${sep}`)) return `~${cwd.slice(home.length)}`;
-  return cwd;
+const PI_KEYBINDINGS: readonly AppKeybinding[] = [
+  "app.interrupt",
+  "app.clear",
+  "app.exit",
+  "app.suspend",
+  "app.thinking.cycle",
+  "app.thinking.save",
+  "app.model.cycleForward",
+  "app.model.cycleBackward",
+  "app.model.select",
+  "app.tools.expand",
+  "app.thinking.toggle",
+  "app.session.toggleNamedFilter",
+  "app.editor.external",
+  "app.message.copy",
+  "app.message.followUp",
+  "app.message.dequeue",
+  "app.clipboard.pasteImage",
+  "app.session.new",
+  "app.session.tree",
+  "app.session.fork",
+  "app.session.resume",
+  "app.tree.foldOrUp",
+  "app.tree.unfoldOrDown",
+  "app.tree.editLabel",
+  "app.tree.toggleLabelTimestamp",
+  "app.session.togglePath",
+  "app.session.toggleSort",
+  "app.session.rename",
+  "app.session.delete",
+  "app.session.deleteNoninvasive",
+  "app.models.save",
+  "app.models.enableAll",
+  "app.models.clearAll",
+  "app.models.toggleProvider",
+  "app.models.reorderUp",
+  "app.models.reorderDown",
+  "app.tree.filter.default",
+  "app.tree.filter.noTools",
+  "app.tree.filter.userOnly",
+  "app.tree.filter.labeledOnly",
+  "app.tree.filter.all",
+  "app.tree.filter.cycleForward",
+  "app.tree.filter.cycleBackward",
+];
+
+interface UsageTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  cacheHitPercent?: number;
+}
+
+function addUsage(totals: UsageTotals, usage: Usage): void {
+  totals.input += usage.input;
+  totals.output += usage.output;
+  totals.cacheRead += usage.cacheRead;
+  totals.cacheWrite += usage.cacheWrite;
+  totals.cost += usage.cost.total;
+}
+
+/** Pi's footer totals: every usage record in the session, plus the latest assistant cache hit rate. */
+function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
+  const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  for (const entry of entries) {
+    if (entry.type === "usage") {
+      addUsage(totals, entry.usage);
+    } else if (entry.type === "message") {
+      const message = entry.message;
+      if (message.role === "assistant") {
+        addUsage(totals, message.usage);
+        const prompt = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
+        totals.cacheHitPercent = prompt > 0 ? (message.usage.cacheRead / prompt) * 100 : undefined;
+      } else if (message.role === "toolResult" && message.usage) {
+        addUsage(totals, message.usage);
+      }
+    } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
+      addUsage(totals, entry.usage);
+    }
+  }
+  return totals;
+}
+
+function piGroups(keybindings: { getDefinition(id: AppKeybinding): { description?: string } | undefined }): KeyGroup[] {
+  return [
+    {
+      title: "Pi",
+      entries: PI_KEYBINDINGS.flatMap((id) => {
+        const key = keyText(id);
+        if (!key) return [];
+        return [{ key, description: keybindings.getDefinition(id)?.description ?? id }];
+      }),
+    },
+    {
+      title: "pi-tune",
+      entries: [
+        { key: "alt+o", description: "View the latest output block" },
+        { key: "ctrl+s", description: "Stash the draft" },
+        { key: "click", description: "Expand a tool or thinking block" },
+      ],
+    },
+  ];
 }
 
 export default function (pi: ExtensionAPI) {
+  let current: ExtensionContext | undefined;
   let running = false;
   let stashReady = false;
   let tui: TUI | undefined;
+  let streamStartedAt: number | undefined;
+  let rate: number | undefined;
 
   pi.events.on("pi-tune:editor-ready", () => {
     stashReady = true;
@@ -26,6 +136,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_start", () => {
     running = true;
+    streamStartedAt = undefined;
     tui?.requestRender();
   });
 
@@ -34,13 +145,35 @@ export default function (pi: ExtensionAPI) {
     tui?.requestRender();
   });
 
+  pi.on("message_update", (event) => {
+    if (event.message.role !== "assistant") return;
+    if (streamStartedAt === undefined) streamStartedAt = Date.now();
+  });
+
+  pi.on("message_end", (event) => {
+    if (event.message.role !== "assistant") return;
+    const started = streamStartedAt;
+    streamStartedAt = undefined;
+    if (started === undefined) return;
+    const seconds = (Date.now() - started) / 1000;
+    if (seconds <= 0) return;
+    rate = event.message.usage.output / seconds;
+    tui?.requestRender();
+  });
+
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    const path = displayPath(ctx.cwd);
+    current = ctx;
+    running = false;
+    stashReady = false;
+    streamStartedAt = undefined;
+    rate = undefined;
 
     ctx.ui.setHeader((_headerTui, theme) => ({
       render(width: number): string[] {
-        return [headerLine({ version: VERSION, cwd: path }, width, theme)];
+        const session = current;
+        if (!session) return [];
+        return [headerLine({ version: VERSION, cwd: basename(session.cwd) }, width, theme)];
       },
       invalidate() {},
     }));
@@ -50,39 +183,31 @@ export default function (pi: ExtensionAPI) {
       const unsubscribe = footerData.onBranchChange(() => footerTui.requestRender());
       return {
         render(width: number): string[] {
-          let input = 0;
-          let output = 0;
-          let cacheRead = 0;
-          let cost = 0;
-          for (const entry of ctx.sessionManager.getEntries()) {
-            if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-            const usage = (entry.message as AssistantMessage).usage;
-            input += usage.input;
-            output += usage.output;
-            cacheRead += usage.cacheRead;
-            cost += usage.cost.total;
-          }
-
-          const totalInput = input + cacheRead;
-          const viewReady = pi
-            .getCommands()
-            .some((command) => command.name === "view" && command.source === "extension");
+          const session = current;
+          if (!session) return [];
+          const usage = sessionUsage(session.sessionManager.getEntries());
+          const context = session.getContextUsage();
+          const settings = pi.getSettings();
+          const stats: FooterStats = {
+            input: usage.input,
+            output: usage.output,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            cacheHitPercent: usage.cacheHitPercent,
+            cost: usage.cost,
+            contextPercent: context?.percent ?? null,
+            contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
+            autoCompact: settings.compaction?.enabled !== false,
+            rate,
+          };
+          const state = running ? (session.ui.getEditorText().trim() ? "busy-typing" : "busy-empty") : "idle";
+          const hints = formatHints(hintFor(state, { stash: stashReady }), theme);
           const parts: FooterParts = {
-            path,
+            project: basename(session.cwd),
             branch: footerData.getGitBranch() ?? undefined,
-            hints: hintFor(
-              running ? "running" : "idle",
-              {
-                interrupt: keyText("app.interrupt"),
-                followUp: keyText("app.message.followUp"),
-              },
-              { stash: stashReady, view: viewReady },
-            ),
-            tokens: { input, output },
-            cachePercent: totalInput > 0 ? (cacheRead / totalInput) * 100 : null,
-            cost,
-            ctxPercent: ctx.getContextUsage()?.percent ?? 0,
-            statuses: Array.from(footerData.getExtensionStatuses().values()),
+            hints,
+            stats,
+            statuses: Array.from(footerData.getExtensionStatuses().entries()),
           };
           return footerLine(parts, width, theme);
         },
@@ -90,5 +215,32 @@ export default function (pi: ExtensionAPI) {
         dispose: unsubscribe,
       };
     });
+  });
+
+  pi.on("session_shutdown", () => {
+    current = undefined;
+    running = false;
+    stashReady = false;
+    streamStartedAt = undefined;
+    rate = undefined;
+    tui?.requestRender();
+  });
+
+  pi.registerCommand("keys", {
+    description: "Show Pi and pi-tune key bindings",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") return;
+      await ctx.ui.custom<void>(
+        (modalTui, theme, keybindings, done) =>
+          new KeysComponent(
+            piGroups(keybindings),
+            theme,
+            () => done(),
+            () => modalTui.requestRender(),
+            modalTui.terminal.rows,
+          ),
+        { overlay: true, overlayOptions: MODAL_OVERLAY },
+      );
+    },
   });
 }
