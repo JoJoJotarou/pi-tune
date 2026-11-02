@@ -24,7 +24,7 @@ test("idle chrome shows a one-row header and a native footer", { timeout: 180_00
     const headerRows = screen.filter((line) => line.includes("π pi"));
     assert.equal(headerRows.length, 1, screen.join("\n"));
     assert.ok(headerRows[0].includes("· project"), headerRows[0]);
-    assert.ok(headerRows[0].includes("/keys"), headerRows[0]);
+    assert.ok(headerRows[0].includes("/hotkeys"), headerRows[0]);
 
     const footerRows = screen.filter((line) => line.includes("%/"));
     assert.equal(footerRows.length, 1, screen.join("\n"));
@@ -71,28 +71,6 @@ test("narrow chrome keeps the footer inside 40 columns", { timeout: 180_000 }, a
     assert.ok(visibleWidth(footerRows[0]) <= 40, footerRows[0]);
     assert.ok(footerRows[0].includes("%/"), footerRows[0]);
     await pi.shot("footer-narrow-40");
-  } finally {
-    await pi.close();
-  }
-});
-
-test("/keys opens a modal with Pi and pi-tune bindings", { timeout: 180_000 }, async () => {
-  const pi = await startPi({ scenario: scenario(), cols: 100, rows: 30 });
-  try {
-    await pi.waitFor("/keys");
-    pi.type("/keys\r");
-    await pi.waitFor("Keys");
-    await pi.waitFor("esc close");
-    assert.ok(pi.screen().join("\n").includes("Cancel or abort"), pi.screen().join("\n"));
-    pi.press("pagedown");
-    await pi.waitFor("pi-tune");
-    const screen = pi.screen().join("\n");
-    assert.ok(screen.includes("View the latest output block"), screen);
-    assert.ok(screen.includes("Stash the draft"), screen);
-    await pi.shot("keys-modal");
-
-    pi.press("escape");
-    await pi.waitForGone("esc close");
   } finally {
     await pi.close();
   }

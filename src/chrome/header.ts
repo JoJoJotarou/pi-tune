@@ -16,7 +16,7 @@ function elideLeft(text: string, width: number): string {
 
 export function headerLine(parts: HeaderParts, width: number, theme: Theme): string {
   if (width <= 0) return "";
-  const right = theme.fg("dim", "/keys");
+  const right = theme.fg("dim", "/hotkeys");
   const brand = `${theme.bold(theme.fg("accent", "π"))} ${theme.fg("text", `pi ${parts.version}`)}`;
   const available = width - visibleWidth(brand) - visibleWidth(right) - 2;
   const cwdWidth = available - visibleWidth(" · ");

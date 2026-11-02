@@ -1,7 +1,6 @@
 import { basename } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
 import {
-  type AppKeybinding,
   type ExtensionAPI,
   type ExtensionContext,
   keyText,
@@ -12,31 +11,6 @@ import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
 import { formatHints, hintFor } from "../src/chrome/hints.ts";
-import { type KeyGroup, KeysComponent } from "../src/chrome/keys.ts";
-import { MODAL_OVERLAY } from "../src/shared/frame.ts";
-
-// Global keys only; selector-specific ones (tree, session list, model scope) belong to those screens.
-const PI_KEYBINDINGS: readonly AppKeybinding[] = [
-  "app.interrupt",
-  "app.clear",
-  "app.exit",
-  "app.suspend",
-  "app.thinking.cycle",
-  "app.model.cycleForward",
-  "app.model.cycleBackward",
-  "app.model.select",
-  "app.tools.expand",
-  "app.thinking.toggle",
-  "app.editor.external",
-  "app.message.copy",
-  "app.message.followUp",
-  "app.message.dequeue",
-  "app.clipboard.pasteImage",
-  "app.session.new",
-  "app.session.tree",
-  "app.session.fork",
-  "app.session.resume",
-];
 
 interface UsageTotals {
   input: number;
@@ -75,27 +49,6 @@ function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
     }
   }
   return totals;
-}
-
-function piGroups(keybindings: { getDefinition(id: AppKeybinding): { description?: string } | undefined }): KeyGroup[] {
-  return [
-    {
-      title: "Pi",
-      entries: PI_KEYBINDINGS.flatMap((id) => {
-        const key = keyText(id);
-        if (!key) return [];
-        return [{ key, description: keybindings.getDefinition(id)?.description ?? id }];
-      }),
-    },
-    {
-      title: "pi-tune",
-      entries: [
-        { key: "alt+o", description: "View the latest output block" },
-        { key: "ctrl+s", description: "Stash the draft" },
-        { key: "click", description: "Expand a tool or thinking block" },
-      ],
-    },
-  ];
 }
 
 export default function (pi: ExtensionAPI) {
@@ -201,23 +154,5 @@ export default function (pi: ExtensionAPI) {
     streamStartedAt = undefined;
     rate = undefined;
     tui?.requestRender();
-  });
-
-  pi.registerCommand("keys", {
-    description: "Show Pi and pi-tune key bindings",
-    handler: async (_args, ctx) => {
-      if (ctx.mode !== "tui") return;
-      await ctx.ui.custom<void>(
-        (modalTui, theme, keybindings, done) =>
-          new KeysComponent(
-            piGroups(keybindings),
-            theme,
-            () => done(),
-            () => modalTui.requestRender(),
-            modalTui.terminal.rows,
-          ),
-        { overlay: true, overlayOptions: MODAL_OVERLAY },
-      );
-    },
   });
 }
