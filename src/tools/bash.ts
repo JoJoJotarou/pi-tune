@@ -10,6 +10,9 @@ export function exitCodeOf(resultText: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/** Pi's placeholder when a command printed nothing; the header already says `exit N`. */
+const NO_OUTPUT = "(no output)";
+
 /**
  * Lines to show for a failed command. Output with at most 6 lines is returned whole.
  * Longer output: the first 2 lines, one marker line `┄ {n} lines folded · {expandKey}`, the last 3 lines.
@@ -21,6 +24,7 @@ export function failureExcerpt(output: string, expandKey: string): string[] {
   if (lines.length > 0 && /^Command exited with code \d+$/.test(lines[lines.length - 1])) lines.pop();
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
+  if (lines.length === 1 && lines[0] === NO_OUTPUT) return [];
   if (lines.length <= 6) return lines;
   return [
     lines[0],

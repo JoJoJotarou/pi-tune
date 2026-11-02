@@ -63,3 +63,9 @@ test("a result without text has no meta", () => {
   const empty: AgentToolResult<ReadToolDetails | undefined> = { content: [], details: undefined };
   assert.equal(readMeta({ path: "dot.png" }, empty), "");
 });
+
+test("a whole file read is not confused by a bracketed link after a blank line", async () => {
+  writeFileSync(join(dir, "note.md"), "intro\n\n[docs](https://example.com)\nmore\n");
+  const args = { path: "note.md" };
+  assert.equal(meta(args, await readResult(args)), "4 lines");
+});

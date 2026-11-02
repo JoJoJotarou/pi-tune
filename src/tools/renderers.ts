@@ -305,7 +305,9 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         if (plan.body === "new") return new WriteLinesComponent(path, content, options.expanded, theme, context);
         return new EmptyComponent();
       }
-      if (options.expanded && toolName === "grep") return new GrepRowsComponent(result, theme, context);
+      if (options.expanded && toolName === "grep" && !context.isError) {
+        return new GrepRowsComponent(result, theme, context);
+      }
       if (options.expanded) {
         return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
       }
