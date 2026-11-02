@@ -56,7 +56,7 @@ interface RenderContext {
 
 // Tints mix the diff colors into black (dark themes) or white (light themes) rather than a theme
 // background token, so removed rows read as red and added rows as green on any terminal background.
-const TINTS = { dark: { row: 0.25, word: 0.45 }, light: { row: 0.15, word: 0.3 } } as const;
+const TINTS = { dark: { row: 0.3, word: 0.55 }, light: { row: 0.15, word: 0.3 } } as const;
 const ESC = String.fromCharCode(27);
 const SGR = new RegExp(`${ESC}\\[[0-9;:]*m`, "g");
 const RESET = `${ESC}[0m`;
