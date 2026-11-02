@@ -28,10 +28,12 @@ export function mermaidMarkdown(
   if (!kind) return undefined;
   const art = render(source);
   if (!art) return undefined;
-  const action = `${theme.fg("dim", `◇ mermaid · ${kind}`)} [open preview](${previewUrl}) ${theme.fg("dim", "· alt+o source")}`;
-  if (art.width > availableWidth) {
-    return `${theme.fg("dim", `◇ mermaid · ${kind} · needs ${art.width} columns, have ${availableWidth}`)}\n\n${action}`;
-  }
+  const tooWide = art.width > availableWidth;
+  const label = tooWide
+    ? `◇ mermaid · ${kind} · needs ${art.width} columns, have ${availableWidth}`
+    : `◇ mermaid · ${kind}`;
+  const action = `${theme.fg("dim", `${label} ·`)} [open preview](${previewUrl}) ${theme.fg("dim", "· alt+o source")}`;
+  if (tooWide) return action;
   const rows = art.styled.map((row) => `\`${styledRow(row, theme)}\``);
   return `${rows.join("  \n")}\n\n${action}`;
 }
