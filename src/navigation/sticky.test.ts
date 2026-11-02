@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { initTheme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
+import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { stickyLine, stickyPrompt } from "./sticky.ts";
+import { StickyBar, stickyLine, stickyPrompt } from "./sticky.ts";
+
+initTheme("dark", false);
+
+function stickyTui(columns: number) {
+  const chat: { children: Component[]; render: () => string[] } = {
+    children: [new UserMessageComponent("first question")],
+    render: () => [],
+  };
+  const document = {
+    children: [{ render: () => [] }, { render: () => [] }, chat],
+    render: () => [],
+    addChild: () => {},
+  };
+  return {
+    children: [document],
+    terminal: { columns, rows: 30 },
+    viewportTop: 5,
+    scrollBy: () => {},
+  };
+}
 
 const prompts = [
   { row: 0, text: "first question" },
@@ -44,4 +65,33 @@ test("cuts a long sticky line with an ellipsis at width 30", () => {
   const text = stripTerminalSequences(line);
   assert.ok(text.startsWith("› a very long question"), text);
   assert.ok(text.endsWith("…"), text);
+});
+
+test("leaves the last column free for the rail", () => {
+  const bar = new StickyBar(
+    stickyTui(80) as never,
+    () => testTheme("dark"),
+    () => {},
+  );
+
+  const lines = bar.render(80);
+
+  assert.equal(lines.length, 1);
+  assert.equal(visibleWidth(lines[0]), 79);
+});
+
+test("renders with the theme current at render time", () => {
+  const themes = [testTheme("dark"), testTheme("light")];
+  let current = 0;
+  const bar = new StickyBar(
+    stickyTui(80) as never,
+    () => themes[current],
+    () => {},
+  );
+
+  const before = bar.render(80);
+  current = 1;
+  const after = bar.render(80);
+
+  assert.notDeepEqual(after, before);
 });

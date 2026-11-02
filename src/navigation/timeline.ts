@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, type TuiMouseEvent, truncateToWidth } from "@earendil-works/pi-tui";
+import { type Component, type TuiMouseEvent, type TuiMouseEventResult, truncateToWidth } from "@earendil-works/pi-tui";
 import { collectPrompts, jumpTo, type ScrollableTui, transcriptViewportHeight } from "../internals/transcript.ts";
 import { nearestPrompt, type RailCell, railCells } from "./rail.ts";
 
@@ -22,13 +22,13 @@ function renderCell(cell: RailCell, theme: Theme): string {
 
 export class TimelineRail implements Component {
   private readonly tui: ScrollableTui;
-  private readonly theme: Theme;
+  private readonly getTheme: () => Theme;
   private readonly onError: (error: Error) => void;
   private disabled = false;
 
-  constructor(tui: ScrollableTui, theme: Theme, onError: (error: Error) => void) {
+  constructor(tui: ScrollableTui, getTheme: () => Theme, onError: (error: Error) => void) {
     this.tui = tui;
-    this.theme = theme;
+    this.getTheme = getTheme;
     this.onError = onError;
   }
 
@@ -59,11 +59,11 @@ export class TimelineRail implements Component {
       viewportTop: this.tui.viewportTop,
       height,
     });
-    return cells.map((cell) => renderCell(cell, this.theme));
+    return cells.map((cell) => renderCell(cell, this.getTheme()));
   }
 
-  handleMouse(event: TuiMouseEvent): { handled: true } {
-    if (event.type !== "click" || event.button !== "left") return { handled: true };
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type !== "click" || event.button !== "left") return undefined;
     if (this.disabled) return { handled: true };
     const { height, transcript } = this.layout();
     if (transcript instanceof Error) {

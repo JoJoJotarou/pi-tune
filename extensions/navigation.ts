@@ -21,17 +21,21 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setWidget("pi-tune-rail", (tui, theme) => {
+    ctx.ui.setWidget("pi-tune-rail", (tui, _theme) => {
       if (!tuiRef && disabledReason === undefined) {
         const scrollable = asScrollable(tui);
         if (scrollable) {
           tuiRef = scrollable;
-          const rail = new TimelineRail(scrollable, theme, (error) => {
-            if (disabledReason === undefined) {
-              disabledReason = error.message;
-              ctx.ui.notify(`pi-tune timeline disabled: ${error.message}`, "warning");
-            }
-          });
+          const rail = new TimelineRail(
+            scrollable,
+            () => ctx.ui.theme,
+            (error) => {
+              if (disabledReason === undefined) {
+                disabledReason = error.message;
+                ctx.ui.notify(`pi-tune timeline disabled: ${error.message}`, "warning");
+              }
+            },
+          );
           tui.showOverlay(rail, { anchor: "top-right", width: 1, nonCapturing: true });
         }
       }
@@ -39,12 +43,16 @@ export default function (pi: ExtensionAPI) {
         const scrollable = asScrollable(tui);
         if (scrollable) {
           stickyShown = true;
-          const sticky = new StickyBar(scrollable, theme, (error) => {
-            if (stickyDisabledReason === undefined) {
-              stickyDisabledReason = error.message;
-              ctx.ui.notify(`pi-tune sticky prompt disabled: ${error.message}`, "warning");
-            }
-          });
+          const sticky = new StickyBar(
+            scrollable,
+            () => ctx.ui.theme,
+            (error) => {
+              if (stickyDisabledReason === undefined) {
+                stickyDisabledReason = error.message;
+                ctx.ui.notify(`pi-tune sticky prompt disabled: ${error.message}`, "warning");
+              }
+            },
+          );
           tui.showOverlay(sticky, { anchor: "top-left", width: "100%", nonCapturing: true });
         }
       }

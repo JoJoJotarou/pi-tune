@@ -30,13 +30,13 @@ export function stickyLine(prompt: StickyPrompt, width: number, theme: Theme): s
 /** One row at the top of the transcript; renders nothing while the owning prompt is on screen. */
 export class StickyBar implements Component {
   private readonly tui: ScrollableTui;
-  private readonly theme: Theme;
+  private readonly getTheme: () => Theme;
   private readonly onError: (error: Error) => void;
   private disabled = false;
 
-  constructor(tui: ScrollableTui, theme: Theme, onError: (error: Error) => void) {
+  constructor(tui: ScrollableTui, getTheme: () => Theme, onError: (error: Error) => void) {
     this.tui = tui;
-    this.theme = theme;
+    this.getTheme = getTheme;
     this.onError = onError;
   }
 
@@ -49,7 +49,8 @@ export class StickyBar implements Component {
       return [];
     }
     const sticky = stickyPrompt(transcript.prompts, this.tui.viewportTop);
-    return sticky ? [stickyLine(sticky, width, this.theme)] : [];
+    if (!sticky) return [];
+    return [stickyLine(sticky, Math.max(0, width - 1), this.getTheme())];
   }
 
   invalidate(): void {}

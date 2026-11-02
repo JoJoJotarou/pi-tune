@@ -24,8 +24,3 @@ export function updateFlip(state: FlipState, chatEnd: number): FlipState {
   const padding = paddingFor(state.promptRow, chatEnd, state.viewportHeight);
   return { ...state, padding, done: padding === 0 };
 }
-
-/** The user moved the viewport during a flip: end it where it is. */
-export function userScrolled(state: FlipState): FlipState {
-  return { ...state, padding: 0, done: true };
-}
