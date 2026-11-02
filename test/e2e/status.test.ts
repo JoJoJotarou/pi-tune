@@ -14,6 +14,9 @@ test("working line names the running bash tool", { timeout: 180_000 }, async () 
   try {
     pi.type("run it\r");
     await pi.waitFor(/bash sleep 3.*to stop/);
+    const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
+    // The status is embedded in the editor's top border, not drawn as an extra row.
+    assert.match(statusRow.trim(), /^─+ .*to stop.* ─+$/);
     await new Promise((done) => setTimeout(done, 1500));
     await pi.shot("status-tool");
     const screen = pi.screen().join("\n");

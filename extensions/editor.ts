@@ -45,9 +45,12 @@ export default function (pi: ExtensionAPI) {
 
     ctx.ui.setEditorComponent((editorTui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
       tui = editorTui;
+      const settings = pi.getSettings();
       editor = new TuneEditor(editorTui, theme, keybindings, {
         model,
         thinking,
+        paddingX: settings.editorPaddingX,
+        autocompleteMaxVisible: settings.autocompleteMaxVisible,
         onPreview: (id) => {
           const current = editor;
           if (!current) return;
