@@ -63,3 +63,35 @@ for (const tune of [true, false]) {
     });
   }
 }
+
+const longCode = Array.from({ length: 64 }, (_, index) => `const value${index + 1} = ${index + 1};`);
+const longAnswer = ["Here is the code:", "", "```ts", ...longCode, "```", "", "All done."].join("\n");
+const foldScenario: Scenario = { turns: [[{ text: longAnswer }]] };
+
+test("long code blocks fold and open in the viewer", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: foldScenario, cols: 100, rows: 40, tune: true });
+  try {
+    pi.type("run it\r");
+    await pi.waitFor("┄ 52 more lines");
+    const rows = pi.screen();
+    const screen = rows.join("\n");
+    const codeRows = rows.filter((row) => /^const value\d+ = \d+;$/.test(row.trim()));
+    assert.equal(codeRows.length, 12, screen);
+    await pi.shot("code-fold");
+
+    pi.type("\x1bo");
+    await pi.waitFor("ts code · 64 lines");
+    await pi.shot("code-fold-viewer");
+  } finally {
+    await pi.close();
+  }
+
+  const before = await startPi({ scenario: foldScenario, cols: 100, rows: 40, tune: false });
+  try {
+    before.type("run it\r");
+    await before.waitFor("const value64 = 64;");
+    await before.shot("code-fold-before");
+  } finally {
+    await before.close();
+  }
+});

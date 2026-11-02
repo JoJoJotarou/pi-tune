@@ -1,4 +1,5 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { foldLongCode } from "../src/markdown/fold-code.ts";
 import { appendLinkDomains, rewriteHeadings, tablesToLists } from "../src/markdown/rewrite.ts";
 
 export default function markdownExtension(pi: ExtensionAPI): void {
@@ -12,7 +13,10 @@ export default function markdownExtension(pi: ExtensionAPI): void {
     if (messageType !== "assistant") return markdown;
     let out = rewriteHeadings(markdown);
     if (theme) out = appendLinkDomains(out, theme);
-    if (!isStreaming) out = tablesToLists(out, availableWidth);
+    if (!isStreaming) {
+      out = tablesToLists(out, availableWidth);
+      if (theme) out = foldLongCode(out, theme);
+    }
     return out;
   });
 }
