@@ -39,8 +39,5 @@
     "@xterm/headless": "6.0.0",
     "node-pty": "1.1.0",
     "typescript": "7.0.2"
-  },
-  "dependencies": {
-    "marked": "18.0.11"
   }
 }

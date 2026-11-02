@@ -178,3 +178,18 @@ test("a rewritten table renders as list lines", () => {
     "- Codex CLI — Language: Rust · UI: ratatui · Grouping: Explored",
   ]);
 });
+
+test("a link in a nested list item whose paragraph spans two lines gets its host", () => {
+  const input = [
+    "- top",
+    "  - nested",
+    "    Read the [docs](https://example.com/guide)",
+    "    before you start.",
+    "",
+  ].join("\n");
+  const expected = input.replace(
+    "[docs](https://example.com/guide)",
+    `[docs](https://example.com/guide) ${dim("example.com")}`,
+  );
+  assert.equal(appendLinkDomains(input, theme), expected);
+});

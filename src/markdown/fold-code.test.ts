@@ -49,7 +49,7 @@ test("tilde fences are folded with their own marker", () => {
   const input = ["~~~ts", ...lines, "~~~", ""].join("\n");
   const output = fold(input);
   assert.ok(output.includes("~~~ts"), output);
-  assert.ok(output.includes("~~~\n" + foldLine(12)), output);
+  assert.ok(output.includes(`~~~\n${foldLine(12)}`), output);
   assert.ok(!output.includes("value13"), output);
 });
 
