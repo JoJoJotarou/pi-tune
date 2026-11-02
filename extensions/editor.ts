@@ -1,13 +1,18 @@
-import type { ExtensionAPI, ExtensionContext, KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { PastePreview, type PastePreviewAction } from "../src/editor/paste-preview.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
+import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
 export default function (pi: ExtensionAPI) {
   let model = "no model";
   let thinking = "off";
   let tui: TUI | undefined;
   let editor: TuneEditor | undefined;
+  // Session state lives here, not in the editor factory closure: the factory outlives the session that made it.
+  let notify: ((message: string, level: "warning" | "error") => void) | undefined;
+  let currentTheme: (() => Theme) | undefined;
+  let openPreviewModal: ((id: number, content: string) => Promise<PastePreviewAction | undefined>) | undefined;
 
   const sync = () => {
     editor?.setStatus(model, thinking);
@@ -24,43 +29,57 @@ export default function (pi: ExtensionAPI) {
     sync();
   });
 
-  async function openPreview(ctx: ExtensionContext, editor: TuneEditor, id: number): Promise<void> {
-    const content = editor.readPaste(id);
+  async function preview(target: TuneEditor, id: number): Promise<void> {
+    const content = target.readPaste(id);
     if (content instanceof Error) {
-      ctx.ui.notify(`pi-tune paste preview unavailable: ${content.message}`, "warning");
+      notify?.(`pi-tune paste preview unavailable: ${content.message}`, "warning");
       return;
     }
-    const action = await ctx.ui.custom<PastePreviewAction | undefined>(
-      (_tui, theme, _keybindings, done) => new PastePreview(theme, id, content, done),
-      { overlay: true, overlayOptions: { width: "80%", maxHeight: 14, margin: 2 } },
-    );
-    if (action === "expand") editor.expandMarker(id, content);
-    else if (action === "delete") editor.deleteMarker(id);
+    const action = await openPreviewModal?.(id, content);
+    if (action === "expand") target.expandMarker(id, content);
+    else if (action === "delete") target.deleteMarker(id);
   }
 
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     model = ctx.model?.id ?? "no model";
     thinking = pi.getThinkingLevel();
+    notify = (message, level) => ctx.ui.notify(message, level);
+    currentTheme = () => ctx.ui.theme;
+    openPreviewModal = (id, content) =>
+      ctx.ui.custom<PastePreviewAction | undefined>(
+        (modalTui, theme, _keybindings, done) => new PastePreview(theme, id, content, modalTui.terminal.rows, done),
+        { overlay: true, overlayOptions: MODAL_OVERLAY },
+      );
 
     ctx.ui.setEditorComponent((editorTui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => {
+      const themeOf = currentTheme;
+      if (!themeOf) throw new Error("pi-tune: editor created without a session theme");
       tui = editorTui;
       const settings = pi.getSettings();
-      editor = new TuneEditor(editorTui, theme, keybindings, {
+      const instance = new TuneEditor(editorTui, theme, keybindings, {
         model,
         thinking,
+        theme: themeOf,
         paddingX: settings.editorPaddingX,
         autocompleteMaxVisible: settings.autocompleteMaxVisible,
         onPreview: (id) => {
-          const current = editor;
-          if (!current) return;
-          void openPreview(ctx, current, id).catch((error: unknown) => {
-            ctx.ui.notify(`pi-tune paste preview failed: ${String(error)}`, "error");
+          void preview(instance, id).catch((error: unknown) => {
+            notify?.(`pi-tune paste preview failed: ${String(error)}`, "error");
           });
         },
       });
+      editor = instance;
       pi.events.emit("pi-tune:editor-ready", undefined);
-      return editor;
+      return instance;
     });
+  });
+
+  pi.on("session_shutdown", () => {
+    notify = undefined;
+    currentTheme = undefined;
+    openPreviewModal = undefined;
+    editor = undefined;
+    tui = undefined;
   });
 }

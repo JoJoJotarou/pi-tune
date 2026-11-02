@@ -1,16 +1,33 @@
-import { CustomEditor, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import type { EditorTheme, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { matchesKey } from "@earendil-works/pi-tui";
+import { CustomEditor, type KeybindingsManager, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import {
+  type EditorTheme,
+  matchesKey,
+  sliceByColumn,
+  stripTerminalSequences,
+  type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 import { readEditorPaste } from "../internals/editor-pastes.ts";
-import { placeLeft, placeRight } from "./border.ts";
+import { frameBottom, frameRow, frameTop } from "../shared/frame.ts";
 import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker } from "./paste.ts";
+
+const STASH_CONFIRM_MS = 3000;
+/** Zero-width APC: Pi pads every content line, so the bottom border needs its own tag to stay findable. */
+const BOTTOM_MARK = "\u001b_pi:tune-bottom\u0007";
 
 export interface TuneEditorOptions {
   model: string;
   thinking: string;
+  /** Full theme for tokens the editor factory does not receive (`warning`). */
+  theme: () => Theme;
   paddingX?: number;
   autocompleteMaxVisible?: number;
   onPreview?: (id: number) => void;
+  /** Injected clock so tests can run the stash confirmation window without waiting. */
+  now?: () => number;
 }
 
 interface Stash {
@@ -19,11 +36,65 @@ interface Stash {
   col: number;
 }
 
+export interface EditorBorderLabels {
+  /** Title on the top border, e.g. Pi's working status. */
+  top?: string;
+  left?: string;
+  right?: string;
+}
+
+/**
+ * The frame helpers take a full `Theme`, but the editor only gets an `EditorTheme`. Border glyphs must keep Pi's
+ * own editor border color (the thinking level), so every `fg` call goes through `borderColor`.
+ */
+function borderTheme(borderColor: (text: string) => string): Theme {
+  return { fg: (_color: ThemeColor, text: string) => borderColor(text) } as unknown as Theme;
+}
+
+/** Pi's top border carries the working status between dashes; reuse it as the frame's title. */
+function topBorderLabel(line: string): string | undefined {
+  const plain = stripTerminalSequences(line);
+  const start = plain.search(/[^─]/);
+  if (start < 0) return undefined;
+  let end = plain.length;
+  while (end > start && plain[end - 1] === "─") end--;
+  const from = visibleWidth(plain.slice(0, start));
+  const text = sliceByColumn(line, from, visibleWidth(plain.slice(0, end)) - from).trim();
+  return text === "" ? undefined : text;
+}
+
+/**
+ * Wrap the editor's own lines in a rounded box. `bottomIndex` is Pi's bottom border: everything after it is the
+ * autocomplete list, which stays outside the box.
+ */
+export function frameEditor(
+  lines: readonly string[],
+  width: number,
+  borderColor: (text: string) => string,
+  bottomIndex: number,
+  labels: EditorBorderLabels,
+): string[] {
+  if (width < 4) return [...lines];
+  const theme = borderTheme(borderColor);
+  const framed = [frameTop(width, theme, "border", { left: labels.top })];
+  for (let i = 1; i < lines.length; i++) {
+    if (i === bottomIndex) framed.push(frameBottom(width, theme, "border", labels));
+    else if (i > bottomIndex) framed.push(truncateToWidth(lines[i], width, ""));
+    else framed.push(frameRow(lines[i], width, theme, "border", 0));
+  }
+  return framed;
+}
+
 export class TuneEditor extends CustomEditor {
   private model: string;
   private thinking: string;
+  private readonly themeOf: () => Theme;
+  private readonly now: () => number;
   private readonly onPreview?: (id: number) => void;
   private stash?: Stash;
+  private stashConfirmUntil?: number;
+  private confirmTimer?: ReturnType<typeof setTimeout>;
+  private framed = false;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: TuneEditorOptions) {
     // Same options Pi gives its default editor, so the working status stays in the top border.
@@ -34,6 +105,8 @@ export class TuneEditor extends CustomEditor {
     });
     this.model = options.model;
     this.thinking = options.thinking;
+    this.themeOf = options.theme;
+    this.now = options.now ?? (() => Date.now());
     this.onPreview = options.onPreview;
   }
 
@@ -53,9 +126,10 @@ export class TuneEditor extends CustomEditor {
 
   handleInput(data: string): void {
     if (matchesKey(data, "ctrl+s")) {
-      this.toggleStash();
+      this.handleStash();
       return;
     }
+    this.clearStashConfirm();
     if (data === "\r" || data === "\n" || matchesKey(data, "enter")) {
       const marker = this.markerAtCursor();
       if (marker) {
@@ -67,7 +141,8 @@ export class TuneEditor extends CustomEditor {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    const result = super.handleMouse(event);
+    // The inner editor renders two columns narrower, inside the left border.
+    const result = super.handleMouse(this.framed ? { ...event, x: event.x - 1 } : event);
     if (event.clickCount === 2) {
       const marker = this.markerAtCursor();
       if (marker) this.onPreview?.(marker.id);
@@ -89,10 +164,72 @@ export class TuneEditor extends CustomEditor {
     this.tui.requestRender();
   }
 
+  render(width: number): string[] {
+    this.framed = width >= 4;
+    const lines = super.render(this.framed ? width - 2 : width);
+    const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
+    if (!this.framed || bottom < 0) return lines;
+    const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
+    return frameEditor(plain, width, this.borderColor, bottom, {
+      top: topBorderLabel(plain[0] ?? ""),
+      left: this.leftLabel(),
+      right: this.borderColor(`${this.model} · ${this.thinking}`),
+    });
+  }
+
   protected renderBottomBorder(width: number, hiddenLineCount: number): string {
-    let border = super.renderBottomBorder(width, hiddenLineCount);
-    if (this.stash) border = placeLeft(border, this.borderColor(" stashed "), width);
-    return placeRight(border, this.borderColor(` ${this.model} · ${this.thinking} `), width);
+    return BOTTOM_MARK + super.renderBottomBorder(width, hiddenLineCount);
+  }
+
+  private leftLabel(): string | undefined {
+    if (this.stashConfirming()) return this.themeOf().fg("warning", "ctrl+s again to replace stash");
+    if (this.stash) return this.borderColor("stashed");
+    return undefined;
+  }
+
+  private stashConfirming(): boolean {
+    if (this.stashConfirmUntil === undefined) return false;
+    if (this.now() < this.stashConfirmUntil) return true;
+    this.clearStashConfirm();
+    return false;
+  }
+
+  private clearStashConfirm(): void {
+    if (this.confirmTimer !== undefined) clearTimeout(this.confirmTimer);
+    this.confirmTimer = undefined;
+    this.stashConfirmUntil = undefined;
+  }
+
+  /** ctrl+s: stash, restore, or — with a stash already held — ask once before replacing it. */
+  private handleStash(): void {
+    const confirming = this.stashConfirming();
+    this.clearStashConfirm();
+    if (this.getText().length === 0) {
+      this.restoreStash();
+      return;
+    }
+    if (this.stash && !confirming) {
+      this.stashConfirmUntil = this.now() + STASH_CONFIRM_MS;
+      this.confirmTimer = setTimeout(() => {
+        this.clearStashConfirm();
+        this.tui.requestRender();
+      }, STASH_CONFIRM_MS);
+      this.tui.requestRender();
+      return;
+    }
+    const { line, col } = this.getCursor();
+    this.stash = { text: this.getExpandedText(), line, col };
+    this.setText("");
+    this.tui.requestRender();
+  }
+
+  private restoreStash(): void {
+    const stash = this.stash;
+    if (!stash) return;
+    this.stash = undefined;
+    this.setText(stash.text);
+    this.restoreCursor(stash.line, stash.col);
+    this.tui.requestRender();
   }
 
   private markerAtCursor(): PasteMarker | undefined {
@@ -103,22 +240,6 @@ export class TuneEditor extends CustomEditor {
     for (let i = 0; i < line && i < lines.length; i++) offset += lines[i].length + 1;
     offset += col;
     return markerAt(text, offset);
-  }
-
-  private toggleStash(): void {
-    if (this.getText().length > 0) {
-      const { line, col } = this.getCursor();
-      this.stash = { text: this.getExpandedText(), line, col };
-      this.setText("");
-      this.tui.requestRender();
-      return;
-    }
-    const stash = this.stash;
-    if (!stash) return;
-    this.stash = undefined;
-    this.setText(stash.text);
-    this.restoreCursor(stash.line, stash.col);
-    this.tui.requestRender();
   }
 
   private restoreCursor(line: number, col: number): void {
