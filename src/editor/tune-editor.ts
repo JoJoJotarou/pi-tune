@@ -8,6 +8,8 @@ import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker }
 export interface TuneEditorOptions {
   model: string;
   thinking: string;
+  paddingX?: number;
+  autocompleteMaxVisible?: number;
   onPreview?: (id: number) => void;
 }
 
@@ -24,7 +26,12 @@ export class TuneEditor extends CustomEditor {
   private stash?: Stash;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: TuneEditorOptions) {
-    super(tui, theme, keybindings);
+    // Same options Pi gives its default editor, so the working status stays in the top border.
+    super(tui, theme, keybindings, {
+      paddingX: options.paddingX,
+      autocompleteMaxVisible: options.autocompleteMaxVisible,
+      embedWorkingStatus: true,
+    });
     this.model = options.model;
     this.thinking = options.thinking;
     this.onPreview = options.onPreview;
