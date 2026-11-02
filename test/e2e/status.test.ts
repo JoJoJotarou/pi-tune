@@ -44,6 +44,23 @@ test("working line shows Thinking while the model streams thinking", { timeout: 
   }
 });
 
+test("working line shows Writing while the model streams the answer", { timeout: 180_000 }, async () => {
+  const pi = await startPi({
+    scenario: {
+      files: { "README.md": "# demo\n" },
+      tokensPerSecond: 30,
+      turns: [[{ text: "word ".repeat(200) }]],
+    },
+  });
+  try {
+    pi.type("write\r");
+    await pi.waitFor(/Writing.*to stop/);
+    await pi.shot("status-writing");
+  } finally {
+    await pi.close();
+  }
+});
+
 test("Pi without pi-tune has no working line during a tool", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: toolScenario(), tune: false });
   try {
