@@ -3,7 +3,7 @@ import test from "node:test";
 import { initTheme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
 import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { StickyBar, stickyLine, stickyPrompt } from "./sticky.ts";
+import { StickyBar, stickyPrompt, stickyRows } from "./sticky.ts";
 
 initTheme("dark", false);
 
@@ -48,23 +48,66 @@ test("shows the prompt that owns the first visible row", () => {
   assert.deepEqual(stickyPrompt(prompts, 60), { index: 2, text: "third question" });
 });
 
-test("formats the sticky line at width 80", () => {
-  const theme = testTheme("dark");
-  const line = stickyLine({ index: 1, text: "second  question\nwith a break" }, 80, theme);
+const plain = (line: string) => stripTerminalSequences(line);
 
-  assert.equal(visibleWidth(line), 80);
-  const text = stripTerminalSequences(line);
-  assert.ok(text.startsWith("› second question with a break · prompt 2"), text);
+function textRows(prompt: { index: number; text: string }, width: number): string[] {
+  // Drop the painted blank row above and below, which carry no text.
+  return stickyRows(prompt, width, testTheme("dark")).slice(1, -1);
+}
+
+test("a one-line prompt renders one text row between two painted blank rows", () => {
+  const theme = testTheme("dark");
+  const rows = stickyRows({ index: 0, text: "first question" }, 40, theme);
+
+  assert.equal(rows.length, 3);
+  assert.equal(plain(rows[0]), " ".repeat(40));
+  assert.equal(plain(rows[1]), ` first question${" ".repeat(40 - 1 - "first question".length - 1)} `);
+  assert.equal(plain(rows[2]), " ".repeat(40));
+  for (const row of rows) assert.equal(visibleWidth(row), 40);
 });
 
-test("cuts a long sticky line with an ellipsis at width 30", () => {
-  const theme = testTheme("dark");
-  const line = stickyLine({ index: 2, text: "a very long question that does not fit" }, 30, theme);
+test("the prompt keeps its own line breaks", () => {
+  const rows = textRows({ index: 1, text: "second question\nwith a break" }, 40);
 
-  assert.equal(visibleWidth(line), 30);
-  const text = stripTerminalSequences(line);
-  assert.ok(text.startsWith("› a very long question"), text);
-  assert.ok(text.endsWith("…"), text);
+  assert.equal(rows.length, 2);
+  assert.equal(plain(rows[0]).trim(), "second question");
+  assert.equal(plain(rows[1]).trim(), "with a break");
+});
+
+test("a three-line prompt shows three rows and no ellipsis", () => {
+  const rows = textRows({ index: 1, text: "one\ntwo\nthree" }, 40);
+
+  assert.equal(rows.length, 3);
+  assert.deepEqual(
+    rows.map((row) => plain(row).trim()),
+    ["one", "two", "three"],
+  );
+});
+
+test("a five-line prompt keeps three rows and ends the third with an ellipsis", () => {
+  const rows = textRows({ index: 1, text: "one\ntwo\nthree\nfour\nfive" }, 40);
+
+  assert.equal(rows.length, 3);
+  assert.equal(plain(rows[2]).trim(), "three …");
+});
+
+test("every row carries the user message background, at width 40", () => {
+  const rows = stickyRows({ index: 0, text: "a question" }, 40, testTheme("dark"));
+  const bg = testTheme("dark").bg("userMessageBg", "x").split("x")[0];
+
+  for (const row of rows) {
+    assert.equal(visibleWidth(row), 40);
+    assert.ok(row.includes(bg), JSON.stringify(row));
+  }
+});
+
+test("cuts a long prompt with an ellipsis instead of overflowing", () => {
+  const text = Array.from({ length: 6 }, () => "a very long question that does not fit in forty columns").join(" ");
+  const rows = stickyRows({ index: 2, text }, 40, testTheme("dark"));
+
+  assert.equal(rows.length, 5);
+  for (const row of rows) assert.ok(visibleWidth(row) <= 40, JSON.stringify(plain(row)));
+  assert.ok(plain(rows[3]).trimEnd().endsWith("…"), JSON.stringify(plain(rows[3])));
 });
 
 test("leaves the last column free for the rail", () => {
@@ -76,8 +119,8 @@ test("leaves the last column free for the rail", () => {
 
   const lines = bar.render(80);
 
-  assert.equal(lines.length, 1);
-  assert.equal(visibleWidth(lines[0]), 79);
+  assert.equal(lines.length, 3);
+  for (const line of lines) assert.equal(visibleWidth(line), 79);
 });
 
 test("renders with the theme current at render time", () => {

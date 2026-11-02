@@ -16,6 +16,7 @@ const scenario: Scenario = {
     [{ text: numbered("first answer line", 40) }],
     [{ text: numbered("second answer line", 4) }],
     [{ text: numbered("third answer line", 60) }],
+    [{ text: numbered("fourth answer line", 40) }],
   ],
 };
 
@@ -59,17 +60,57 @@ test("page flip keeps a new prompt at the top and resumes following", { timeout:
     await pi.waitFor("third answer line 60");
     assert.ok(rowOf(pi, "third answer line 60") >= 0, `last answer line is not visible\n${pi.screen().join("\n")}`);
 
-    for (let i = 0; i < 10; i++) {
-      const screen = pi.screen();
-      const inMiddle = screen.some((line) => line.includes("third answer line 30"));
-      const promptGone = !screen.some((line) => line.trim() === "third question");
-      if (inMiddle && promptGone) break;
-      pi.press("pageup");
-      await sleep(200);
-    }
-    const first = pi.screen()[0];
-    assert.ok(first.includes("› ") && first.includes("prompt 3"), `sticky prompt missing\n${pi.screen().join("\n")}`);
+    // The answer outgrew the viewport, so the prompt is above it and the sticky prompt takes over.
+    await sleep(800);
+    assert.equal(
+      pi
+        .screen()[0]
+        .slice(0, cols - 1)
+        .trim(),
+      "",
+    );
+    assert.equal(pi.screen()[1].trim(), "third question");
     await pi.shot("sticky-prompt");
+
+    pi.paste("wrap line one with a few words to fill it\nwrap line two\nwrap line three\nwrap line four");
+    pi.type("\r");
+    await pi.waitFor("fourth answer line 40");
+    await sleep(800);
+    const sticky = pi.screen().slice(0, 5);
+    assert.equal(sticky[1].trim(), "wrap line one with a few words to fill it", pi.screen().join("\n"));
+    assert.equal(sticky[2].trim(), "wrap line two");
+    assert.equal(sticky[3].trim(), "wrap line three …");
+    await pi.shot("sticky-3-lines");
+  } finally {
+    await pi.close();
+  }
+});
+
+test("survives /new and still scrolls", { timeout: 240_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true });
+  try {
+    pi.type("first question\r");
+    await pi.waitFor("first answer line 40");
+
+    pi.type("/new\r");
+    await sleep(1500);
+
+    pi.type("second question\r");
+    await sleep(3000);
+
+    for (let i = 0; i < 4; i++) {
+      pi.press("pageup");
+      await sleep(150);
+    }
+    pi.type("\x1b[<64;50;10M");
+    await sleep(200);
+    pi.type("\x1b[<65;50;10M");
+    await sleep(2000);
+
+    // The footer names the model while Pi runs; a crashed runtime leaves it frozen or gone.
+    await pi.waitFor("scripted", 2000);
+    assert.ok(!pi.screen().join("\n").includes("stale"), `stale ctx crash\n${pi.screen().join("\n")}`);
+    await pi.shot("after-new");
   } finally {
     await pi.close();
   }

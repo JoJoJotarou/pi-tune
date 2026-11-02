@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 import { collectBlocks } from "../src/viewer/blocks.ts";
 import { ViewerComponent } from "../src/viewer/component.ts";
 
@@ -21,7 +22,7 @@ export default function (pi: ExtensionAPI) {
         ),
       {
         overlay: true,
-        overlayOptions: { width: "100%", maxHeight: "80%", anchor: "center" },
+        overlayOptions: MODAL_OVERLAY,
       },
     );
   };
