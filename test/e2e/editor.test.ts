@@ -75,6 +75,20 @@ test("editor paste, preview, stash and border", { timeout: 180_000 }, async () =
   }
 });
 
+test("enter right after a paste sends the message", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, cols: 100, rows: 30 });
+  try {
+    pi.paste(pasted);
+    await pi.waitFor("[paste #1 +30 lines]");
+    pi.press("enter");
+    await pi.waitFor("ready");
+    assert.ok(!pi.screen().join("\n").includes("e expand · d delete · esc close"));
+    await pi.shot("editor-paste-enter-sends");
+  } finally {
+    await pi.close();
+  }
+});
+
 test("editor before tune", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, tune: false, cols: 100, rows: 30 });
   try {

@@ -6,13 +6,13 @@ export interface PasteMarker {
 
 const MARKER = /\[paste #(\d+) (?:\+(\d+) lines|(\d+) chars)\]/g;
 
-/** Find the paste marker that contains `offset`, or ends exactly there. */
+/** Find the paste marker whose characters include `offset` (the cursor block covers one of them). */
 export function markerAt(text: string, offset: number): PasteMarker | undefined {
   MARKER.lastIndex = 0;
   for (let match = MARKER.exec(text); match; match = MARKER.exec(text)) {
     const start = match.index;
     const end = start + match[0].length;
-    if (offset >= start && offset <= end) {
+    if (offset >= start && offset < end) {
       return { id: Number(match[1]), start, end };
     }
     if (start > offset) break;

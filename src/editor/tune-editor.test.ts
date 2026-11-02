@@ -71,8 +71,23 @@ test("enter on a marker opens the preview instead of submitting", () => {
   const previews: number[] = [];
   const editor = makeEditor((id) => previews.push(id));
   editor.setText("[paste #2 +12 lines]");
+  editor.handleInput("\x1b[D");
   editor.handleInput("\r");
   assert.deepEqual(previews, [2]);
+});
+
+test("enter just past a marker submits", () => {
+  const previews: number[] = [];
+  const editor = makeEditor((id) => previews.push(id));
+  let submitted = "";
+  editor.onSubmit = (text) => {
+    submitted = text;
+  };
+  editor.setText("[paste #2 +12 lines]");
+  assert.deepEqual(editor.getCursor(), { line: 0, col: 20 });
+  editor.handleInput("\r");
+  assert.deepEqual(previews, []);
+  assert.equal(submitted, "[paste #2 +12 lines]");
 });
 
 test("enter elsewhere still submits", () => {
