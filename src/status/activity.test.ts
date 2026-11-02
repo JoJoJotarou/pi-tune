@@ -51,7 +51,7 @@ test("a running tool shows name and first command line", () => {
     [t0, { type: "agent_start" }],
     [t0 + 10_800, { type: "tool_execution_start", id: "1", name: "bash", args: { command: "sleep 6\nrm -rf /" } }],
   ]);
-  assert.equal(line(state, t0 + 14_000), "bash sleep 6   14.0s · esc to stop");
+  assert.equal(line(state, t0 + 14_000), "bash sleep 6   14s · esc to stop");
 });
 
 test("parallel tools show the most recent one plus the others", () => {
