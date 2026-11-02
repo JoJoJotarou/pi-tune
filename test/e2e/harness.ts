@@ -257,7 +257,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
       if (!dir) return;
       await queue;
       mkdirSync(dir, { recursive: true });
-      renderPng(term, join(dir, `${name}.png`));
+      renderPng(term, join(dir, `${name}.png`), options.settings?.theme === "light" ? "light" : "dark");
     },
     async close() {
       try {
