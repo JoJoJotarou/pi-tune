@@ -1,23 +1,14 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import {
-  appendToDocument,
-  asFlippable,
-  asScrollable,
-  collectPrompts,
-  FlipSpacer,
-  jumpTo,
-  type ScrollableTui,
-} from "../src/internals/transcript.ts";
+import { asScrollable, collectPrompts, jumpTo, type ScrollableTui } from "../src/internals/transcript.ts";
 import { StickyBar } from "../src/navigation/sticky.ts";
-import { promptLabel, TimelineRail } from "../src/navigation/timeline.ts";
+import { promptLabel, RAIL_WIDTH, TimelineHoverCard, TimelineRail } from "../src/navigation/timeline.ts";
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;
-  let disabledReason: string | undefined;
+  let timelineDisabledReason: string | undefined;
   let stickyDisabledReason: string | undefined;
-  let flipDisabledReason: string | undefined;
   let stickyShown = false;
-  let flipInstalled = false;
+  let timelineShown = false;
 
   // Session replacement invalidates the ctx the overlays were created with, so errors are reported through a
   // callback that session_start refreshes and session_shutdown clears.
@@ -28,28 +19,46 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     notify = (message, level) => ctx.ui.notify(message, level);
-    ctx.ui.setWidget("pi-tune-rail", (tui, widgetTheme) => {
+    ctx.ui.setWidget("pi-tune-navigation", (tui, widgetTheme) => {
       theme = widgetTheme;
-      if (!tuiRef && disabledReason === undefined) {
+
+      if (!timelineShown && timelineDisabledReason === undefined) {
         const scrollable = asScrollable(tui);
-        if (scrollable) {
+        if (!scrollable) {
+          timelineDisabledReason = "TUI has no scrollable transcript";
+          notify?.(`pi-tune timeline disabled: ${timelineDisabledReason}`, "warning");
+        } else {
           tuiRef = scrollable;
+          timelineShown = true;
+          const card = new TimelineHoverCard(() => theme);
           const rail = new TimelineRail(
             scrollable,
             () => theme,
             (error) => {
-              if (disabledReason === undefined) {
-                disabledReason = error.message;
+              if (timelineDisabledReason === undefined) {
+                timelineDisabledReason = error.message;
                 notify?.(`pi-tune timeline disabled: ${error.message}`, "warning");
               }
             },
+            card,
           );
-          tui.showOverlay(rail, { anchor: "top-right", width: 1, nonCapturing: true });
+          // The rail only exists while it has something to show; Pi's own scrollbar works otherwise.
+          tui.showOverlay(rail, {
+            anchor: "top-right",
+            width: RAIL_WIDTH,
+            nonCapturing: true,
+            visible: () => rail.visible(),
+          });
+          tui.showOverlay(card, card.options);
         }
       }
+
       if (!stickyShown && stickyDisabledReason === undefined) {
         const scrollable = asScrollable(tui);
-        if (scrollable) {
+        if (!scrollable) {
+          stickyDisabledReason = "TUI has no scrollable transcript";
+          notify?.(`pi-tune sticky prompt disabled: ${stickyDisabledReason}`, "warning");
+        } else {
           stickyShown = true;
           const sticky = new StickyBar(
             scrollable,
@@ -61,28 +70,12 @@ export default function (pi: ExtensionAPI) {
               }
             },
           );
-          tui.showOverlay(sticky, { anchor: "top-left", width: "100%", nonCapturing: true });
-        }
-      }
-      if (!flipInstalled && flipDisabledReason === undefined) {
-        const flippable = asFlippable(tui);
-        if (!flippable) {
-          flipDisabledReason = "TUI has no scrollToBottom";
-          notify?.(`pi-tune page flip disabled: ${flipDisabledReason}`, "warning");
-        } else {
-          const spacer = new FlipSpacer(flippable, (error) => {
-            if (flipDisabledReason === undefined) {
-              flipDisabledReason = error.message;
-              notify?.(`pi-tune page flip disabled: ${error.message}`, "warning");
-            }
+          tui.showOverlay(sticky, {
+            anchor: "top-left",
+            width: "100%",
+            nonCapturing: true,
+            visible: () => sticky.visible(),
           });
-          const failure = appendToDocument(tui, spacer);
-          if (failure) {
-            flipDisabledReason = failure.message;
-            notify?.(`pi-tune page flip disabled: ${failure.message}`, "warning");
-          } else {
-            flipInstalled = true;
-          }
         }
       }
       return { render: () => [], invalidate() {} };
@@ -101,13 +94,13 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("Timeline needs fullscreen mode", "warning");
         return;
       }
-      if (disabledReason !== undefined) {
-        ctx.ui.notify(`pi-tune timeline disabled: ${disabledReason}`, "warning");
+      if (timelineDisabledReason !== undefined) {
+        ctx.ui.notify(`pi-tune timeline disabled: ${timelineDisabledReason}`, "warning");
         return;
       }
       const transcript = collectPrompts(tui, tui.terminal.columns);
       if (transcript instanceof Error) {
-        disabledReason = transcript.message;
+        timelineDisabledReason = transcript.message;
         ctx.ui.notify(`pi-tune timeline disabled: ${transcript.message}`, "warning");
         return;
       }

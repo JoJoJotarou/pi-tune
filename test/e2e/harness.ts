@@ -40,6 +40,9 @@ export interface PiSession {
   paste(text: string): void;
   click(col: number, row: number, count?: number): void;
   clickText(text: string, nth?: number, count?: number): void;
+  /** Move the pointer (SGR motion, no button) so an overlay's hover state updates. */
+  move(col: number, row: number): void;
+  wheel(col: number, row: number, direction?: "up" | "down"): void;
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
   screen(): string[];
@@ -244,6 +247,12 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
         pty.write(`\x1b[<0;${col + 1};${row + 1}M`);
         pty.write(`\x1b[<0;${col + 1};${row + 1}m`);
       }
+    },
+    move(col, row) {
+      pty.write(`\x1b[<35;${col + 1};${row + 1}M`);
+    },
+    wheel(col, row, direction = "down") {
+      pty.write(`\x1b[<${direction === "up" ? 64 : 65};${col + 1};${row + 1}M`);
     },
     clickText(text, nth = 1, count = 1) {
       let seen = 0;

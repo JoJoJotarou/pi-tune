@@ -110,7 +110,7 @@ test("cuts a long prompt with an ellipsis instead of overflowing", () => {
   assert.ok(plain(rows[3]).trimEnd().endsWith("…"), JSON.stringify(plain(rows[3])));
 });
 
-test("leaves the last column free for the rail", () => {
+test("leaves the rail columns free", () => {
   const bar = new StickyBar(
     stickyTui(80) as never,
     () => testTheme("dark"),
@@ -120,7 +120,7 @@ test("leaves the last column free for the rail", () => {
   const lines = bar.render(80);
 
   assert.equal(lines.length, 3);
-  for (const line of lines) assert.equal(visibleWidth(line), 79);
+  for (const line of lines) assert.equal(visibleWidth(line), 78);
 });
 
 test("renders with the theme current at render time", () => {

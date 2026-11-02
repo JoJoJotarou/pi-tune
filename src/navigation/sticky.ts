@@ -1,6 +1,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { collectPrompts, type Prompt, type ScrollableTui } from "../internals/transcript.ts";
+import { RAIL_WIDTH } from "./timeline.ts";
 
 export interface StickyPrompt {
   index: number;
@@ -53,6 +54,8 @@ export class StickyBar implements Component {
   private readonly getTheme: () => Theme;
   private readonly onError: (error: Error) => void;
   private disabled = false;
+  /** Prompt computed by `visible()` and reused by the next render in the same frame. */
+  private pending: StickyPrompt | undefined;
 
   constructor(tui: ScrollableTui, getTheme: () => Theme, onError: (error: Error) => void) {
     this.tui = tui;
@@ -60,18 +63,32 @@ export class StickyBar implements Component {
     this.onError = onError;
   }
 
-  render(width: number): string[] {
-    if (this.disabled) return [];
+  private current(): StickyPrompt | undefined {
     const transcript = collectPrompts(this.tui, this.tui.terminal.columns);
     if (transcript instanceof Error) {
-      this.disabled = true;
-      this.onError(transcript);
-      return [];
+      if (!this.disabled) {
+        this.disabled = true;
+        this.onError(transcript);
+      }
+      return undefined;
     }
-    const sticky = stickyPrompt(transcript.prompts, this.tui.viewportTop);
+    return stickyPrompt(transcript.prompts, this.tui.viewportTop);
+  }
+
+  /** Overlay gate: Pi's own scrollbar and selection work only while no overlay is visible. */
+  visible(): boolean {
+    if (this.disabled) return false;
+    this.pending = this.current();
+    return this.pending !== undefined;
+  }
+
+  render(width: number): string[] {
+    if (this.disabled) return [];
+    const sticky = this.pending ?? this.current();
+    this.pending = undefined;
     if (!sticky) return [];
-    // The last column stays free for the timeline rail.
-    return stickyRows(sticky, Math.max(0, width - 1), this.getTheme());
+    // The last columns stay free for the timeline rail.
+    return stickyRows(sticky, Math.max(0, width - RAIL_WIDTH), this.getTheme());
   }
 
   invalidate(): void {}
