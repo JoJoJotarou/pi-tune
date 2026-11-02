@@ -24,6 +24,10 @@ async function runTurns(pi: PiSession): Promise<void> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((done) => setTimeout(done, ms));
+}
+
 function lastColumn(pi: PiSession): { row: number; cell: string }[] {
   return pi.screen().map((line, row) => ({ row, cell: line.length >= cols ? line[cols - 1] : "" }));
 }
@@ -73,6 +77,33 @@ test("timeline leaves the transcript unchanged without pi-tune", { timeout: 180_
   try {
     await runTurns(pi);
     await pi.shot("timeline-before");
+
+    const seen = new Set<string>();
+    for (let i = 0; i < 12 && seen.size < questions.length; i++) {
+      const screen = pi.screen().join("\n");
+      for (const question of questions) if (screen.includes(question)) seen.add(question);
+      if (seen.size === questions.length) break;
+      pi.press("pageup");
+      await sleep(200);
+    }
+    assert.deepEqual([...seen].sort(), [...questions].sort(), `missing prompts\n${pi.screen().join("\n")}`);
+  } finally {
+    await pi.close();
+  }
+});
+
+test("timeline reports that it needs fullscreen mode outside fullscreen", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true, settings: { tuiMode: "regular" } });
+  try {
+    pi.type(`${questions[0]}\r`);
+    await pi.waitFor("answer 1 line 20");
+
+    pi.type("/timeline\r");
+    await pi.waitFor("Timeline needs fullscreen mode");
+    await pi.shot("timeline-regular");
+
+    pi.type(`${questions[1]}\r`);
+    await pi.waitFor("answer 2 line 20");
   } finally {
     await pi.close();
   }
