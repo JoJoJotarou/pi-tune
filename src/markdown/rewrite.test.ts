@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
-import { Markdown, stripTerminalSequences } from "@earendil-works/pi-tui";
+import { Markdown, setCapabilityOverrides, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { appendLinkDomains, rewriteHeadings, tablesToLists } from "./rewrite.ts";
 
 initTheme("dark", false);
+// Pi prints a link's URL after its text unless the terminal supports OSC 8 links; pin that so CI renders like a modern terminal.
+setCapabilityOverrides({ hyperlinks: true });
 
 const theme = testTheme("dark");
 
