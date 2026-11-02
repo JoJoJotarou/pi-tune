@@ -75,6 +75,36 @@ test("page flip keeps a new prompt at the top and resumes following", { timeout:
   }
 });
 
+test("survives /new and still scrolls", { timeout: 240_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true });
+  try {
+    pi.type("first question\r");
+    await pi.waitFor("first answer line 40");
+
+    pi.type("/new\r");
+    await sleep(1500);
+
+    pi.type("second question\r");
+    await sleep(3000);
+
+    for (let i = 0; i < 4; i++) {
+      pi.press("pageup");
+      await sleep(150);
+    }
+    pi.type("\x1b[<64;50;10M");
+    await sleep(200);
+    pi.type("\x1b[<65;50;10M");
+    await sleep(2000);
+
+    // The footer names the model while Pi runs; a crashed runtime leaves it frozen or gone.
+    await pi.waitFor("scripted", 2000);
+    assert.ok(!pi.screen().join("\n").includes("stale"), `stale ctx crash\n${pi.screen().join("\n")}`);
+    await pi.shot("after-new");
+  } finally {
+    await pi.close();
+  }
+});
+
 test("without pi-tune a new prompt scrolls in at the bottom", { timeout: 240_000 }, async () => {
   const pi = await startPi({ scenario, cols, rows, tune: false });
   try {

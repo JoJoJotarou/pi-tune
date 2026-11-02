@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import {
   appendToDocument,
   asFlippable,
@@ -19,20 +19,28 @@ export default function (pi: ExtensionAPI) {
   let stickyShown = false;
   let flipInstalled = false;
 
+  // Session replacement invalidates the ctx the overlays were created with, so errors are reported through a
+  // callback that session_start refreshes and session_shutdown clears.
+  let notify: ((message: string, level: "warning") => void) | undefined;
+  // Overlays outlive the widget factory call that created them; the factory hands us a theme that stays valid.
+  let theme: Theme;
+
   pi.on("session_start", async (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setWidget("pi-tune-rail", (tui, _theme) => {
+    notify = (message, level) => ctx.ui.notify(message, level);
+    ctx.ui.setWidget("pi-tune-rail", (tui, widgetTheme) => {
+      theme = widgetTheme;
       if (!tuiRef && disabledReason === undefined) {
         const scrollable = asScrollable(tui);
         if (scrollable) {
           tuiRef = scrollable;
           const rail = new TimelineRail(
             scrollable,
-            () => ctx.ui.theme,
+            () => theme,
             (error) => {
               if (disabledReason === undefined) {
                 disabledReason = error.message;
-                ctx.ui.notify(`pi-tune timeline disabled: ${error.message}`, "warning");
+                notify?.(`pi-tune timeline disabled: ${error.message}`, "warning");
               }
             },
           );
@@ -45,11 +53,11 @@ export default function (pi: ExtensionAPI) {
           stickyShown = true;
           const sticky = new StickyBar(
             scrollable,
-            () => ctx.ui.theme,
+            () => theme,
             (error) => {
               if (stickyDisabledReason === undefined) {
                 stickyDisabledReason = error.message;
-                ctx.ui.notify(`pi-tune sticky prompt disabled: ${error.message}`, "warning");
+                notify?.(`pi-tune sticky prompt disabled: ${error.message}`, "warning");
               }
             },
           );
@@ -60,18 +68,18 @@ export default function (pi: ExtensionAPI) {
         const flippable = asFlippable(tui);
         if (!flippable) {
           flipDisabledReason = "TUI has no scrollToBottom";
-          ctx.ui.notify(`pi-tune page flip disabled: ${flipDisabledReason}`, "warning");
+          notify?.(`pi-tune page flip disabled: ${flipDisabledReason}`, "warning");
         } else {
           const spacer = new FlipSpacer(flippable, (error) => {
             if (flipDisabledReason === undefined) {
               flipDisabledReason = error.message;
-              ctx.ui.notify(`pi-tune page flip disabled: ${error.message}`, "warning");
+              notify?.(`pi-tune page flip disabled: ${error.message}`, "warning");
             }
           });
           const failure = appendToDocument(tui, spacer);
           if (failure) {
             flipDisabledReason = failure.message;
-            ctx.ui.notify(`pi-tune page flip disabled: ${failure.message}`, "warning");
+            notify?.(`pi-tune page flip disabled: ${failure.message}`, "warning");
           } else {
             flipInstalled = true;
           }
@@ -79,6 +87,10 @@ export default function (pi: ExtensionAPI) {
       }
       return { render: () => [], invalidate() {} };
     });
+  });
+
+  pi.on("session_shutdown", async () => {
+    notify = undefined;
   });
 
   pi.registerCommand("timeline", {
