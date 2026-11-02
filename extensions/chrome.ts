@@ -1,11 +1,6 @@
 import { basename } from "node:path";
 import type { Usage } from "@earendil-works/pi-ai";
-import {
-  type ExtensionAPI,
-  type ExtensionContext,
-  type SessionEntry,
-  VERSION,
-} from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, type SessionEntry, VERSION } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
