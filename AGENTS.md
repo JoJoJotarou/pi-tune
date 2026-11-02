@@ -16,6 +16,8 @@ input box and status line. Extensions only. Built and tested against Pi 1.4.0.
   check fails, it reports that failure to the caller, and the caller disables the feature with one
   `ctx.ui.notify(…, "warning")`. Never fail silently.
 - `test/theme.ts`: `testTheme("dark" | "light")` returns a real Pi `Theme` for unit tests.
+- `test/e2e/`: real Pi in a pseudo-terminal, driven by a scripted model. See `test/e2e/README.md`. Acceptance
+  screenshots: `PI_TUNE_SHOTS=<dir> npm run e2e`.
 
 ## Commands
 
@@ -25,6 +27,7 @@ npm run lint
 npm run typecheck
 npm test           # unit tests: node --test "src/**/*.test.ts"
 npm run smoke      # loads the package in Pi (rpc mode) and fails on any extension error
+npm run e2e        # real Pi in a pseudo-terminal (needs rg and fd for the grep and find tools)
 npm run ci         # lint + typecheck + test + smoke
 ```
 
