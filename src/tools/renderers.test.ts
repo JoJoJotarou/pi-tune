@@ -11,6 +11,7 @@ import {
   createGrepTool,
   createLsTool,
   createReadTool,
+  createWriteTool,
   initTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -23,6 +24,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { toolRenderers } from "./renderers.ts";
+import { recordWriteTarget } from "./write.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-tune-tools-"));
 const bash = createBashTool(cwd);
@@ -573,4 +575,174 @@ test("an edit result without a patch falls back to Pi's renderer and has no meta
   assert.equal(ctx.state.meta, undefined);
   const header = callLines("edit", args, ctx, 80)[0];
   assert.ok(!header.includes("+0 −0"), header);
+});
+
+let writeCalls = 0;
+
+interface RealWrite {
+  result: AgentToolResult<unknown>;
+  args: { path: string; content: string };
+  toolCallId: string;
+}
+
+/** Runs Pi's write tool after recording what the target looked like, as the extension does. */
+async function realWrite(name: string, oldText: string | undefined, content: string): Promise<RealWrite> {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-write-"));
+  if (oldText !== undefined) writeFileSync(join(dir, name), oldText);
+  writeCalls += 1;
+  const toolCallId = `write-${writeCalls}`;
+  await recordWriteTarget(toolCallId, dir, name);
+  const result = await createWriteTool(dir).execute("renderers-test", { path: name, content });
+  return { result, args: { path: name, content }, toolCallId };
+}
+
+const WRITE_LINES = Array.from({ length: 15 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n");
+
+test("a new file shows its line count and the first numbered rows", async () => {
+  const content = "export const a = 1;\nexport const b = 2;\n";
+  const { result, args, toolCallId } = await realWrite("small.ts", undefined, content);
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.ok(header.endsWith(" new file · 2 lines"), header);
+  assert.deepEqual(
+    body.map((line) => line.trimEnd()),
+    ["  1 │ export const a = 1;", "  2 │ export const b = 2;"],
+  );
+});
+
+test("a new file of fifteen lines folds to three numbered rows and the rest", async () => {
+  const content = `${WRITE_LINES}\n`;
+  const { result, args, toolCallId } = await realWrite("server.ts", undefined, content);
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.ok(header.endsWith(" new file · 15 lines"), header);
+  assert.equal(body.length, 4);
+  assert.deepEqual(
+    body.slice(0, 3).map((line) => line.trimEnd()),
+    ["   1 │ const value1 = 1;", "   2 │ const value2 = 2;", "   3 │ const value3 = 3;"],
+  );
+  assert.match(body[3], /^ {2}┄ 12 more lines ·/);
+});
+
+test("expanded new files show every numbered row", async () => {
+  const content = `${WRITE_LINES}\n`;
+  const { result, args, toolCallId } = await realWrite("expanded.ts", undefined, content);
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: true, isPartial: false }, ctx, 80);
+
+  assert.equal(body.length, 15);
+  assert.deepEqual(body.map((line) => line.trimEnd())[14], "  15 │ const value15 = 15;");
+  assert.ok(callLines("write", args, ctx, 80)[0].endsWith(" new file · 15 lines"));
+});
+
+const WRITE_README = `${Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n")}\n`;
+
+test("an overwrite shows how many lines it added and removed with its diff", async () => {
+  const content = `${WRITE_README.replace("line 4", "line four")}line 9\n`;
+  const { result, args, toolCallId } = await realWrite("README.md", WRITE_README, content);
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.ok(header.endsWith(" overwrite · +2 −1"), header);
+  assert.ok(
+    body.some((line) => line.includes("│-line 4")),
+    body.join("\n"),
+  );
+  assert.ok(
+    body.some((line) => line.includes("│+line four")),
+    body.join("\n"),
+  );
+  assert.ok(
+    body.some((line) => line.includes("│+line 9")),
+    body.join("\n"),
+  );
+});
+
+test("an overwrite of more than eight changed lines folds until expanded", async () => {
+  const oldText = `${Array.from({ length: 12 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n")}\n`;
+  const content = `${Array.from({ length: 12 }, (_, index) => `const value${index + 1} = ${(index + 1) * 10};`).join(
+    "\n",
+  )}\n`;
+  const { result, args, toolCallId } = await realWrite("big.ts", oldText, content);
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.deepEqual(body, []);
+  assert.ok(header.endsWith(" overwrite · +12 −12 · ctrl+o"), header);
+
+  const expandedCtx = context({ args, toolCallId });
+  const expanded = resultLines("write", result, { expanded: true, isPartial: false }, expandedCtx, 80);
+  assert.ok(
+    expanded.some((line) => line.includes("│-const value1 = 1;")),
+    expanded.join("\n"),
+  );
+  assert.ok(callLines("write", args, expandedCtx, 80)[0].endsWith(" overwrite · +12 −12"));
+});
+
+test("an overwrite without old text is a line count and no body", async () => {
+  const oldText = `${"x".repeat(1024 * 1024 + 1)}`;
+  const { result, args, toolCallId } = await realWrite("big.txt", oldText, "line one\nline two\n");
+  const ctx = context({ args, toolCallId });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.deepEqual(body, []);
+  assert.ok(header.endsWith(" overwrite · 2 lines"), header);
+});
+
+test("a write without a record is a line count and no body", async () => {
+  const content = `${WRITE_LINES}\n`;
+  const { result, args } = await realWrite("resumed.ts", undefined, content);
+  const ctx = context({ args, toolCallId: "resumed-session" });
+  const body = resultLines("write", result, { expanded: false, isPartial: false }, ctx, 80);
+  const header = callLines("write", args, ctx, 80)[0];
+
+  assert.deepEqual(body, []);
+  assert.ok(header.endsWith(" 15 lines"), header);
+});
+
+test("a running or failed write keeps the plain tool rows", async () => {
+  const { result, args, toolCallId } = await realWrite("running.ts", undefined, "a\n");
+  const running = context({ args, toolCallId, executionStarted: false });
+  assert.deepEqual(resultLines("write", result, { expanded: false, isPartial: false }, running, 80), []);
+  assert.equal(running.state.meta, undefined);
+
+  const failed = context({ args, toolCallId, isError: true });
+  const failedResult: AgentToolResult<unknown> = {
+    content: [{ type: "text", text: "EACCES: permission denied" }],
+    details: undefined,
+    isError: true,
+  };
+  const lines = resultLines("write", failedResult, { expanded: false, isPartial: false }, failed, 80);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^ {2}│ EACCES/);
+  assert.equal(failed.state.meta, undefined);
+});
+
+test("write rows stay within the width at 80 and 40", async () => {
+  const content = `${WRITE_LINES}\n`;
+  const fresh = await realWrite("wide.ts", undefined, content);
+  const changed = await realWrite("README.md", WRITE_README, `${WRITE_README.replace("line 4", "line four")}line 9\n`);
+
+  for (const width of [80, 40]) {
+    for (const expanded of [false, true]) {
+      for (const { result, args, toolCallId } of [fresh, changed]) {
+        const ctx = context({ args, toolCallId, outputPad: 2 });
+        const body = resultLines("write", result, { expanded, isPartial: false }, ctx, width);
+        assert.ok(body.length > 0, `width ${width}`);
+        for (const line of body) {
+          assert.ok(line.startsWith("    "), line);
+          assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(line)}`);
+        }
+        const header = callLines("write", args, ctx, width)[0];
+        assert.ok(visibleWidth(header) <= width, `width ${width}: ${JSON.stringify(header)}`);
+      }
+    }
+  }
 });
