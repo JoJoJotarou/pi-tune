@@ -49,5 +49,6 @@ npm run ci         # lint + typecheck + test + smoke
   Pi. Test at width 40 as well as at normal widths.
 - Take colors from the `Theme` you are handed (`theme.fg`, `theme.bg`, `theme.style`, `theme.colors`). Never
   hard-code ANSI colors.
-- Keep the user-visible wording consistent with the issue spec. UI text is Chinese where the spec shows Chinese.
+- All TUI text is English, short, and uses the exact strings given in the task spec. Issue mockups that show
+  Chinese UI text are to be read as their English equivalents.
 - Do not add a setting unless the issue asks for one.
