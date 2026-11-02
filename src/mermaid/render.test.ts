@@ -63,7 +63,7 @@ test("a mermaid fence inside a blockquote is replaced and stays quoted", () => {
   const input = ["> ```mermaid", ...flowchart.split("\n").map((line) => `> ${line}`), "> ```", ""].join("\n");
   const out = replaceMermaidFences(input, 100, theme);
   assert.ok(!out.includes("```"), out);
-  assert.ok(out.includes(theme.fg("dim", "◇ mermaid · flowchart")), out);
+  assert.ok(out.includes(theme.fg("dim", "◇ mermaid · flowchart ·")), out);
   for (const line of out.split("\n").filter((line) => line !== "")) {
     assert.ok(line.startsWith(">"), line);
   }
@@ -79,7 +79,7 @@ test("a diagram that fits renders art rows as code spans and the action row", ()
   for (const row of rows) assert.ok(row.startsWith("` ") && row.trimEnd().endsWith("`"), row);
   assert.ok(!out.includes("```"));
   assert.ok(out.includes(`[open preview](${url})`));
-  assert.ok(out.includes(theme.fg("dim", "◇ mermaid · flowchart")));
+  assert.ok(out.includes(`${theme.fg("dim", "◇ mermaid · flowchart ·")} [open preview](${url})`));
   assert.ok(out.includes(theme.fg("dim", "· alt+o source")));
   assert.ok(out.includes(theme.fg("borderMuted", "┌───────┐")));
   assert.ok(out.includes(theme.fg("text", "Start")));
@@ -89,9 +89,10 @@ test("a diagram that fits renders art rows as code spans and the action row", ()
 test("a diagram wider than the space shows the needs line and no art", () => {
   const out = mermaidMarkdown(flowchart, 5, theme, url);
   assert.ok(out);
-  assert.ok(out.includes(theme.fg("dim", "◇ mermaid · flowchart · needs 10 columns, have 5")));
-  assert.ok(!out.includes("┌"));
-  assert.ok(out.includes(`[open preview](${url})`));
+  assert.equal(
+    out,
+    `${theme.fg("dim", "◇ mermaid · flowchart · needs 10 columns, have 5 ·")} [open preview](${url}) ${theme.fg("dim", "· alt+o source")}`,
+  );
 });
 
 test("an unsupported or invalid source leaves the fence alone", () => {
