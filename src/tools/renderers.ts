@@ -3,23 +3,27 @@ import {
   type EditToolDetails,
   type FindToolDetails,
   type GrepToolDetails,
-  keyText,
   type LsToolDetails,
   type ReadToolDetails,
   type ReadToolInput,
+  renderDiff,
   type Theme,
   type ToolRendererResolver,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
-import type { StructuredPatchHunk } from "diff";
-import { exitCodeOf, failureExcerpt, summarizeCommand } from "./bash.ts";
-import { type DiffStats, diffStats, hunksFromPatch, renderDiff } from "./diff.ts";
-import { renderHeader, toolStatus } from "./header.ts";
+import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
+import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
+import { bashCommandLines, diffMeta, previewLines, trimOutput, truncationLine } from "./body.ts";
+import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
-import { findMeta, grepMeta, lsMeta, renderGrepRows } from "./search.ts";
-import { FOLD_LIMIT, planWrite, renderWriteLines, writeRecord } from "./write.ts";
+import { findMeta, grepMeta, lsMeta } from "./search.ts";
+import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
+
+/** Body lines start under the tool name: the header is indented by `outputPad`, the body by two more. */
+const BODY_INDENT = 2;
+/** Output lines shown for a failed call while it is collapsed. */
+const FAILURE_LINES = 3;
 
 interface CompactContext {
   state: Record<string, unknown>;
@@ -29,6 +33,9 @@ interface CompactContext {
   durationMs: number | undefined;
   outputPad: number;
 }
+
+/** Body lines at a given content width; the shell paints and indents them. */
+type LineSource = (width: number) => string[];
 
 function textArgs(args: unknown): Record<string, unknown> {
   return typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {};
@@ -100,24 +107,14 @@ function summaryFor(toolName: string, rawArgs: unknown): string {
   }
 }
 
-interface EditDiff {
-  path: string;
-  hunks: StructuredPatchHunk[];
+function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
+  return result.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
 }
 
-function editDiffOf(result: AgentToolResult<unknown>, rawArgs: unknown): EditDiff | undefined {
-  const details = result.details as EditToolDetails | undefined;
-  if (details === undefined || typeof details.patch !== "string") return undefined;
-  const path = stringArg(textArgs(rawArgs), "path");
-  if (path === undefined) return undefined;
-  return { path, hunks: hunksFromPatch(details.patch) };
-}
-
-function editMeta(stats: DiffStats, folded: boolean): string {
-  const counts = `+${stats.added} −${stats.removed}`;
-  return folded ? `${counts} · ${keyText("app.tools.expand")}` : counts;
-}
-
+/** The one header line, painted by the box around it. */
 class HeaderComponent implements Component {
   private readonly toolName: string;
   private readonly summary: string;
@@ -132,120 +129,78 @@ class HeaderComponent implements Component {
   }
 
   render(width: number): string[] {
-    const status = toolStatus(this.context);
     const meta = this.context.state.meta;
-    const header = renderHeader(
-      {
-        status,
-        name: this.toolName,
-        summary: this.summary,
-        meta: typeof meta === "string" ? meta : undefined,
-        durationMs: this.context.durationMs,
-      },
-      Math.max(0, width - this.context.outputPad),
-      this.theme,
-    );
-    return [truncateToWidth(`${" ".repeat(this.context.outputPad)}${header}`, width, "…")];
+    return [
+      renderHeader(
+        {
+          status: toolStatus(this.context),
+          name: this.toolName,
+          summary: this.summary,
+          meta: typeof meta === "string" ? meta : undefined,
+          durationMs: this.context.durationMs,
+        },
+        width,
+        this.theme,
+      ),
+    ];
   }
 
   invalidate(): void {}
 }
 
-class ResultComponent implements Component {
-  private readonly resultText: string;
-  private readonly theme: Theme;
-  private readonly context: CompactContext;
+/** Body lines indented under the tool name and cut to the width the box gives them. */
+class BodyComponent implements Component {
+  private readonly source: LineSource;
 
-  constructor(resultText: string, theme: Theme, context: CompactContext) {
-    this.resultText = resultText;
-    this.theme = theme;
-    this.context = context;
+  constructor(source: LineSource) {
+    this.source = source;
   }
 
   render(width: number): string[] {
-    if (toolStatus(this.context) !== "error") return [];
-
-    const indent = " ".repeat(this.context.outputPad + 2);
-    const prefix = `${indent}${this.theme.fg("dim", "│ ")}`;
-    const available = Math.max(0, width - this.context.outputPad - 4);
-
-    return failureExcerpt(this.resultText, keyText("app.tools.expand")).map((line) => {
-      const content = this.theme.fg("toolOutput", truncateToWidth(line, available, "…"));
-      return truncateToWidth(`${prefix}${content}`, width, "…");
-    });
+    const indent = " ".repeat(BODY_INDENT);
+    return this.source(Math.max(1, width - BODY_INDENT)).map((line) => truncateToWidth(`${indent}${line}`, width, "…"));
   }
 
   invalidate(): void {}
 }
 
-class DiffComponent implements Component {
-  private readonly diff: EditDiff;
-  private readonly contextLines: number;
+/** The header box: one line, no painted rows around it. The background follows the live status. */
+class HeaderBoxComponent implements Component {
+  private readonly header: HeaderComponent;
   private readonly theme: Theme;
   private readonly context: CompactContext;
 
-  constructor(diff: EditDiff, contextLines: number, theme: Theme, context: CompactContext) {
-    this.diff = diff;
-    this.contextLines = contextLines;
+  constructor(header: HeaderComponent, theme: Theme, context: CompactContext) {
+    this.header = header;
     this.theme = theme;
     this.context = context;
   }
 
   render(width: number): string[] {
-    const indentWidth = this.context.outputPad + 2;
-    const indent = " ".repeat(indentWidth);
-    const available = Math.max(1, width - indentWidth);
-    return renderDiff(this.diff.hunks, {
-      path: this.diff.path,
-      width: available,
-      theme: this.theme,
-      context: this.contextLines,
-    }).map((line) => truncateToWidth(`${indent}${line}`, width, "…"));
+    const box = new Box(this.context.outputPad, 0, statusBackground(toolStatus(this.context), this.theme));
+    box.addChild(this.header);
+    return box.render(width);
   }
 
   invalidate(): void {}
 }
 
-class WriteLinesComponent implements Component {
-  private readonly path: string;
-  private readonly content: string;
-  private readonly expanded: boolean;
+/** The body box: one painted blank row above and below the indented body lines. */
+class BodyBoxComponent implements Component {
+  private readonly lines: LineSource;
   private readonly theme: Theme;
   private readonly context: CompactContext;
 
-  constructor(path: string, content: string, expanded: boolean, theme: Theme, context: CompactContext) {
-    this.path = path;
-    this.content = content;
-    this.expanded = expanded;
+  constructor(lines: LineSource, theme: Theme, context: CompactContext) {
+    this.lines = lines;
     this.theme = theme;
     this.context = context;
   }
 
   render(width: number): string[] {
-    const indentWidth = this.context.outputPad + 2;
-    const indent = " ".repeat(indentWidth);
-    const available = Math.max(1, width - indentWidth);
-    return renderWriteLines(this.path, this.content, this.expanded, available, this.theme).map((line) =>
-      truncateToWidth(`${indent}${line}`, width, "…"),
-    );
-  }
-
-  invalidate(): void {}
-}
-
-class GrepRowsComponent implements Component {
-  private readonly result: AgentToolResult<GrepToolDetails | undefined>;
-  private readonly theme: Theme;
-  private readonly context: CompactContext;
-
-  constructor(result: AgentToolResult<GrepToolDetails | undefined>, theme: Theme, context: CompactContext) {
-    this.result = result;
-    this.theme = theme;
-    this.context = context;
-  }
-
-  render(width: number): string[] {
-    return renderGrepRows(this.result, width, this.theme, this.context.outputPad);
+    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
+    box.addChild(new BodyComponent(this.lines));
+    return box.render(width);
   }
 
   invalidate(): void {}
@@ -259,11 +214,36 @@ class EmptyComponent implements Component {
   invalidate(): void {}
 }
 
-function resultText(result: { content: Array<{ type: string; text?: string }> }): string {
-  return result.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text ?? "")
-    .join("\n");
+/**
+ * Pi hands `lastComponent` back to the renderer that produced it, and its own renderers reuse such a
+ * component (`clear()`) when they redraw. Never pass our block to them: they would mutate it.
+ */
+function nativeContext<T extends { lastComponent?: Component }>(context: T): T {
+  return { ...context, lastComponent: undefined };
+}
+
+/** Lines of a component at a content width, with no trailing blanks. */
+function componentSource(component: Component | undefined): LineSource {
+  return (width) => (component === undefined ? [] : trimOutput(component.render(width)));
+}
+
+/** The tail of a failed result plus the truncation line. */
+function errorSource(output: string, theme: Theme): LineSource {
+  return () => {
+    const { lines, hidden } = failureTail(output, FAILURE_LINES);
+    return hidden > 0 ? [...lines, truncationLine(hidden, theme)] : lines;
+  };
+}
+
+/** Pi's rendered diff, folded to its head unless expanded. */
+function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSource {
+  const lines = renderDiff(diffText).split("\n");
+  return () => previewLines(lines, expanded, theme);
+}
+
+function bashSource(command: string, expanded: boolean, native: LineSource, theme: Theme): LineSource {
+  if (!expanded) return native;
+  return (width) => [...bashCommandLines(command, width, theme), "", ...native(width)];
 }
 
 export const toolRenderers: ToolRendererResolver = (toolName, next) => {
@@ -271,47 +251,72 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
   if (!COMPACT_TOOLS.has(toolName) || !base) return base;
 
   const baseRenderResult = base.renderResult;
+
   return {
     ...base,
     renderShell: "self",
-    renderCall: (args, theme, context) => new HeaderComponent(toolName, summaryFor(toolName, args), theme, context),
+    renderCall: (args, theme, context) =>
+      new HeaderBoxComponent(new HeaderComponent(toolName, summaryFor(toolName, args), theme, context), theme, context),
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
       context.state.meta = resultMeta(toolName, context.args, result, context.isError, output);
+      const expanded = options.expanded;
+
       if (toolName === "edit") {
-        if (context.isError) return new ResultComponent(output, theme, context);
-        const diff = editDiffOf(result, context.args);
-        if (diff === undefined) {
+        if (context.isError) return new BodyBoxComponent(errorSource(output, theme), theme, context);
+        const details = result.details as EditToolDetails | undefined;
+        if (typeof details?.diff !== "string") {
           context.state.meta = undefined;
-          return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
+          const fallback = baseRenderResult?.(result, options, theme, nativeContext(context));
+          return fallback === undefined
+            ? new EmptyComponent()
+            : new BodyBoxComponent(componentSource(fallback), theme, context);
         }
-        const stats = diffStats(diff.hunks);
-        const folded = !options.expanded && stats.added + stats.removed > FOLD_LIMIT;
-        context.state.meta = editMeta(stats, folded);
-        if (folded) return new EmptyComponent();
-        return new DiffComponent(diff, options.expanded ? 3 : 1, theme, context);
+        const diff = details.diff;
+        context.state.meta = diffMeta(diff);
+        const lines = diffSource(diff, expanded, theme);
+        return new BodyBoxComponent(
+          (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
+          theme,
+          context,
+        );
       }
+
       if (toolName === "write") {
-        if (context.isError) return new ResultComponent(output, theme, context);
+        if (context.isError) return new BodyBoxComponent(errorSource(output, theme), theme, context);
         if (!context.executionStarted || options.isPartial) return new EmptyComponent();
 
         const path = stringArg(textArgs(context.args), "path") ?? "";
         const content = stringArg(textArgs(context.args), "content") ?? "";
-        const plan = planWrite(writeRecord(context.toolCallId), content, options.expanded);
+        const plan = planWrite(writeRecord(context.toolCallId), content);
         context.state.meta = plan.meta;
-        if (plan.body === "diff" && plan.hunks !== undefined) {
-          return new DiffComponent({ path, hunks: plan.hunks }, options.expanded ? 3 : 1, theme, context);
-        }
-        if (plan.body === "new") return new WriteLinesComponent(path, content, options.expanded, theme, context);
-        return new EmptyComponent();
+        if (plan.body === "none") return new EmptyComponent();
+
+        const lines: LineSource =
+          plan.body === "diff" && plan.diff !== undefined
+            ? diffSource(plan.diff, expanded, theme)
+            : (width) => renderWriteLines(path, content, expanded, width, theme);
+        return new BodyBoxComponent(
+          (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
+          theme,
+          context,
+        );
       }
-      if (options.expanded && toolName === "grep" && !context.isError) {
-        return new GrepRowsComponent(result, theme, context);
-      }
-      if (options.expanded) {
-        return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
-      }
-      return new ResultComponent(output, theme, context);
+
+      const native = componentSource(
+        baseRenderResult?.(result, { expanded: true, isPartial: false }, theme, nativeContext(context)),
+      );
+      const command = stringArg(textArgs(context.args), "command") ?? "";
+      const body = toolName === "bash" ? bashSource(command, expanded, native, theme) : native;
+      return new BodyBoxComponent(
+        (width) => {
+          if (toolStatus(context) === "error" && !expanded) return errorSource(output, theme)(width);
+          if (!expanded) return [];
+          return body(width);
+        },
+        theme,
+        context,
+      );
     },
   };
 };

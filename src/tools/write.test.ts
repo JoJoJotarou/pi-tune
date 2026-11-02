@@ -73,8 +73,8 @@ test("a new file is named by its line count and shows numbered rows", async () =
   await recordWriteTarget("small", cwd, "src/new.ts");
   await createWriteTool(cwd).execute("write-test", { path: "src/new.ts", content });
 
-  const plan = planWrite(writeRecord("small"), content, false);
-  assert.deepEqual(plan, { meta: "new file · 2 lines", body: "new" });
+  const plan = planWrite(writeRecord("small"), content);
+  assert.deepEqual(plan, { meta: "new · 2 lines", body: "lines" });
   assert.deepEqual(plain(renderWriteLines("src/new.ts", content, false, 80, theme)), [
     "1 │ const value1 = 1;",
     "2 │ const value2 = 2;",
@@ -87,7 +87,7 @@ test("a fifteen-line new file shows the first three rows and the fold marker", (
     " 1 │ const value1 = 1;",
     " 2 │ const value2 = 2;",
     " 3 │ const value3 = 3;",
-    "┄ 12 more lines · ctrl+o",
+    "… 12 more lines · click to expand",
   ]);
 
   const expanded = plain(renderWriteLines("new.ts", content, true, 80, theme));
@@ -107,26 +107,25 @@ test("an overwrite with old text diffs and counts its changes", async () => {
   const record = writeRecord("overwrite");
   assert.deepEqual(record, { existed: true, oldText });
 
-  const plan = planWrite(record, content, false);
+  const plan = planWrite(record, content);
   assert.equal(plan.meta, "overwrite · +2 −1");
   assert.equal(plan.body, "diff");
-  assert.ok((plan.hunks?.length ?? 0) > 0);
+  assert.match(plan.diff ?? "", /^ {2}1 const value1 = 1;$/m);
+  assert.match(plan.diff ?? "", /^- 3 const value3 = 3;$/m);
+  assert.match(plan.diff ?? "", /^\+ 3 const value3 = 30;$/m);
 });
 
-test("an overwrite of more than eight changed lines folds", () => {
+test("a large overwrite is still a diff; folding happens when it is rendered", () => {
   const oldText = lines(12);
   const content = Array.from({ length: 12 }, (_, index) => `const value${index + 1} = ${(index + 1) * 10};`).join("\n");
-  const plan = planWrite({ existed: true, oldText }, `${content}\n`, false);
-  assert.deepEqual(plan, { meta: "overwrite · +12 −12 · ctrl+o", body: "none" });
-
-  const expanded = planWrite({ existed: true, oldText }, `${content}\n`, true);
-  assert.equal(expanded.meta, "overwrite · +12 −12");
-  assert.equal(expanded.body, "diff");
+  const plan = planWrite({ existed: true, oldText }, `${content}\n`);
+  assert.equal(plan.meta, "overwrite · +12 −12");
+  assert.equal(plan.body, "diff");
 });
 
-test("an overwrite without old text and a write without a record have no body", () => {
-  assert.deepEqual(planWrite({ existed: true }, lines(6), false), { meta: "overwrite · 6 lines", body: "none" });
-  assert.deepEqual(planWrite(undefined, lines(4), false), { meta: "4 lines", body: "none" });
+test("an overwrite without old text shows the new lines and a write without a record has no body", () => {
+  assert.deepEqual(planWrite({ existed: true }, lines(6)), { meta: "overwrite", body: "lines" });
+  assert.deepEqual(planWrite(undefined, lines(4)), { meta: "4 lines", body: "none" });
 });
 
 test("write rows never exceed the width, at 80 and 40", () => {

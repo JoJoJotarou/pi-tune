@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { renderHeader, type ToolStatus, toolStatus } from "./header.ts";
+import { renderHeader, statusBackground, type ToolStatus, toolBgToken, toolStatus } from "./header.ts";
 
 const theme = testTheme();
 
@@ -146,5 +146,23 @@ test("never renders wider than the given width", () => {
       const line = renderHeader(parts, width, theme);
       assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(plain(line))}`);
     }
+  }
+});
+
+test("the status picks the background token Pi uses for that tool status", () => {
+  assert.equal(toolBgToken("running"), "toolPendingBg");
+  assert.equal(toolBgToken("success"), "toolSuccessBg");
+  assert.equal(toolBgToken("error"), "toolErrorBg");
+});
+
+test("a painted line opens with the background of its token and survives inner resets", () => {
+  for (const status of ["running", "success", "error"] as const) {
+    const token = toolBgToken(status);
+    const open = theme.bg(token, "").replace("\u001b[49m", "");
+    const paint = statusBackground(status, theme);
+    assert.ok(paint("plain").startsWith(open));
+    const reset = paint(`\u001b[31mred\u001b[0m after`);
+    assert.ok(reset.includes(`\u001b[0m${open}`), JSON.stringify(reset));
+    assert.ok(reset.endsWith("\u001b[49m"));
   }
 });

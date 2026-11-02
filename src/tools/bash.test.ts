@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { AgentToolResult, BashToolDetails } from "@earendil-works/pi-coding-agent";
 import { createBashTool } from "@earendil-works/pi-coding-agent";
-import { exitCodeOf, failureExcerpt, summarizeCommand } from "./bash.ts";
+import { exitCodeOf, failureTail, outputLines, summarizeCommand } from "./bash.ts";
 
 const cwd = mkdtempSync(join(tmpdir(), "pi-tune-bash-"));
 const bash = createBashTool(cwd);
@@ -43,36 +43,23 @@ test("exitCodeOf reads the exit code from Pi's bash error text", async () => {
   assert.equal(exitCodeOf(resultText(succeeded)), undefined);
 });
 
-test("failureExcerpt returns output of at most 6 lines whole", async () => {
-  const result = await bashResult("sh -c 'seq 1 6; exit 3'");
-  assert.deepEqual(failureExcerpt(resultText(result), "ctrl+o"), ["1", "2", "3", "4", "5", "6"]);
-});
-
-test("failureExcerpt folds longer output after the first 2 lines", async () => {
-  const result = await bashResult("sh -c 'seq 1 7; exit 3'");
-  assert.deepEqual(failureExcerpt(resultText(result), "ctrl+o"), [
-    "1",
-    "2",
-    "┄ 2 lines folded · ctrl+o",
-    "5",
-    "6",
-    "7",
-  ]);
-});
-
-test("failureExcerpt leaves Pi's exit-code trailer out of the output", async () => {
-  const result = await bashResult("sh -c 'seq 1 20; exit 3'");
-  const text = resultText(result);
+test("outputLines drops Pi's exit-code trailer and the (no output) placeholder", async () => {
+  const failed = await bashResult("sh -c 'seq 1 20; exit 3'");
+  const text = resultText(failed);
   assert.ok(text.includes("Command exited with code 3"));
-  const lines = failureExcerpt(text, "ctrl+o");
-  assert.equal(lines.length, 6);
-  assert.equal(lines[2], "┄ 15 lines folded · ctrl+o");
+  const lines = outputLines(text);
+  assert.equal(lines.length, 20);
   assert.ok(!lines.some((line) => line.includes("Command exited")));
+
+  const empty = await bashResult("sh -c 'exit 3'");
+  assert.match(resultText(empty), /^\(no output\)/);
+  assert.deepEqual(outputLines(resultText(empty)), []);
 });
 
-test("failureExcerpt drops Pi's (no output) placeholder", async () => {
-  const result = await bashResult("sh -c 'exit 3'");
-  const text = resultText(result);
-  assert.match(text, /^\(no output\)/);
-  assert.deepEqual(failureExcerpt(text, "ctrl+o"), []);
+test("failureTail keeps the last lines and counts the hidden ones", async () => {
+  const short = await bashResult("sh -c 'seq 1 2; exit 3'");
+  assert.deepEqual(failureTail(resultText(short), 3), { lines: ["1", "2"], hidden: 0 });
+
+  const long = await bashResult("sh -c 'seq 1 20; exit 3'");
+  assert.deepEqual(failureTail(resultText(long), 3), { lines: ["18", "19", "20"], hidden: 17 });
 });

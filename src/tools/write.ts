@@ -1,16 +1,11 @@
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { getLanguageFromPath, highlightCode, keyText } from "@earendil-works/pi-coding-agent";
+import { generateDiffString, getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import type { StructuredPatchHunk } from "diff";
-import { diffStats, hunksFromTexts } from "./diff.ts";
+import { diffMeta, PREVIEW_LINES, truncationLine } from "./body.ts";
 import { countLines, plural } from "./search.ts";
 
-/** Changed lines above which the diff folds, as for edit. */
-export const FOLD_LIMIT = 8;
-/** New files show this many lines while collapsed. */
-const NEW_FILE_ROWS = 3;
 const MAX_OLD_BYTES = 1024 * 1024;
 
 /** What the target file looked like before a write call. */
@@ -52,23 +47,20 @@ export async function recordWriteTarget(toolCallId: string, cwd: string, path: s
 
 export interface WritePlan {
   meta: string;
-  body: "none" | "new" | "diff";
-  hunks?: StructuredPatchHunk[];
+  body: "none" | "lines" | "diff";
+  /** Pi's rendered diff text, for an overwrite whose old content is known. */
+  diff?: string;
 }
 
 /** The header meta and the body kind of a finished write. */
-export function planWrite(record: WriteRecord | undefined, content: string, expanded: boolean): WritePlan {
+export function planWrite(record: WriteRecord | undefined, content: string): WritePlan {
   const lines = plural(countLines(content), "line");
   if (record === undefined) return { meta: lines, body: "none" };
-  if (!record.existed) return { meta: `new file · ${lines}`, body: "new" };
-  if (record.oldText === undefined) return { meta: `overwrite · ${lines}`, body: "none" };
+  if (!record.existed) return { meta: `new · ${lines}`, body: "lines" };
+  if (record.oldText === undefined) return { meta: "overwrite", body: "lines" };
 
-  const hunks = hunksFromTexts(record.oldText, content);
-  const stats = diffStats(hunks);
-  const folded = !expanded && stats.added + stats.removed > FOLD_LIMIT;
-  const counts = `overwrite · +${stats.added} −${stats.removed}`;
-  if (folded) return { meta: `${counts} · ${keyText("app.tools.expand")}`, body: "none" };
-  return { meta: counts, body: "diff", hunks };
+  const diff = generateDiffString(record.oldText, content).diff;
+  return { meta: diffMeta(diff, "overwrite"), body: "diff", diff };
 }
 
 /** Numbered rows for a new file: the first lines while collapsed, all of them expanded. */
@@ -83,7 +75,7 @@ export function renderWriteLines(
   const total = lines.length;
   if (total === 0) return [];
 
-  const shown = expanded ? total : Math.min(total, NEW_FILE_ROWS);
+  const shown = expanded ? total : Math.min(total, PREVIEW_LINES);
   const numberWidth = String(total).length;
   const styled = highlightLines(lines, path);
   const rows: string[] = [];
@@ -92,11 +84,7 @@ export function renderWriteLines(
     const row = `${theme.fg("dim", `${number} │ `)}${styled?.[index] ?? lines[index]}`;
     rows.push(truncateToWidth(row, width, "…"));
   }
-  if (total > shown) {
-    const more = total - shown;
-    const marker = `┄ ${more} more ${more === 1 ? "line" : "lines"} · ${keyText("app.tools.expand")}`;
-    rows.push(truncateToWidth(theme.fg("dim", marker), width, "…"));
-  }
+  if (total > shown) rows.push(truncateToWidth(truncationLine(total - shown, theme), width, "…"));
   return rows;
 }
 

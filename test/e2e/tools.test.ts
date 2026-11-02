@@ -23,6 +23,13 @@ const failure: Scenario = {
   turns: [[{ tool: "bash", args: { command: "sh -c 'seq 1 20; exit 3'" } }], [{ text: "It failed." }]],
 };
 
+const longTokens = Array.from({ length: 35 }, (_, index) => `tok${index + 1}`);
+const longCommand = `true # ${longTokens.join(" ")}`;
+const longBash: Scenario = {
+  files,
+  turns: [[{ tool: "bash", args: { command: longCommand } }], [{ text: "Long command done." }]],
+};
+
 const heredocLines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
 const heredoc: Scenario = {
   files,
@@ -54,10 +61,6 @@ function countRows(lines: string[], matcher: RegExp): number {
   return lines.filter((line) => matcher.test(line)).length;
 }
 
-function assertRow(lines: string[], matcher: string | RegExp, label: string): void {
-  assert.ok(rowIndex(lines, matcher) >= 0, `${label} not found:\n${lines.join("\n")}`);
-}
-
 function assertRowsInOrder(lines: string[], matchers: (string | RegExp)[], from = 0): void {
   let index = from;
   for (const matcher of matchers) {
@@ -65,6 +68,22 @@ function assertRowsInOrder(lines: string[], matchers: (string | RegExp)[], from 
     assert.ok(found >= index, `expected ${String(matcher)} after row ${index}:\n${lines.join("\n")}`);
     index = found + 1;
   }
+}
+
+/** No tool block may name the global expand key: a click expands one block, ctrl+o expands all. */
+function assertNoExpandHint(lines: string[], from: number, to = lines.length): void {
+  const slice = lines.slice(from, to);
+  assert.ok(!slice.some((line) => line.includes("ctrl+o")), slice.join("\n"));
+}
+
+/** Rows of the folded body below `from`: everything before the click-to-expand hint, blanks dropped. */
+function countBodyRows(lines: string[], from: number): number {
+  let count = 0;
+  for (let index = from; index < lines.length; index++) {
+    if (/click to expand/.test(lines[index])) break;
+    if (lines[index] !== "") count++;
+  }
+  return count;
 }
 
 async function closeAfter(pi: PiSession, body: () => Promise<void>): Promise<void> {
@@ -95,23 +114,44 @@ test("one-line tool calls hide output until expanded", { timeout: 180_000 }, asy
       assert.ok(!lines.includes(String(line)), `output line ${line} is visible:\n${lines.join("\n")}`);
     }
 
-    await pi.shot("tools-after");
+    assertNoExpandHint(lines, first, last + 2);
+    await pi.shot("tools-collapsed");
+
     pi.press("ctrl+o");
     await pi.waitFor(/^\s*40\s*$/m);
     await pi.shot("tools-expanded");
   });
 });
 
-test("reference task before pi-tune", { timeout: 180_000 }, async () => {
-  const pi = await startPi({ scenario: reference, tune: false });
+test("collapsed tool blocks in light theme", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: reference, tune: true, settings: { theme: "light" } });
   await closeAfter(pi, async () => {
     pi.type("run it\r");
     await pi.waitFor("Done:");
-    await pi.shot("tools-before");
+    await pi.shot("tools-collapsed-light");
   });
 });
 
-test("failed bash call folds its output", { timeout: 180_000 }, async () => {
+test("a long bash command is fully visible when expanded", { timeout: 180_000 }, async () => {
+  assert.ok(longCommand.length >= 200, `command is ${longCommand.length} chars`);
+  const pi = await startPi({ scenario: longBash, tune: true, cols: 80, rows: 40 });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Long command done.");
+    const collapsed = pi.screen().join("\n");
+    assert.ok(!collapsed.includes("tok35"), `the tail of the command shows while collapsed:\n${collapsed}`);
+
+    pi.press("ctrl+o");
+    await pi.waitFor("tok35");
+    const expanded = pi.screen().join("\n");
+    for (const token of longTokens) {
+      assert.ok(expanded.includes(token), `command token ${token} was cut from the screen:\n${expanded}`);
+    }
+    assert.ok(!expanded.includes("click to expand"), expanded);
+  });
+});
+
+test("failed bash call shows the last lines and a click-to-expand hint", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: failure, tune: true });
   await closeAfter(pi, async () => {
     pi.type("run it\r");
@@ -121,8 +161,9 @@ test("failed bash call folds its output", { timeout: 180_000 }, async () => {
     const header = rowIndex(lines, /^✗ bash\b.*exit 3/);
     assert.ok(header >= 0, `failure header not found:\n${lines.join("\n")}`);
 
-    assertRowsInOrder(lines, ["│ 1", "│ 2", "lines folded", "│ 18", "│ 19", "│ 20"], header + 1);
-    await pi.shot("tools-failure");
+    assertRowsInOrder(lines, [/^18$/, /^19$/, /^20$/, /… 17 more lines · click to expand/], header + 1);
+    assertNoExpandHint(lines, header);
+    await pi.shot("tools-bash-error");
   });
 });
 
@@ -133,9 +174,8 @@ test("heredoc command is summarised on one row", { timeout: 180_000 }, async () 
     await pi.waitFor("Wrote notes.");
     const lines = rows(pi.screen());
 
-    assertRow(lines, "cat > notes.txt <<'EOF' +21 lines", "heredoc header");
+    assert.ok(rowIndex(lines, "cat > notes.txt <<'EOF' +21 lines") >= 0, lines.join("\n"));
     assert.ok(!lines.includes("line 5"), `heredoc line 5 is visible:\n${lines.join("\n")}`);
-    await pi.shot("tools-heredoc");
   });
 });
 
@@ -146,6 +186,7 @@ test("narrow terminal keeps the compact header and does not crash", { timeout: 1
     await pi.waitFor("Done:");
     const crashLog = join(dirname(pi.projectDir), "agent", "pi-tui-crash.log");
     assert.ok(!existsSync(crashLog), `Pi crashed at 40 columns: ${crashLog}`);
+    await pi.shot("tools-narrow-40");
   });
 });
 
@@ -186,23 +227,11 @@ test("collapsed summaries tell what each tool returned", { timeout: 180_000 }, a
     for (const [name, matcher] of expected) {
       assert.equal(countRows(lines, matcher), 1, `${name} summary row:\n${lines.join("\n")}`);
     }
-    await pi.shot("tools-summaries");
 
     pi.press("ctrl+o");
-    await pi.waitFor(/^\s+a\.ts\s+3 matches\s+1, 2, 3$/m);
+    await pi.waitFor(/a\.ts:1:.*TODO/);
     const expanded = rows(pi.screen());
-    assert.equal(countRows(expanded, /^a\.ts\s+3 matches\b/), 1, expanded.join("\n"));
-    assert.equal(countRows(expanded, /^b\.ts\s+1 match\b/), 1, expanded.join("\n"));
-    await pi.shot("tools-grep-expanded");
-  });
-});
-
-test("summary task before pi-tune", { timeout: 180_000 }, async () => {
-  const pi = await startPi({ scenario: summaries, tune: false, cols: 100, rows: 40, settings: summarySettings });
-  await closeAfter(pi, async () => {
-    pi.type("run it\r");
-    await pi.waitFor("Summary done.");
-    await pi.shot("tools-summaries-before");
+    assertNoExpandHint(expanded, rowIndex(expanded, /^✓ read README\.md/), rowIndex(expanded, /^Summary done\.$/));
   });
 });
 
@@ -254,7 +283,7 @@ const edits: Scenario = {
   ],
 };
 
-test("edit results show diffs and fold large changes", { timeout: 240_000 }, async () => {
+test("edit results show Pi's diff and fold large changes", { timeout: 240_000 }, async () => {
   const pi = await startPi({ scenario: edits, tune: true, cols: 100, rows: 50, settings: editSettings });
   await closeAfter(pi, async () => {
     pi.type("run it\r");
@@ -264,51 +293,38 @@ test("edit results show diffs and fold large changes", { timeout: 240_000 }, asy
     const first = rowIndex(lines, /^✓ edit src\/server\.ts\b/);
     assert.ok(first >= 0, `server edit header not found:\n${lines.join("\n")}`);
     assert.match(lines[first], /\+2 −2/);
+    assert.ok(!lines[first].includes("ctrl+o"));
 
     const second = rowIndex(lines, /^✓ edit src\/big\.ts\b/, first + 1);
     assert.ok(second >= 0, `big edit header not found:\n${lines.join("\n")}`);
-    assert.match(lines[second], /· ctrl\+o/);
+    assert.match(lines[second], /\+10 −10/);
 
     const serverDiff = lines.slice(first + 1, second);
     assert.ok(
-      serverDiff.some((line) => line.includes("│-const PORT = 3000;")),
+      serverDiff.some((line) => /-\s*3\s+const PORT = 3000;/.test(line)),
       `no removed server row:\n${lines.join("\n")}`,
     );
     assert.ok(
-      serverDiff.some((line) => line.includes("│+const PORT = Number")),
-      `no added server row:\n${lines.join("\n")}`,
+      serverDiff.some((line) => /… \d+ more lines · click to expand/.test(line)),
+      `server diff did not fold:\n${lines.join("\n")}`,
     );
 
     const folded = lines.slice(second + 1);
-    assert.ok(
-      !folded.some((line) => line.includes("│-") || line.includes("│+")),
-      `folded big edit rendered diff rows:\n${lines.join("\n")}`,
+    assert.equal(
+      folded.filter((line) => /… \d+ more lines · click to expand/.test(line)).length,
+      1,
+      `folded big edit has no hint:\n${lines.join("\n")}`,
     );
-    await pi.shot("edit-diff");
+    assert.ok(!folded.some((line) => /^-11 /.test(line)), `folded big edit rendered its changes:\n${lines.join("\n")}`);
+    assert.equal(countBodyRows(lines, second + 1), 3, `folded big edit body:\n${lines.join("\n")}`);
+    assertNoExpandHint(lines, first, rowIndex(lines, /^Edited\.$/));
+    await pi.shot("tools-edit");
 
     pi.press("ctrl+o");
-    await pi.waitFor(/│-const value11 = 11;/);
-    await pi.shot("edit-diff-expanded");
-  });
-
-  const before = await startPi({ scenario: edits, tune: false, cols: 100, rows: 50, settings: editSettings });
-  await closeAfter(before, async () => {
-    before.type("run it\r");
-    await before.waitFor("Edited.");
-    await before.shot("edit-diff-before");
-  });
-
-  const light = await startPi({
-    scenario: edits,
-    tune: true,
-    cols: 100,
-    rows: 50,
-    settings: { ...editSettings, theme: "light" },
-  });
-  await closeAfter(light, async () => {
-    light.type("run it\r");
-    await light.waitFor("Edited.");
-    await light.shot("edit-diff-light");
+    await pi.waitFor(/-11 const value11 = 11;/);
+    await pi.waitFor(/\+11 const value11 = 110;/);
+    assert.ok(!pi.screen().join("\n").includes("click to expand"));
+    await pi.shot("tools-expanded-diff");
   });
 });
 
@@ -337,25 +353,40 @@ test("write tells new files from overwrites and diffs overwrites", { timeout: 24
     await pi.waitFor("Written.");
     const lines = rows(pi.screen());
 
-    const fresh = rowIndex(lines, /^✓ write src\/server\.ts\b.*new file · 15 lines/);
+    const fresh = rowIndex(lines, /^✓ write src\/server\.ts\b.*new · 15 lines/);
     assert.ok(fresh >= 0, `new file header not found:\n${lines.join("\n")}`);
-    assert.equal(countRows(lines.slice(fresh + 1, fresh + 4), /^\d+ │ const route\d+ /), 3, lines.join("\n"));
     assertRowsInOrder(
       lines,
-      ["new file · 15 lines", "│ const route1 =", "│ const route2 =", "│ const route3 =", "┄ 12 more lines"],
+      [
+        "new · 15 lines",
+        "1 │ const route1 =",
+        "2 │ const route2 =",
+        "3 │ const route3 =",
+        "… 12 more lines · click to expand",
+      ],
       fresh,
     );
+    assertNoExpandHint(lines, fresh, rowIndex(lines, /^Written\.$/));
+    await pi.shot("tools-write-new");
 
     const overwrite = rowIndex(lines, /^✓ write README\.md\b.*overwrite · \+2 −1/, fresh + 1);
     assert.ok(overwrite >= 0, `overwrite header not found:\n${lines.join("\n")}`);
-    assertRowsInOrder(lines, ["│-line 4", "│+line four", "│+line 9"], overwrite + 1);
-    await pi.shot("write");
+    const body = lines.slice(overwrite + 1);
+    assert.equal(countBodyRows(lines, overwrite + 1), 3, `overwrite folded body:\n${lines.join("\n")}`);
+    assert.ok(
+      body.some((line) => /… \d+ more lines · click to expand/.test(line)),
+      `overwrite has no hint:\n${lines.join("\n")}`,
+    );
+    assert.ok(!body.some((line) => /^[-+]\d+ /.test(line)), `overwrite showed its changes:\n${lines.join("\n")}`);
+    await pi.shot("tools-write-overwrite");
   });
+});
 
-  const before = await startPi({ scenario: writes, tune: false, cols: 100, rows: 50, settings: writeSettings });
-  await closeAfter(before, async () => {
-    before.type("run it\r");
-    await before.waitFor("Written.");
-    await before.shot("write-before");
+test("reference task before pi-tune", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: reference, tune: false });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Done:");
+    await pi.shot("tools-before");
   });
 });

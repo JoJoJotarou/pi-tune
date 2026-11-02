@@ -4,6 +4,26 @@ import { formatDuration } from "../shared/format.ts";
 
 export type ToolStatus = "running" | "success" | "error";
 
+export type ToolBgToken = "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
+
+/** The status background of a tool block: same rule as `toolStatus()`. */
+export function toolBgToken(status: ToolStatus): ToolBgToken {
+  if (status === "running") return "toolPendingBg";
+  return status === "error" ? "toolErrorBg" : "toolSuccessBg";
+}
+
+const RESET_ALL = "\u001b[0m";
+const BG_OFF = "\u001b[49m";
+
+/**
+ * Paints a whole block line with the status background, for `Box`. It re-applies the background after
+ * any full reset an inner component emitted, so styled text never leaves a hole in the box.
+ */
+export function statusBackground(status: ToolStatus, theme: Theme): (text: string) => string {
+  const open = theme.bg(toolBgToken(status), "").replace(BG_OFF, "");
+  return (text) => `${open}${text.split(RESET_ALL).join(`${RESET_ALL}${open}`)}${BG_OFF}`;
+}
+
 /** running until the call has a final result; then error when context.isError, else success. */
 export function toolStatus(context: { executionStarted: boolean; isPartial: boolean; isError: boolean }): ToolStatus {
   if (!context.executionStarted || context.isPartial) return "running";
