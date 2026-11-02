@@ -17,9 +17,9 @@ import { type DiffStats, diffStats, hunksFromPatch, renderDiff } from "./diff.ts
 import { renderHeader, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta, renderGrepRows } from "./search.ts";
+import { FOLD_LIMIT, planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
-const EDIT_FOLD_LIMIT = 8;
 
 interface CompactContext {
   state: Record<string, unknown>;
@@ -206,6 +206,33 @@ class DiffComponent implements Component {
   invalidate(): void {}
 }
 
+class WriteLinesComponent implements Component {
+  private readonly path: string;
+  private readonly content: string;
+  private readonly expanded: boolean;
+  private readonly theme: Theme;
+  private readonly context: CompactContext;
+
+  constructor(path: string, content: string, expanded: boolean, theme: Theme, context: CompactContext) {
+    this.path = path;
+    this.content = content;
+    this.expanded = expanded;
+    this.theme = theme;
+    this.context = context;
+  }
+
+  render(width: number): string[] {
+    const indentWidth = this.context.outputPad + 2;
+    const indent = " ".repeat(indentWidth);
+    const available = Math.max(1, width - indentWidth);
+    return renderWriteLines(this.path, this.content, this.expanded, available, this.theme).map((line) =>
+      truncateToWidth(`${indent}${line}`, width, "…"),
+    );
+  }
+
+  invalidate(): void {}
+}
+
 class GrepRowsComponent implements Component {
   private readonly result: AgentToolResult<GrepToolDetails | undefined>;
   private readonly theme: Theme;
@@ -259,10 +286,24 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
           return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
         }
         const stats = diffStats(diff.hunks);
-        const folded = !options.expanded && stats.added + stats.removed > EDIT_FOLD_LIMIT;
+        const folded = !options.expanded && stats.added + stats.removed > FOLD_LIMIT;
         context.state.meta = editMeta(stats, folded);
         if (folded) return new EmptyComponent();
         return new DiffComponent(diff, options.expanded ? 3 : 1, theme, context);
+      }
+      if (toolName === "write") {
+        if (context.isError) return new ResultComponent(output, theme, context);
+        if (!context.executionStarted || options.isPartial) return new EmptyComponent();
+
+        const path = stringArg(textArgs(context.args), "path") ?? "";
+        const content = stringArg(textArgs(context.args), "content") ?? "";
+        const plan = planWrite(writeRecord(context.toolCallId), content, options.expanded);
+        context.state.meta = plan.meta;
+        if (plan.body === "diff" && plan.hunks !== undefined) {
+          return new DiffComponent({ path, hunks: plan.hunks }, options.expanded ? 3 : 1, theme, context);
+        }
+        if (plan.body === "new") return new WriteLinesComponent(path, content, options.expanded, theme, context);
+        return new EmptyComponent();
       }
       if (options.expanded && toolName === "grep") return new GrepRowsComponent(result, theme, context);
       if (options.expanded) {

@@ -311,3 +311,51 @@ test("edit results show diffs and fold large changes", { timeout: 240_000 }, asy
     await light.shot("edit-diff-light");
   });
 });
+
+const writeReadme = `${Array.from({ length: 8 }, (_, index) => `line ${index + 1}`).join("\n")}\n`;
+const writeServer = `${Array.from({ length: 15 }, (_, index) => `const route${index + 1} = createRoute(${index + 1});`).join("\n")}\n`;
+const writeSettings = { defaultTools: ["read", "bash", "edit", "write", "grep", "find", "ls"] };
+
+const writes: Scenario = {
+  files: { "README.md": writeReadme },
+  turns: [
+    [{ tool: "write", args: { path: "src/server.ts", content: writeServer } }],
+    [
+      {
+        tool: "write",
+        args: { path: "README.md", content: `${writeReadme.replace("line 4", "line four")}line 9\n` },
+      },
+    ],
+    [{ text: "Written." }],
+  ],
+};
+
+test("write tells new files from overwrites and diffs overwrites", { timeout: 240_000 }, async () => {
+  const pi = await startPi({ scenario: writes, tune: true, cols: 100, rows: 50, settings: writeSettings });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Written.");
+    const lines = rows(pi.screen());
+
+    const fresh = rowIndex(lines, /^✓ write src\/server\.ts\b.*new file · 15 lines/);
+    assert.ok(fresh >= 0, `new file header not found:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines.slice(fresh + 1, fresh + 4), /^\d+ │ const route\d+ /), 3, lines.join("\n"));
+    assertRowsInOrder(
+      lines,
+      ["new file · 15 lines", "│ const route1 =", "│ const route2 =", "│ const route3 =", "┄ 12 more lines"],
+      fresh,
+    );
+
+    const overwrite = rowIndex(lines, /^✓ write README\.md\b.*overwrite · \+2 −1/, fresh + 1);
+    assert.ok(overwrite >= 0, `overwrite header not found:\n${lines.join("\n")}`);
+    assertRowsInOrder(lines, ["│-line 4", "│+line four", "│+line 9"], overwrite + 1);
+    await pi.shot("write");
+  });
+
+  const before = await startPi({ scenario: writes, tune: false, cols: 100, rows: 50, settings: writeSettings });
+  await closeAfter(before, async () => {
+    before.type("run it\r");
+    await before.waitFor("Written.");
+    await before.shot("write-before");
+  });
+});
