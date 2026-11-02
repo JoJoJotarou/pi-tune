@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { bashCommandLines, diffCounts, diffMeta, previewLines, trimOutput, truncationLine } from "./body.ts";
+import {
+  bashCommandLines,
+  diffCounts,
+  diffMeta,
+  firstChange,
+  previewLines,
+  trimOutput,
+  truncationLine,
+} from "./body.ts";
 
 const theme = testTheme();
 
@@ -61,4 +69,10 @@ test("bashCommandLines starts every line of a multi-line command at the prompt c
 test("trimOutput drops the blank rows Pi pads around its output and trailing spaces", () => {
   assert.deepEqual(trimOutput(["   ", "a   ", "b", "", "Took 0.0s   "]), ["a", "b", "", "Took 0.0s"]);
   assert.deepEqual(trimOutput(["", "  "]), []);
+});
+
+test("firstChange finds the first added or removed line", () => {
+  assert.equal(firstChange(" 1 a\n 2 b\n 3 c\n-4 d\n+4 e"), 3);
+  assert.equal(firstChange("+1 new"), 0);
+  assert.equal(firstChange(" 1 same"), 0);
 });

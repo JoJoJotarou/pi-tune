@@ -315,7 +315,10 @@ test("edit results show Pi's diff and fold large changes", { timeout: 240_000 },
       1,
       `folded big edit has no hint:\n${lines.join("\n")}`,
     );
-    assert.ok(!folded.some((line) => /^-11 /.test(line)), `folded big edit rendered its changes:\n${lines.join("\n")}`);
+    assert.ok(
+      /^-11 /.test(folded.find((line) => line.trim() !== "")?.trim() ?? ""),
+      `folded big edit does not start at the change:\n${lines.join("\n")}`,
+    );
     assert.equal(countBodyRows(lines, second + 1), 3, `folded big edit body:\n${lines.join("\n")}`);
     assertNoExpandHint(lines, first, rowIndex(lines, /^Edited\.$/));
     await pi.shot("tools-edit");
@@ -377,7 +380,10 @@ test("write tells new files from overwrites and diffs overwrites", { timeout: 24
       body.some((line) => /… \d+ more lines · click to expand/.test(line)),
       `overwrite has no hint:\n${lines.join("\n")}`,
     );
-    assert.ok(!body.some((line) => /^[-+]\d+ /.test(line)), `overwrite showed its changes:\n${lines.join("\n")}`);
+    assert.ok(
+      body.slice(0, 3).some((line) => /^[-+]\s*\d+ /.test(line.trim())),
+      `overwrite preview does not start at the change:\n${lines.join("\n")}`,
+    );
     await pi.shot("tools-write-overwrite");
   });
 });

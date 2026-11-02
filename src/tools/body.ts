@@ -15,6 +15,14 @@ export function previewLines(lines: string[], expanded: boolean, theme: Theme, l
   return [...lines.slice(0, limit), truncationLine(lines.length - limit, theme)];
 }
 
+/** Index of the first added or removed line in Pi's diff text, which renders as ` 1 ctx`, `-2 old`, `+2 new`. */
+export function firstChange(diffText: string): number {
+  return Math.max(
+    0,
+    diffText.split("\n").findIndex((line) => line.startsWith("+") || line.startsWith("-")),
+  );
+}
+
 export interface DiffCounts {
   added: number;
   removed: number;

@@ -277,7 +277,7 @@ test("expanded failures show the whole output, command first for bash", () => {
   );
 });
 
-test("an edit shows its counts and the head of Pi's diff until expanded", () => {
+test("an edit shows its counts and Pi's diff from the first change until expanded", () => {
   const diff = " 1 a\n-2 b\n+2 B\n 3 c\n-4 d\n+4 D\n 5 e";
   const ctx = context({ args: { path: "a.ts" } });
   const collapsed = resultLines("edit", { content: [], details: { diff } }, { expanded: false, isPartial: false }, ctx);
@@ -287,9 +287,9 @@ test("an edit shows its counts and the head of Pi's diff until expanded", () => 
   const rendered = plain(collapsed);
   const body = rendered.slice(1, -1);
   assert.equal(body.length, 4, rendered.join("\n"));
-  assert.equal(body[0].trim(), "1 a");
-  assert.equal(body[1].trim(), "-2 b");
-  assert.equal(body[2].trim(), "+2 B");
+  assert.equal(body[0].trim(), "-2 b");
+  assert.equal(body[1].trim(), "+2 B");
+  assert.equal(body[2].trim(), "3 c");
   assert.equal(body[3].trim(), "… 4 more lines · click to expand");
   assertPainted(collapsed, "toolSuccessBg");
 

@@ -12,7 +12,15 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
-import { bashCommandLines, diffMeta, previewLines, trimOutput, truncationLine } from "./body.ts";
+import {
+  bashCommandLines,
+  diffMeta,
+  firstChange,
+  PREVIEW_LINES,
+  previewLines,
+  trimOutput,
+  truncationLine,
+} from "./body.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
@@ -235,10 +243,12 @@ function errorSource(output: string, theme: Theme): LineSource {
   };
 }
 
-/** Pi's rendered diff, folded to its head unless expanded. */
+/** Pi's rendered diff; collapsed, the preview starts at the first change so it shows what changed. */
 function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSource {
   const lines = renderDiff(diffText).split("\n");
-  return () => previewLines(lines, expanded, theme);
+  if (expanded || lines.length <= PREVIEW_LINES) return () => lines;
+  const start = Math.min(firstChange(diffText), lines.length - PREVIEW_LINES);
+  return () => [...lines.slice(start, start + PREVIEW_LINES), truncationLine(lines.length - PREVIEW_LINES, theme)];
 }
 
 function bashSource(command: string, expanded: boolean, native: LineSource, theme: Theme): LineSource {
