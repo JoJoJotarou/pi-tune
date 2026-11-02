@@ -148,3 +148,60 @@ test("narrow terminal keeps the compact header and does not crash", { timeout: 1
     assert.ok(!existsSync(crashLog), `Pi crashed at 40 columns: ${crashLog}`);
   });
 });
+
+const summaryFiles = {
+  "README.md": "# demo\n\nA tiny project.\n",
+  "src/a.ts": "// TODO: first\n// TODO: second\n// TODO: third\n",
+  "src/b.ts": "// TODO: only\n",
+};
+
+const summarySettings = { defaultTools: ["read", "bash", "edit", "write", "grep", "find", "ls"] };
+
+const summaries: Scenario = {
+  files: summaryFiles,
+  turns: [
+    [
+      { tool: "read", args: { path: "README.md" } },
+      { tool: "grep", args: { pattern: "TODO", path: "src" } },
+      { tool: "find", args: { pattern: "*.ts" } },
+      { tool: "ls", args: {} },
+    ],
+    [{ text: "Summary done." }],
+  ],
+};
+
+test("collapsed summaries tell what each tool returned", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: summaries, tune: true, cols: 100, rows: 40, settings: summarySettings });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Summary done.");
+    const lines = rows(pi.screen());
+
+    const expected: [string, RegExp][] = [
+      ["read", /^✓ read README\.md\s+3 lines · /],
+      ["grep", /^✓ grep "TODO" in src\s+4 matches · 2 files · /],
+      ["find", /^✓ find \*\.ts in \.\s+2 files · /],
+      ["ls", /^✓ ls \.\s+1 dir · 1 file · /],
+    ];
+    for (const [name, matcher] of expected) {
+      assert.equal(countRows(lines, matcher), 1, `${name} summary row:\n${lines.join("\n")}`);
+    }
+    await pi.shot("tools-summaries");
+
+    pi.press("ctrl+o");
+    await pi.waitFor(/^\s+a\.ts\s+3 matches\s+1, 2, 3$/m);
+    const expanded = rows(pi.screen());
+    assert.equal(countRows(expanded, /^a\.ts\s+3 matches\b/), 1, expanded.join("\n"));
+    assert.equal(countRows(expanded, /^b\.ts\s+1 match\b/), 1, expanded.join("\n"));
+    await pi.shot("tools-grep-expanded");
+  });
+});
+
+test("summary task before pi-tune", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: summaries, tune: false, cols: 100, rows: 40, settings: summarySettings });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Summary done.");
+    await pi.shot("tools-summaries-before");
+  });
+});

@@ -1,7 +1,19 @@
-import { formatReadLineRange, keyText, type Theme, type ToolRendererResolver } from "@earendil-works/pi-coding-agent";
+import {
+  type AgentToolResult,
+  type FindToolDetails,
+  type GrepToolDetails,
+  keyText,
+  type LsToolDetails,
+  type ReadToolDetails,
+  type ReadToolInput,
+  type Theme,
+  type ToolRendererResolver,
+} from "@earendil-works/pi-coding-agent";
 import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureExcerpt, summarizeCommand } from "./bash.ts";
 import { renderHeader, toolStatus } from "./header.ts";
+import { readMeta } from "./read.ts";
+import { findMeta, grepMeta, lsMeta, renderGrepRows } from "./search.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls"]);
 
@@ -23,9 +35,33 @@ function stringArg(args: Record<string, unknown>, key: string): string | undefin
   return typeof value === "string" ? value : undefined;
 }
 
-function failureExitCode(context: CompactContext): number | undefined {
-  const value = context.state.exitCode;
-  return typeof value === "number" ? value : undefined;
+/** The right side of the header: only known once the result is in. */
+function resultMeta(
+  toolName: string,
+  args: unknown,
+  result: AgentToolResult<unknown>,
+  isError: boolean,
+  output: string,
+): string | undefined {
+  if (toolName === "bash") {
+    if (!isError) return undefined;
+    const code = exitCodeOf(output);
+    return code === undefined ? undefined : `exit ${code}`;
+  }
+
+  if (isError) return undefined;
+  switch (toolName) {
+    case "read":
+      return readMeta(args as ReadToolInput, result as AgentToolResult<ReadToolDetails | undefined>);
+    case "grep":
+      return grepMeta(result as AgentToolResult<GrepToolDetails | undefined>);
+    case "find":
+      return findMeta(result as AgentToolResult<FindToolDetails | undefined>);
+    case "ls":
+      return lsMeta(result as AgentToolResult<LsToolDetails | undefined>);
+    default:
+      return undefined;
+  }
 }
 
 function summaryFor(toolName: string, rawArgs: unknown): string {
@@ -38,12 +74,8 @@ function summaryFor(toolName: string, rawArgs: unknown): string {
       const { first, extraLines } = summarizeCommand(command);
       return extraLines > 0 ? `${first} +${extraLines} lines` : first;
     }
-    case "read": {
-      const path = stringArg(args, "path") ?? "";
-      const range =
-        args.offset === undefined && args.limit === undefined ? "" : formatReadLineRange(args.offset, args.limit);
-      return `${path}${range}`;
-    }
+    case "read":
+      return stringArg(args, "path") ?? "";
     case "edit":
     case "write":
       return stringArg(args, "path") ?? "";
@@ -79,13 +111,13 @@ class HeaderComponent implements Component {
 
   render(width: number): string[] {
     const status = toolStatus(this.context);
-    const exitCode = status === "error" && this.toolName === "bash" ? failureExitCode(this.context) : undefined;
+    const meta = this.context.state.meta;
     const header = renderHeader(
       {
         status,
         name: this.toolName,
         summary: this.summary,
-        meta: exitCode === undefined ? undefined : `exit ${exitCode}`,
+        meta: typeof meta === "string" ? meta : undefined,
         durationMs: this.context.durationMs,
       },
       Math.max(0, width - this.context.outputPad),
@@ -124,6 +156,24 @@ class ResultComponent implements Component {
   invalidate(): void {}
 }
 
+class GrepRowsComponent implements Component {
+  private readonly result: AgentToolResult<GrepToolDetails | undefined>;
+  private readonly theme: Theme;
+  private readonly context: CompactContext;
+
+  constructor(result: AgentToolResult<GrepToolDetails | undefined>, theme: Theme, context: CompactContext) {
+    this.result = result;
+    this.theme = theme;
+    this.context = context;
+  }
+
+  render(width: number): string[] {
+    return renderGrepRows(this.result, width, this.theme, this.context.outputPad);
+  }
+
+  invalidate(): void {}
+}
+
 class EmptyComponent implements Component {
   render(): string[] {
     return [];
@@ -150,7 +200,8 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
     renderCall: (args, theme, context) => new HeaderComponent(toolName, summaryFor(toolName, args), theme, context),
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
-      if (toolName === "bash") context.state.exitCode = exitCodeOf(output);
+      context.state.meta = resultMeta(toolName, context.args, result, context.isError, output);
+      if (options.expanded && toolName === "grep") return new GrepRowsComponent(result, theme, context);
       if (options.expanded) {
         return baseRenderResult ? baseRenderResult(result, options, theme, context) : new EmptyComponent();
       }

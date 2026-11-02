@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { AgentToolResult, BashToolDetails, ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { createBashTool, createReadTool, formatReadLineRange } from "@earendil-works/pi-coding-agent";
+import {
+  createBashTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+} from "@earendil-works/pi-coding-agent";
 import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { toolRenderers } from "./renderers.ts";
@@ -128,12 +134,11 @@ test("bash call summary is the first command line plus the extra line count", ()
   );
 });
 
-test("read call summary is the path and line range", () => {
+test("read call summary is the path only", () => {
   const ctx = context({ executionStarted: false });
-  const range = formatReadLineRange(2, 2);
   assert.deepEqual(
     callLines("read", { path: "a.txt", offset: 2, limit: 2 }, ctx).map((line) => line.trimEnd()),
-    [`● read a.txt${range}`],
+    ["● read a.txt"],
   );
   assert.deepEqual(
     callLines("read", { path: "a.txt" }, ctx).map((line) => line.trimEnd()),
@@ -292,5 +297,127 @@ test("no rendered line exceeds the width", async () => {
     for (const line of callLines("bash", ctx.args, ctx, width)) {
       assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(line)}`);
     }
+  }
+});
+
+const metaDir = mkdtempSync(join(tmpdir(), "pi-tune-meta-"));
+writeFileSync(join(metaDir, "notes.txt"), "one\ntwo\nthree\n");
+mkdirSync(join(metaDir, "sub"));
+writeFileSync(join(metaDir, "sub", "one.ts"), "x\n");
+writeFileSync(join(metaDir, "sub", "two.ts"), "x\n");
+
+test("the header shows the result meta once renderResult has run", async () => {
+  const cases = [
+    {
+      name: "read",
+      args: { path: "notes.txt" },
+      result: await createReadTool(metaDir).execute("meta-test", { path: "notes.txt" }),
+      meta: "3 lines",
+    },
+    {
+      name: "grep",
+      args: { pattern: "x" },
+      result: await createGrepTool(metaDir).execute("meta-test", { pattern: "x" }),
+      meta: "2 matches · 2 files",
+    },
+    {
+      name: "find",
+      args: { pattern: "*.ts" },
+      result: await createFindTool(metaDir).execute("meta-test", { pattern: "*.ts" }),
+      meta: "2 files",
+    },
+    {
+      name: "ls",
+      args: {},
+      result: await createLsTool(metaDir).execute("meta-test", {}),
+      meta: "1 dir · 1 file",
+    },
+  ];
+
+  for (const { name, args, result, meta } of cases) {
+    const ctx = context({ args });
+    assert.deepEqual(resultLines(name, result, { expanded: false, isPartial: false }, ctx, 80), [], name);
+
+    const lines = callLines(name, args, ctx, 80);
+    assert.equal(lines.length, 1, name);
+    assert.ok(lines[0].startsWith("✓ "), lines[0]);
+    assert.ok(lines[0].endsWith(` ${meta}`), lines[0]);
+    assert.equal(visibleWidth(lines[0]), 80, name);
+  }
+});
+
+test("a running call has no meta", () => {
+  const running = context({ executionStarted: false });
+  const calls: [string, unknown, string][] = [
+    ["read", { path: "notes.txt" }, "● read notes.txt"],
+    ["grep", { pattern: "x" }, '● grep "x" in .'],
+    ["find", { pattern: "*.ts" }, "● find *.ts in ."],
+    ["ls", {}, "● ls ."],
+  ];
+  for (const [name, args, expected] of calls) {
+    assert.deepEqual(
+      callLines(name, args, running).map((line) => line.trimEnd()),
+      [expected],
+      name,
+    );
+  }
+});
+
+test("bash keeps exit 3 as the failure meta and has none on success", async () => {
+  const command = "sh -c 'seq 1 5; exit 3'";
+  const failed = await bashResult(command);
+  assert.equal(failed.isError, true);
+  const failedCtx = context({ args: { command }, isError: true });
+  resultLines("bash", failed, { expanded: false, isPartial: false }, failedCtx, 80);
+  const failedLine = callLines("bash", { command }, failedCtx, 80)[0];
+  assert.ok(failedLine.startsWith("✗ bash "), failedLine);
+  assert.ok(failedLine.endsWith("exit 3"), failedLine);
+
+  const success = "seq 1 5";
+  const ok = await bashResult(success);
+  const okCtx = context({ args: { command: success } });
+  resultLines("bash", ok, { expanded: false, isPartial: false }, okCtx, 80);
+  assert.deepEqual(
+    callLines("bash", { command: success }, okCtx, 80).map((line) => line.trimEnd()),
+    ["✓ bash seq 1 5"],
+  );
+});
+
+/** A file of `count` lines with the needle on each of `needleLines` (1-based). */
+function needleFile(count: number, needleLines: number[]): string {
+  return `${Array.from({ length: count }, (_, i) => (needleLines.includes(i + 1) ? "NEEDLE" : "filler")).join("\n")}\n`;
+}
+
+test("expanded grep shows one aligned row per file with counts and line numbers", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-grep-"));
+  mkdirSync(join(dir, "src", "tools"), { recursive: true });
+  writeFileSync(join(dir, "src", "index.ts"), needleFile(80, [12, 40, 77]));
+  writeFileSync(join(dir, "src", "tools", "read.ts"), needleFile(8, [8]));
+
+  const result = await createGrepTool(dir).execute("renderers-test", { pattern: "NEEDLE" });
+  const args = { pattern: "NEEDLE" };
+  const rows = resultLines("grep", result, { expanded: true, isPartial: false }, context({ args }), 80);
+
+  assert.deepEqual(
+    [...rows].sort(),
+    ["  src/index.ts        3 matches  12, 40, 77", "  src/tools/read.ts   1 match    8"].sort(),
+  );
+});
+
+test("expanded grep cuts its rows to the width", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-grep-wide-"));
+  const relative = "a-very-long-directory-name/another/deep/module-file.ts";
+  mkdirSync(join(dir, "a-very-long-directory-name", "another", "deep"), { recursive: true });
+  writeFileSync(join(dir, relative), needleFile(120, [8, 12, 40, 77, 100]));
+
+  const result = await createGrepTool(dir).execute("renderers-test", { pattern: "NEEDLE" });
+  const args = { pattern: "NEEDLE" };
+  const rows = resultLines("grep", result, { expanded: true, isPartial: false }, context({ args, outputPad: 2 }), 40);
+
+  assert.equal(rows.length, 1);
+  for (const row of rows) {
+    assert.ok(row.startsWith("    "), row);
+    assert.ok(row.includes("…"), row);
+    assert.ok(visibleWidth(row) <= 40, row);
   }
 });
