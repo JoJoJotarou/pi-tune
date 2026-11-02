@@ -1,5 +1,6 @@
-import { copyToClipboard, highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
-import { type Component, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { copyToClipboard, highlightCode, rawKeyHint, type Theme } from "@earendil-works/pi-coding-agent";
+import { type Component, Key, matchesKey } from "@earendil-works/pi-tui";
+import { frame, joinHints, modalBodyRows } from "../shared/frame.ts";
 import type { ViewerBlock } from "./blocks.ts";
 import {
   blockLines,
@@ -11,28 +12,6 @@ import {
   visibleRange,
   withHeight,
 } from "./state.ts";
-
-const HINT = "↑↓ scroll · / search · y copy · [ ] prev/next · esc close";
-
-function topBorder(theme: Theme, title: string, range: { first: number; last: number; total: number }, width: number) {
-  const inner = Math.max(0, width - 2);
-  const right = ` ${range.first}–${range.last}/${range.total} ─`;
-  let left = `─ ${title} · ${range.total} lines `;
-  if (visibleWidth(left) + visibleWidth(right) > inner) {
-    const room = inner - visibleWidth(right) - 1;
-    left = room > 0 ? `${truncateToWidth(left, room, "…")}─` : "";
-  }
-  const fill = "─".repeat(Math.max(0, inner - visibleWidth(left) - visibleWidth(right)));
-  return theme.fg("border", `╭${truncateToWidth(left + fill + right, inner, "", true)}╮`);
-}
-
-function bottomBorder(theme: Theme, text: string, width: number) {
-  const inner = Math.max(0, width - 2);
-  let left = `─ ${text} `;
-  if (visibleWidth(left) + 1 > inner) left = truncateToWidth(left, Math.max(0, inner - 1), "…");
-  const fill = "─".repeat(Math.max(0, inner - visibleWidth(left) - 1));
-  return theme.fg("border", `╰${truncateToWidth(`${left}${fill}─`, inner, "", true)}╯`);
-}
 
 function highlightMatches(theme: Theme, line: string, query: string): string {
   const needle = query.toLowerCase();
@@ -59,7 +38,7 @@ export class ViewerComponent implements Component {
     this.done = done;
     this.requestRender = requestRender;
     this.rows = rows;
-    this.state = initialViewerState(blocks, Math.max(1, Math.floor(rows * 0.8) - 2));
+    this.state = initialViewerState(blocks, modalBodyRows(1, rows));
   }
 
   handleInput(data: string): void {
@@ -104,12 +83,23 @@ export class ViewerComponent implements Component {
 
   invalidate(): void {}
 
+  private hintLine(): string {
+    if (this.state.copied) return this.theme.fg("dim", "copied");
+    if (this.state.searchMode) return this.theme.fg("dim", `/${this.state.query}`);
+    return joinHints(this.theme, [
+      rawKeyHint("↑↓", "scroll"),
+      rawKeyHint("/", "search"),
+      rawKeyHint("y", "copy"),
+      rawKeyHint("[ ]", "prev/next"),
+      rawKeyHint("esc", "close"),
+    ]);
+  }
+
   render(width: number): string[] {
     const block = currentBlock(this.state);
-    if (width <= 2 || !block) return [];
-    const inner = width - 2;
+    if (!block) return [];
     const lines = blockLines(block);
-    const bodyRows = Math.min(lines.length, Math.max(1, Math.floor(this.rows * 0.8) - 2));
+    const bodyRows = modalBodyRows(lines.length, this.rows);
     this.state = withHeight(this.state, bodyRows);
 
     const highlighted = block.kind === "code" ? highlightCode(block.body, block.lang) : [];
@@ -117,22 +107,21 @@ export class ViewerComponent implements Component {
     const body: string[] = [];
     for (let row = 0; row < bodyRows; row++) {
       const line = lines[this.state.offset + row] ?? "";
-      let styled: string;
       if (searching && line.toLowerCase().includes(this.state.query.toLowerCase())) {
-        styled = highlightMatches(this.theme, line, this.state.query);
+        body.push(highlightMatches(this.theme, line, this.state.query));
       } else if (block.kind === "code") {
-        styled = highlighted[this.state.offset + row] ?? line;
+        body.push(highlighted[this.state.offset + row] ?? line);
       } else {
-        styled = this.theme.fg("toolOutput", line);
+        body.push(this.theme.fg("toolOutput", line));
       }
-      body.push(this.theme.fg("border", "│") + truncateToWidth(styled, inner, "", true) + this.theme.fg("border", "│"));
     }
 
-    const text = this.state.copied ? "copied" : this.state.searchMode ? `/${this.state.query}` : HINT;
-    return [
-      topBorder(this.theme, block.title, visibleRange(this.state), width),
-      ...body,
-      bottomBorder(this.theme, text, width),
-    ];
+    const range = visibleRange(this.state);
+    return frame(body, width, this.theme, {
+      color: "borderAccent",
+      title: this.theme.bold(this.theme.fg("accent", block.title)),
+      meta: this.theme.fg("dim", `${range.first}–${range.last}/${range.total}`),
+      hints: this.hintLine(),
+    });
   }
 }
