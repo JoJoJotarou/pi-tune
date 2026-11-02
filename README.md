@@ -32,8 +32,8 @@ pi install /path/to/pi-tune
 | `markdown.ts` | `###` headings without hashes, link hosts after links, tables that do not fit become lists, code blocks over 20 lines fold to 12. |
 | `mermaid.ts` | Mermaid diagrams get a preview link that opens in the browser, and a pointer to copy the source from the viewer. |
 | `status.ts` | The working line says what is running and for how long. Runs of 15 s or more end with a desktop notification and a done title. |
-| `editor.ts` | `ctrl+v` collapses large pastes like `cmd+v`; `enter` or a double click on a paste marker previews it; the editor border shows the model and thinking level; `ctrl+s` stashes a draft. |
-| `chrome.ts` | One-line header and footer; the footer's key hints follow what Pi is doing. |
+| `editor.ts` | `ctrl+v` collapses large pastes like `cmd+v`; `enter` with the cursor on a paste marker, or a double click on it, previews it; the editor border shows the model and thinking level; `ctrl+s` stashes a draft. |
+| `chrome.ts` | One-line header and footer; the footer's key hints follow what Pi is doing and list only keys of enabled extensions. |
 
 ## Recommended settings
 
