@@ -37,7 +37,7 @@ export interface PiSession {
   press(key: string): void;
   paste(text: string): void;
   click(col: number, row: number, count?: number): void;
-  clickText(text: string, nth?: number): void;
+  clickText(text: string, nth?: number, count?: number): void;
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
   screen(): string[];
@@ -225,7 +225,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
         pty.write(`\x1b[<0;${col + 1};${row + 1}m`);
       }
     },
-    clickText(text, nth = 1) {
+    clickText(text, nth = 1, count = 1) {
       let seen = 0;
       const current = term.buffer.active;
       for (let y = 0; y < rows; y++) {
@@ -237,7 +237,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
           seen++;
           if (seen === nth) {
             const col = columnOf(y, offset);
-            session.click(col, y);
+            session.click(col, y, count);
             return;
           }
           from = offset + 1;
