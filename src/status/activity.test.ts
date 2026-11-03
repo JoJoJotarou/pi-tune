@@ -36,13 +36,13 @@ test("streaming thinking stays Thinking", () => {
   assert.equal(line(state, t0 + 2000), "Thinking   2.0s · esc to stop");
 });
 
-test("Writing shows only the phase name, never the token rate", () => {
+test("Responding shows only the phase name, never the token rate", () => {
   const state = run([
     [t0, { type: "agent_start" }],
     [t0 + 1000, { type: "message_update", kind: "text" }],
     [t0 + 3000, { type: "message_update", kind: "text" }],
   ]);
-  assert.equal(line(state, t0 + 3000), "Writing   3.0s · esc to stop");
+  assert.equal(line(state, t0 + 3000), "Responding   3.0s · esc to stop");
   assert.equal(line(state, t0 + 4000).includes("tok/s"), false);
 });
 
@@ -98,7 +98,7 @@ test("colors come from the theme: phase text, detail muted, total dim", () => {
   ]);
   assert.equal(
     describe(writing, t0 + 3000, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "Writing")}   ${theme.fg("dim", "3.0s · esc to stop")}`,
+    `${theme.fg("text", "Responding")}   ${theme.fg("dim", "3.0s · esc to stop")}`,
   );
 });
 

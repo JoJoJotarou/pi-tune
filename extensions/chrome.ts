@@ -1,10 +1,18 @@
-import { basename } from "node:path";
+import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, type ExtensionContext, type SessionEntry, VERSION } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  getAgentDir,
+  type SessionEntry,
+  VERSION,
+} from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine, streamRate } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
 import { formatHints, hintFor } from "../src/chrome/hints.ts";
+import { configuredServers, connectedServers, isMcpConfig } from "../src/chrome/mcp.ts";
 
 interface UsageTotals {
   input: number;
@@ -21,6 +29,27 @@ function addUsage(totals: UsageTotals, usage: Usage): void {
   totals.cacheRead += usage.cacheRead;
   totals.cacheWrite += usage.cacheWrite;
   totals.cost += usage.cost.total;
+}
+
+/** Parsed `mcp.json`; `undefined` when the file is missing, with one warning when it exists but is unusable. */
+function readMcpFile(path: string, ctx: ExtensionContext): unknown {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      ctx.ui.notify(`pi-tune MCP config unreadable: ${path} (${String(error)})`, "warning");
+    }
+    return undefined;
+  }
+  try {
+    const config: unknown = JSON.parse(text);
+    if (!isMcpConfig(config)) throw new Error("expected an object with mcpServers");
+    return config;
+  } catch (error) {
+    ctx.ui.notify(`pi-tune MCP config skipped: ${path} (${String(error)})`, "warning");
+    return undefined;
+  }
 }
 
 /** Pi's footer totals: every usage record in the session, plus the latest assistant cache hit rate. */
@@ -56,6 +85,8 @@ export default function (pi: ExtensionAPI) {
   let streamOutputTokens = 0;
   /** Final rate of the last finished message, shown until the next one streams. */
   let rate: number | undefined;
+  /** Enabled MCP servers from the config files, read once per session. */
+  let mcpConfigured = 0;
 
   /** Text and thinking tokens only; tool-call streaming does not start the clock. */
   function isWriting(event: AssistantMessageEvent): boolean {
@@ -116,11 +147,25 @@ export default function (pi: ExtensionAPI) {
     streamOutputTokens = 0;
     rate = undefined;
 
+    const userConfig = readMcpFile(join(getAgentDir(), "mcp.json"), ctx);
+    const projectConfig = ctx.isProjectTrusted() ? readMcpFile(join(ctx.cwd, ".pi", "mcp.json"), ctx) : undefined;
+    const registered = pi.getMcpServers().map((server) => server.name);
+    mcpConfigured = configuredServers({ user: userConfig, project: projectConfig }, registered).length;
+
     ctx.ui.setHeader((_headerTui, theme) => ({
       render(width: number): string[] {
         const session = current;
         if (!session) return [];
-        return [headerLine({ version: VERSION, cwd: basename(session.cwd) }, width, theme)];
+        // Servers connect in the background after start, so the connected count is read per render.
+        const skills = pi.getCommands().filter((command) => command.source === "skill").length;
+        const connected = connectedServers(pi.getAllTools().map((tool) => tool.name)).length;
+        const parts = {
+          version: VERSION,
+          cwd: basename(session.cwd),
+          skills,
+          mcp: { connected, configured: mcpConfigured },
+        };
+        return [headerLine(parts, width, theme)];
       },
       invalidate() {},
     }));
@@ -171,6 +216,7 @@ export default function (pi: ExtensionAPI) {
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     rate = undefined;
+    mcpConfigured = 0;
     tui?.requestRender();
   });
 }

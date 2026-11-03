@@ -24,7 +24,9 @@ test("idle chrome shows a one-row header and a native footer", { timeout: 180_00
     const headerRows = screen.filter((line) => line.includes("π pi"));
     assert.equal(headerRows.length, 1, screen.join("\n"));
     assert.ok(headerRows[0].includes("· project"), headerRows[0]);
-    assert.ok(headerRows[0].includes("/hotkeys"), headerRows[0]);
+    assert.equal(headerRows[0].includes("/hotkeys"), false, headerRows[0]);
+    assert.equal(headerRows[0].includes("skills"), false, headerRows[0]);
+    assert.equal(headerRows[0].includes("MCP"), false, headerRows[0]);
 
     const footerRows = screen.filter((line) => line.includes("%/"));
     assert.equal(footerRows.length, 1, screen.join("\n"));
@@ -86,6 +88,8 @@ test("narrow chrome keeps the footer inside 40 columns", { timeout: 180_000 }, a
     assert.equal(footerRows.length, 1, pi.screen().join("\n"));
     assert.ok(visibleWidth(footerRows[0]) <= 40, footerRows[0]);
     assert.ok(footerRows[0].includes("%/"), footerRows[0]);
+    const headerRow = pi.screen().find((line) => line.includes("π pi")) ?? "";
+    assert.ok(visibleWidth(headerRow) <= 40, headerRow);
     await pi.shot("footer-narrow-40");
   } finally {
     await pi.close();

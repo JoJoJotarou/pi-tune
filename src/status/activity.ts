@@ -5,7 +5,7 @@ import { formatDuration } from "../shared/format.ts";
 const SUMMARY_WIDTH = 40;
 const COLUMN_GAP = "   ";
 
-export type ActivityPhase = "thinking" | "writing" | "tool";
+export type ActivityPhase = "thinking" | "responding" | "tool";
 
 export interface RunningTool {
   id: string;
@@ -86,7 +86,7 @@ export function reduce(state: ActivityState, event: ActivityEvent, now: number):
     case "turn_start":
       return { ...state, phase: "thinking", tools: [] };
     case "message_update":
-      return { ...state, phase: event.kind === "text" ? "writing" : "thinking" };
+      return { ...state, phase: event.kind === "text" ? "responding" : "thinking" };
     case "tool_execution_start": {
       const tools = [
         ...state.tools.filter((tool) => tool.id !== event.id),
@@ -122,8 +122,8 @@ export function describe(state: ActivityState, now: number, options: DescribeOpt
 
   let phase = "Thinking";
   let detail = "";
-  if (state.phase === "writing") {
-    phase = "Writing";
+  if (state.phase === "responding") {
+    phase = "Responding";
   } else if (state.phase === "tool" && state.tools.length > 0) {
     const latest = state.tools[state.tools.length - 1];
     const others = state.tools.length - 1;
