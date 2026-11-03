@@ -48,7 +48,8 @@ export function asScrollable(tui: TUI): ScrollableTui | undefined {
     : undefined;
 }
 
-function transcriptWidth(tui: TUI): number | Error {
+/** Content width of the transcript scroll view: the terminal width minus Pi's scrollbar column when it is shown. */
+export function transcriptWidth(tui: TUI): number | Error {
   const layoutRoot = (tui as unknown as { layoutRoot?: unknown }).layoutRoot;
   const view = childrenOf(layoutRoot)?.find((child) => child instanceof ScrollView && child.primary);
   if (!(view instanceof ScrollView)) return new Error("TUI layout has no transcript scroll view");

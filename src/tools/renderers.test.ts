@@ -4,6 +4,7 @@ import type { AgentToolResult, ToolRenderers } from "@earendil-works/pi-coding-a
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { setRailCoveredColumns } from "./rail.ts";
 import { toolRenderers } from "./renderers.ts";
 import { rememberWriteRecord } from "./write.ts";
 
@@ -208,13 +209,27 @@ test("the header shows the result meta and duration right-aligned on the same pa
   assert.match(plain(lines)[1].trimEnd(), /^ ✗ bash sh -c 'exit 3'\s+exit 3 · 1\.2s$/);
 });
 
-test("the header keeps the timeline rail's two columns free on the right", () => {
+test("right-aligned text pads by the columns the timeline rail covers", () => {
   const ctx = context({ args: { command: "true" }, durationMs: 1240 });
-  const line = plain(callLines("bash", { command: "true" }, ctx, 60))[1];
-  // The rail draws over the last two columns; the counts keep one blank column in front of it.
-  const withoutRail = line.slice(0, 60 - 2);
+  const header = () => plain(callLines("bash", { command: "true" }, ctx, 60))[1];
+  const diff = `+1 ${"x".repeat(120)}`;
+  const result: AgentToolResult<unknown> = { content: [{ type: "text", text: "ok" }], details: { diff } };
+  const body = () =>
+    plain(resultLines("edit", result, { expanded: true, isPartial: false }, context({ args: { path: "a.ts" } }), 60));
+  const trailing = (line: string) => line.length - line.trimEnd().length;
 
-  assert.match(withoutRail, /1\.2s $/, JSON.stringify(line));
+  // Rail off: one column inside the block on the right, like the left.
+  assert.match(header(), /1\.2s $/);
+  assert.equal(trailing(body()[1]), 3);
+
+  try {
+    setRailCoveredColumns(2);
+    // The rail covers the last two columns, so the counts and the body keep their columns in front of it.
+    assert.match(header(), /1\.2s {3}$/);
+    assert.equal(trailing(body()[1]), 5);
+  } finally {
+    setRailCoveredColumns(0);
+  }
 });
 
 test("a running call has no meta", () => {
