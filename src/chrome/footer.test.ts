@@ -63,6 +63,22 @@ test("formatStats mirrors Pi's cache and context rules", () => {
   assert.equal(formatStats({ ...base, rate: 0 }), "?/1.0M (auto)");
 });
 
+test("formatStats puts the first-token wait right after the rate", () => {
+  const base: FooterStats = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: 0,
+    contextPercent: 5.3,
+    contextWindow: 1_000_000,
+    autoCompact: true,
+  };
+  assert.equal(formatStats({ ...base, rate: 48, ttftMs: 1400 }), "5.3%/1.0M (auto) · 48 tok/s · TTFT 1.4s");
+  assert.equal(formatStats({ ...base, ttftMs: 1400 }), "5.3%/1.0M (auto) · TTFT 1.4s");
+  assert.equal(formatStats({ ...base, rate: 48 }), "5.3%/1.0M (auto) · 48 tok/s");
+});
+
 test("streamRate shows the live rate only after a full second of writing", () => {
   const t0 = 1_000_000;
   assert.equal(streamRate(96, t0, t0 + 999), undefined);

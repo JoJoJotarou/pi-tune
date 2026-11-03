@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { formatDuration } from "../shared/format.ts";
 
 export interface FooterStats {
   input: number;
@@ -14,6 +15,8 @@ export interface FooterStats {
   autoCompact: boolean;
   /** Output tokens per second of the streaming or last finished assistant message. */
   rate?: number;
+  /** Wait of the latest model request for its first token, in milliseconds. */
+  ttftMs?: number;
 }
 
 export interface FooterParts {
@@ -67,11 +70,15 @@ export function formatStats(stats: FooterStats, options: StatsOptions = {}): str
 
   const percent = stats.contextPercent == null ? "?" : `${stats.contextPercent.toFixed(1)}%`;
   const context = `${percent}/${compactNumber(stats.contextWindow)}${stats.autoCompact ? " (auto)" : ""}`;
-  let text = fields.length > 0 ? `${fields.join(" ")} · ${context}` : context;
+  const tail = fields.length > 0 ? `${fields.join(" ")} · ${context}` : context;
+  const speed: string[] = [];
   if (stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0) {
-    text += ` · ${Math.round(stats.rate)} tok/s`;
+    speed.push(`${Math.round(stats.rate)} tok/s`);
   }
-  return text;
+  if (stats.ttftMs != null && Number.isFinite(stats.ttftMs) && stats.ttftMs >= 0) {
+    speed.push(`TTFT ${formatDuration(stats.ttftMs)}`);
+  }
+  return speed.length > 0 ? [tail, ...speed].join(" · ") : tail;
 }
 
 interface LayoutOptions {

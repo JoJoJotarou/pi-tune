@@ -88,6 +88,13 @@ export default function (pi: ExtensionAPI) {
    * only at the end) keeps it instead of clearing it, so the footer does not flicker.
    */
   let rate: number | undefined;
+  /** When the current turn's model request started, from `turn_start`. */
+  let requestStartedAt: number | undefined;
+  /**
+   * Wait of the latest request for its first token. Kept after the message ends so the footer does not
+   * flicker, and replaced by the next turn's measurement.
+   */
+  let ttft: number | undefined;
   /** Enabled MCP servers from the config files, read once per session. */
   let mcpConfigured = 0;
 
@@ -115,6 +122,13 @@ export default function (pi: ExtensionAPI) {
     running = true;
     streamStartedAt = undefined;
     streamOutputTokens = 0;
+    requestStartedAt = undefined;
+    ttft = undefined;
+    tui?.requestRender();
+  });
+
+  pi.on("turn_start", () => {
+    requestStartedAt = Date.now();
     tui?.requestRender();
   });
 
@@ -126,7 +140,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("message_update", (event) => {
     if (event.message.role !== "assistant") return;
     if (!isWriting(event.assistantMessageEvent)) return;
-    streamStartedAt ??= Date.now();
+    const now = Date.now();
+    if (streamStartedAt === undefined && requestStartedAt !== undefined) ttft = now - requestStartedAt;
+    streamStartedAt ??= now;
     streamOutputTokens = event.message.usage.output;
     tui?.requestRender();
   });
@@ -149,6 +165,8 @@ export default function (pi: ExtensionAPI) {
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     rate = undefined;
+    requestStartedAt = undefined;
+    ttft = undefined;
 
     const userConfig = readMcpFile(join(getAgentDir(), "mcp.json"), ctx);
     const projectConfig = ctx.isProjectTrusted() ? readMcpFile(join(ctx.cwd, ".pi", "mcp.json"), ctx) : undefined;
@@ -199,6 +217,7 @@ export default function (pi: ExtensionAPI) {
               (streamStartedAt === undefined
                 ? undefined
                 : streamRate(streamOutputTokens, streamStartedAt, Date.now())) ?? rate,
+            ttftMs: ttft,
           };
           const state = running ? (session.ui.getEditorText().trim() ? "busy-typing" : "busy-empty") : "idle";
           const hints = formatHints(hintFor(state, { stash: stashReady }), theme);
@@ -224,6 +243,8 @@ export default function (pi: ExtensionAPI) {
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     rate = undefined;
+    requestStartedAt = undefined;
+    ttft = undefined;
     mcpConfigured = 0;
     tui?.requestRender();
   });
