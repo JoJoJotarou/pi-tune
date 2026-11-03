@@ -103,33 +103,42 @@ export function grepBody(text: string, width: number, theme: Theme): string[] {
     return withNote([truncateToWidth(theme.fg("toolOutput", lines[0]), width, "…")], note, width, theme);
   }
 
-  const files = new Map<string, TreeItem>();
+  // Rows per file in output order. Pi prints the context of each match on its own, so overlapping windows
+  // repeat lines: keep the first row of each line number, and let a match win over context.
+  type Entry = { number: string; content: string; context: boolean } | { text: string };
+  const files = new Map<string, Entry[]>();
   const top: TreeItem[] = [];
-  let current: TreeItem | undefined;
+  let current: Entry[] | undefined;
   let currentPath: string | undefined;
 
   for (const line of lines) {
     const row = parseGrepRow(line, currentPath);
     if (row === undefined) {
-      const item = { text: theme.fg("toolOutput", line) };
-      if (current === undefined) top.push(item);
-      else current.children?.push(item);
+      if (current === undefined) top.push({ text: theme.fg("toolOutput", line) });
+      else current.push({ text: line });
       continue;
     }
 
-    const { path, number, rest } = row;
-    let file = files.get(path);
-    if (file === undefined) {
-      file = { text: theme.fg("accent", path), children: [] };
-      files.set(path, file);
-    }
-    current = file;
-    currentPath = path;
+    const entries = files.get(row.path) ?? [];
+    files.set(row.path, entries);
+    current = entries;
+    currentPath = row.path;
 
-    const content = rowText(rest);
-    const styled = row.context ? theme.fg("dim", content) : theme.fg("toolOutput", content);
-    file.children?.push({ text: content === "" ? theme.fg("dim", number) : `${theme.fg("dim", number)}  ${styled}` });
+    const seen = entries.find((entry) => "number" in entry && entry.number === row.number);
+    if (seen && "number" in seen) seen.context &&= row.context;
+    else entries.push({ number: row.number, content: rowText(row.rest), context: row.context });
   }
 
-  return withNote(treeRows([...top, ...files.values()], width, theme), note, width, theme);
+  const fileItems = [...files].map(([path, entries]): TreeItem => {
+    const numberWidth = Math.max(0, ...entries.map((entry) => ("number" in entry ? entry.number.length : 0)));
+    const children = entries.map((entry): TreeItem => {
+      if (!("number" in entry)) return { text: theme.fg("toolOutput", entry.text) };
+      const number = theme.fg("dim", entry.number.padStart(numberWidth));
+      if (entry.content === "") return { text: number };
+      return { text: `${number}  ${theme.fg(entry.context ? "dim" : "toolOutput", entry.content)}` };
+    });
+    return { text: theme.fg("accent", path), children };
+  });
+
+  return withNote(treeRows([...top, ...fileItems], width, theme), note, width, theme);
 }

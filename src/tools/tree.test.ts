@@ -100,6 +100,31 @@ test("grep context rows of a file named like a date stay under that file", () =>
   ]);
 });
 
+test("grep right-aligns line numbers within a file so the text lines up", () => {
+  const text = ["a.ts:2: const PORT = 3000;", "a.ts:26: listen(PORT);"].join("\n");
+  assert.deepEqual(plain(grepBody(text, 100, theme)), [
+    "└─ a.ts",
+    "   ├─  2  const PORT = 3000;",
+    "   └─ 26  listen(PORT);",
+  ]);
+});
+
+test("grep shows each line once when context windows overlap, and a match wins over context", () => {
+  // Pi prints the context of every match on its own, so neighbouring matches repeat lines.
+  const text = [
+    "a.ts-25- one",
+    "a.ts:26: two",
+    "a.ts-27- three",
+    "a.ts-26- two",
+    "a.ts:27: three",
+    "a.ts-28- four",
+  ].join("\n");
+  const rows = grepBody(text, 100, theme);
+  assert.deepEqual(plain(rows), ["└─ a.ts", "   ├─ 25  one", "   ├─ 26  two", "   ├─ 27  three", "   └─ 28  four"]);
+  assert.ok(rows[3].includes(theme.fg("toolOutput", "three")), "line 27 is a match");
+  assert.ok(rows[1].includes(theme.fg("dim", "one")), "line 25 stays context");
+});
+
 test("grep keeps lines that do not parse as rows under the file before them", () => {
   const text = ["before any file", "src/a.ts:1: match", "not a row", "src/b.ts:2: other"].join("\n");
   assert.deepEqual(plain(grepBody(text, 100, theme)), [
