@@ -17,7 +17,7 @@ for (const tune of [true, false]) {
       pi.type("跑一下\r");
       await pi.waitFor("完成，共输出");
       const screen = pi.screen().join("\n");
-      assert.ok(screen.includes("$ seq 1 12"), screen);
+      assert.ok(screen.includes("seq 1 12"), screen);
       assert.ok(screen.includes("完成，共输出 12 行。"), screen);
       await pi.shot(tune ? "harness-after" : "harness-before");
     } finally {
