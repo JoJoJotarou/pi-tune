@@ -110,6 +110,8 @@ function footerLines(line: string, statuses: FooterParts["statuses"], width: num
 
 export function footerLine(parts: FooterParts, width: number, theme: Theme): string[] {
   if (width <= 0) return [""];
+  // The right-aligned part keeps one column free, like the header above the transcript.
+  const usable = Math.max(1, width - 1);
 
   const branchSuffix = parts.branch ? ` (${parts.branch})` : "";
   const build = (layout: LayoutOptions): string | undefined => {
@@ -120,13 +122,13 @@ export function footerLine(parts: FooterParts, width: number, theme: Theme): str
     const rightWidth = visibleWidth(right);
     const hintWidth = visibleWidth(hints);
     const gap = hints ? 4 : 2;
-    if (leftWidth + rightWidth + hintWidth + gap > width) return undefined;
+    if (leftWidth + rightWidth + hintWidth + gap > usable) return undefined;
     if (hints) {
-      const spare = width - leftWidth - rightWidth - hintWidth;
+      const spare = usable - leftWidth - rightWidth - hintWidth;
       const before = Math.floor(spare / 2);
       return left + " ".repeat(before) + hints + " ".repeat(spare - before) + right;
     }
-    return left + " ".repeat(width - leftWidth - rightWidth) + right;
+    return left + " ".repeat(usable - leftWidth - rightWidth) + right;
   };
 
   const attempts: LayoutOptions[] = [
@@ -143,5 +145,5 @@ export function footerLine(parts: FooterParts, width: number, theme: Theme): str
 
   const left = theme.fg("muted", parts.project);
   const right = theme.fg("dim", formatStats(parts.stats, { cost: false, cache: false }));
-  return footerLines(truncateToWidth(`${left}  ${right}`, width), parts.statuses, width, theme);
+  return footerLines(truncateToWidth(`${left}  ${right}`, usable), parts.statuses, width, theme);
 }

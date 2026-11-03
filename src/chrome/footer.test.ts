@@ -118,10 +118,10 @@ test("footer drops hints, then cost, then cache fields at narrow widths", () => 
   assert.ok(medium.includes("48 tok/s"), medium);
 
   const narrow = footerLine(parts, 40, theme)[0];
-  assert.ok(visibleWidth(narrow) <= 40);
+  assert.ok(visibleWidth(narrow) <= 39);
   assert.ok(!narrow.includes("(feat/m4-chrome)"), narrow);
   assert.ok(narrow.includes("pi-tune"), narrow);
-  assert.ok(narrow.includes("5.3%/1.0M (auto)"), narrow);
+  assert.ok(narrow.includes("5.3%/1.0M"), narrow);
 });
 
 test("footer shows idle hints and the project basename at roomy widths", () => {
@@ -160,6 +160,13 @@ test("extension statuses take a dim second line sorted by key", () => {
 
   const cut = footerLine({ project: "pi-tune", stats, statuses: [["long", "x".repeat(80)]] }, 20, theme)[1];
   assert.ok(visibleWidth(cut) <= 20);
+});
+
+test("footer leaves one column free on the right", () => {
+  for (const width of [40, 80, 120]) {
+    const [line] = footerLine(parts, width, theme);
+    assert.equal(visibleWidth(line), width - 1, `${width}: ${JSON.stringify(line)}`);
+  }
 });
 
 test("footer never exceeds tiny widths", () => {
