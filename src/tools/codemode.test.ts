@@ -105,10 +105,10 @@ test("a long script line wraps instead of being cut", () => {
   for (const line of lines) assert.ok(visibleWidth(line) <= 40, line);
 });
 
-test("an inner call is one row: status icon, name, args, duration", () => {
+test("an inner call is one row: connector, status icon, name, args, duration", () => {
   const calls = codemodeCalls(details);
   const rows = plain(callLines(calls, 100, theme));
-  assert.deepEqual(rows, ['✓ read {"path":"README.md"} 5ms', '✗ bash {"command":"seq 1 3"} 1.2s']);
+  assert.deepEqual(rows, ['├─ ✓ read {"path":"README.md"} 5ms', '└─ ✗ bash {"command":"seq 1 3"} 1.2s']);
   assert.equal(callLines(calls, 20, theme).length, 2);
   for (const row of plain(callLines(calls, 20, theme))) assert.ok(visibleWidth(row) <= 20, row);
 });
@@ -123,7 +123,7 @@ test("the body is the script, the calls, then the output, cut to the width", () 
   for (const row of text) assert.ok(visibleWidth(row) <= 40, row);
   assert.ok(text.includes(""), "sections are not separated by a blank line");
 
-  const firstCall = text.findIndex((row) => row.startsWith("✓ read"));
+  const firstCall = text.findIndex((row) => row.startsWith("├─ ✓ read"));
   const firstOutput = text.indexOf("# demo");
   assert.ok(firstCall > 0 && firstOutput > firstCall, text.join("\n"));
   assert.equal(text[firstCall - 1], "");

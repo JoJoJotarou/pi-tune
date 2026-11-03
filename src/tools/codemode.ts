@@ -2,6 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { highlightCode } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
+import { treeRows } from "./tree.ts";
 
 export type CodemodeStatus = "running" | "ok" | "error" | "cancelled";
 
@@ -121,14 +122,18 @@ function callDuration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : formatDuration(ms);
 }
 
-/** One row per inner call: `✓ read {"path":"README.md"} 5ms`. */
+/** One row per inner call under a connector: `├─ ✓ read {"path":"README.md"} 5ms`. */
 export function callLines(calls: CodemodeCall[], width: number, theme: Theme): string[] {
-  return calls.map((call) => {
-    const { icon, color } = CALL_ICONS[call.status];
-    const parts = [theme.fg(color, icon), theme.bold(call.name), theme.fg("muted", call.args)];
-    if (call.durationMs !== undefined) parts.push(theme.fg("dim", callDuration(call.durationMs)));
-    return truncateToWidth(parts.join(" "), width, "…");
-  });
+  return treeRows(
+    calls.map((call) => {
+      const { icon, color } = CALL_ICONS[call.status];
+      const parts = [theme.fg(color, icon), theme.bold(call.name), theme.fg("muted", call.args)];
+      if (call.durationMs !== undefined) parts.push(theme.fg("dim", callDuration(call.durationMs)));
+      return { text: parts.join(" ") };
+    }),
+    width,
+    theme,
+  );
 }
 
 /** The expanded body: script, inner calls, then the output, each section after one blank line. */

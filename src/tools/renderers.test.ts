@@ -382,13 +382,14 @@ test("an unfinished write has no body", () => {
   assert.deepEqual(resultLines("write", text(""), { expanded: false, isPartial: true }, ctx), []);
 });
 
-test("expanded grep uses Pi's own result output", () => {
+test("expanded grep draws a tree instead of Pi's own result output", () => {
   const ctx = context({ args: { pattern: "TODO" } });
   const lines = plain(resultLines("grep", text("a.ts:1: TODO"), { expanded: true, isPartial: false }, ctx));
-  assert.ok(
-    lines.some((line) => line.trim() === "BASE RESULT"),
-    lines.join("\n"),
+  assert.deepEqual(
+    lines.slice(1, -1).map((line) => line.slice(3).trimEnd()),
+    ["└─ a.ts", "   └─ 1  TODO"],
   );
+  assert.ok(!lines.some((line) => line.includes("BASE RESULT")), lines.join("\n"));
 });
 
 test("no tool block mentions ctrl+o or the expand keybinding", () => {

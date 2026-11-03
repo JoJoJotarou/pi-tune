@@ -229,7 +229,7 @@ test("collapsed summaries tell what each tool returned", { timeout: 180_000 }, a
     }
 
     pi.press("ctrl+o");
-    await pi.waitFor(/a\.ts:1:.*TODO/);
+    await pi.waitFor(/└─ 3 {2}\/\/ TODO: third/);
     const expanded = rows(pi.screen());
     assertNoExpandHint(expanded, rowIndex(expanded, /^✓ read README\.md/), rowIndex(expanded, /^Summary done\.$/));
   });
