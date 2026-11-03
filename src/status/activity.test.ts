@@ -23,9 +23,9 @@ function line(state: ActivityState, now: number, width = 80): string {
   return stripTerminalSequences(describe(state, now, { width, interruptKey: "esc", theme }));
 }
 
-test("waits for the model with a Thinking phase and the run timer", () => {
+test("waits for the model with Pi's Working phase and the run timer", () => {
   const state = run([[t0, { type: "agent_start" }]]);
-  assert.equal(line(state, t0 + 3200), "Thinking   3.2s · esc to stop");
+  assert.equal(line(state, t0 + 3200), "Working   3.2s · esc to stop");
 });
 
 test("turn_start keeps the run timer", () => {
@@ -33,7 +33,7 @@ test("turn_start keeps the run timer", () => {
     [t0, { type: "agent_start" }],
     [t0 + 2000, { type: "turn_start" }],
   ]);
-  assert.equal(line(state, t0 + 5000), "Thinking   5.0s · esc to stop");
+  assert.equal(line(state, t0 + 5000), "Working   5.0s · esc to stop");
 });
 
 test("streaming thinking stays Thinking", () => {
@@ -72,7 +72,7 @@ test("parallel tools show the most recent one plus the others", () => {
   assert.equal(line(state, t0 + 3000), 'grep "TODO" +2   3.0s · esc to stop');
 });
 
-test("ending a tool falls back to the remaining one, then to Thinking", () => {
+test("ending a tool falls back to the remaining one, then to Working", () => {
   const state = run([
     [t0, { type: "agent_start" }],
     [t0 + 1000, { type: "tool_execution_start", id: "a", name: "read", args: { path: "/repo/a.ts" } }],
@@ -81,14 +81,14 @@ test("ending a tool falls back to the remaining one, then to Thinking", () => {
   ]);
   assert.equal(line(state, t0 + 3000), "read /repo/a.ts   3.0s · esc to stop");
   const after = reduce(state, { type: "tool_execution_end", id: "a" }, t0 + 3000);
-  assert.equal(line(after, t0 + 3500), "Thinking   3.5s · esc to stop");
+  assert.equal(line(after, t0 + 3500), "Working   3.5s · esc to stop");
 });
 
 test("colors come from the theme: phase text, detail muted, total dim", () => {
   const thinking = run([[t0, { type: "agent_start" }]]);
   assert.equal(
     describe(thinking, t0 + 3200, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "Thinking")}   ${theme.fg("dim", "3.2s · esc to stop")}`,
+    `${theme.fg("text", "Working")}   ${theme.fg("dim", "3.2s · esc to stop")}`,
   );
 
   const tool = run([

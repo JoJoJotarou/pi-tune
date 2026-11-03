@@ -7,7 +7,7 @@ const SUMMARY_WIDTH = 40;
 const DONE_TITLE_MS = 15_000;
 const COLUMN_GAP = "   ";
 
-export type ActivityPhase = "thinking" | "responding" | "tool";
+export type ActivityPhase = "working" | "thinking" | "responding" | "tool";
 
 export interface RunningTool {
   id: string;
@@ -27,7 +27,7 @@ export interface ActivityState {
 export const initialState: ActivityState = {
   running: false,
   startedAt: 0,
-  phase: "thinking",
+  phase: "working",
   tools: [],
 };
 
@@ -82,11 +82,11 @@ export function reduce(state: ActivityState, event: ActivityEvent, now: number):
       return {
         running: true,
         startedAt: now,
-        phase: "thinking",
+        phase: "working",
         tools: [],
       };
     case "turn_start":
-      return { ...state, phase: "thinking", tools: [] };
+      return { ...state, phase: "working", tools: [] };
     case "message_update":
       return { ...state, phase: event.kind === "text" ? "responding" : "thinking" };
     case "tool_execution_start": {
@@ -98,7 +98,7 @@ export function reduce(state: ActivityState, event: ActivityEvent, now: number):
     }
     case "tool_execution_end": {
       const tools = state.tools.filter((tool) => tool.id !== event.id);
-      return { ...state, phase: tools.length === 0 ? "thinking" : "tool", tools };
+      return { ...state, phase: tools.length === 0 ? "working" : "tool", tools };
     }
     case "agent_settled":
       return { ...state, running: false, tools: [] };
@@ -122,9 +122,12 @@ export function describe(state: ActivityState, now: number, options: DescribeOpt
   const { width, interruptKey, theme } = options;
   if (width <= 0) return "";
 
-  let phase = "Thinking";
+  // Waiting for the model reads as Pi's own "Working"; the other phases name what the model is doing.
+  let phase = "Working";
   let detail = "";
-  if (state.phase === "responding") {
+  if (state.phase === "thinking") {
+    phase = "Thinking";
+  } else if (state.phase === "responding") {
     phase = "Responding";
   } else if (state.phase === "tool" && state.tools.length > 0) {
     const latest = state.tools[state.tools.length - 1];
