@@ -235,11 +235,35 @@ class BodyComponent implements Component {
   invalidate(): void {}
 }
 
+/**
+ * Pi redraws the whole transcript on every frame (each wheel step, each streamed token) and expects every block to
+ * hand back cached lines. The boxes keep their last lines while the width and every input they draw from are
+ * unchanged. Pi updates a tool's context in place, so each of those inputs is part of the key.
+ */
+class RenderCache {
+  private key: string | undefined;
+  private lines: string[] = [];
+
+  get(inputs: unknown[], draw: () => string[]): string[] {
+    const key = JSON.stringify(inputs);
+    if (key !== this.key) {
+      this.lines = draw();
+      this.key = key;
+    }
+    return this.lines;
+  }
+
+  clear(): void {
+    this.key = undefined;
+  }
+}
+
 /** The header box: the header line between one painted blank row above and below. The background follows the live status. */
 class HeaderBoxComponent implements Component {
   private readonly header: HeaderComponent;
   private readonly theme: Theme;
   private readonly context: CompactContext;
+  private readonly cache = new RenderCache();
 
   constructor(header: HeaderComponent, theme: Theme, context: CompactContext) {
     this.header = header;
@@ -248,12 +272,19 @@ class HeaderBoxComponent implements Component {
   }
 
   render(width: number): string[] {
-    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
-    box.addChild(this.header);
-    return box.render(width);
+    const { outputPad, expanded, durationMs, state } = this.context;
+    const status = toolStatus(this.context);
+    const inputs = [width, railCoveredColumns(), outputPad, status, expanded, durationMs, state.meta, state.summary];
+    return this.cache.get(inputs, () => {
+      const box = new Box(outputPad, 1, statusBackground(status, this.theme));
+      box.addChild(this.header);
+      return box.render(width);
+    });
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.cache.clear();
+  }
 }
 
 /** The body box: the indented body lines under one painted blank row, which closes the tool block. */
@@ -261,6 +292,7 @@ class BodyBoxComponent implements Component {
   private readonly lines: LineSource;
   private readonly theme: Theme;
   private readonly context: CompactContext;
+  private readonly cache = new RenderCache();
 
   constructor(lines: LineSource, theme: Theme, context: CompactContext) {
     this.lines = lines;
@@ -268,13 +300,20 @@ class BodyBoxComponent implements Component {
     this.context = context;
   }
 
+  /** Line sources read the context only through `toolStatus`; the rest is fixed when `renderResult` builds them. */
   render(width: number): string[] {
-    const box = new Box(this.context.outputPad, 0, statusBackground(toolStatus(this.context), this.theme));
-    box.addChild(new BodyComponent(this.lines));
-    return box.render(width);
+    const { outputPad } = this.context;
+    const status = toolStatus(this.context);
+    return this.cache.get([width, railCoveredColumns(), outputPad, status], () => {
+      const box = new Box(outputPad, 0, statusBackground(status, this.theme));
+      box.addChild(new BodyComponent(this.lines));
+      return box.render(width);
+    });
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.cache.clear();
+  }
 }
 
 class EmptyComponent implements Component {

@@ -424,3 +424,46 @@ test("reference task before pi-tune", { timeout: 180_000 }, async () => {
     await pi.shot("tools-before");
   });
 });
+
+const liveBash: Scenario = {
+  files,
+  turns: [
+    [
+      {
+        tool: "bash",
+        args: { command: "for i in 1 2 3 4 5; do echo tick$i; sleep 0.6; done" },
+      },
+    ],
+    [{ text: "Ticks done." }],
+  ],
+};
+
+const tick = (index: number) => `tick${index}`;
+const liveHeader = /● bash for i in 1/;
+
+test("an expanded running bash body keeps updating", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: liveBash, tune: true, cols: 100, rows: 40 });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor(liveHeader);
+    pi.press("ctrl+o");
+    // The running block draws a tick as soon as the command prints it, so a cached body would only show it
+    // after the command finished and the header had already turned into ✓.
+    await pi.waitFor(tick(3));
+
+    const running = pi.screen().join("\n");
+    assert.ok(running.includes(tick(3)), `tick3 is missing:\n${running}`);
+    assert.match(running, liveHeader, `the block had finished when tick3 showed:\n${running}`);
+    assert.ok(!running.includes("✓ bash"), `the block already succeeded:\n${running}`);
+    assert.ok(!running.includes("Took"), `the finished timer is already drawn:\n${running}`);
+    await pi.shot("tools-bash-live");
+
+    await pi.waitFor("Ticks done.");
+    const done = pi.screen().join("\n");
+    for (let index = 1; index <= 5; index++) {
+      assert.ok(done.includes(tick(index)), `${tick(index)} is missing after the run:\n${done}`);
+    }
+    assert.match(done, /✓ bash for i in 1/, `the block did not finish:\n${done}`);
+    assert.ok(done.includes("Took"), `the timer is missing after the run:\n${done}`);
+  });
+});

@@ -594,3 +594,183 @@ test("expanding a bash call never hands our block back to Pi's renderer", () => 
   assert.ok(text.includes("tok35"), `the command was cut:\n${text}`);
   assertFits(lines, 80);
 });
+
+/** A fake native body that counts how often Pi's side of the renderer redraws it. */
+function countedBody(lines: (width: number) => string[]): { component: Component; renders: () => number } {
+  let renders = 0;
+  return {
+    component: {
+      render: (width) => {
+        renders++;
+        return lines(width);
+      },
+      invalidate: () => {},
+    },
+    renders: () => renders,
+  };
+}
+
+function readBodyWith(native: Component, ctx: TestContext): Component {
+  const renderers = toolRenderers("read", () => ({ ...baseRenderers, renderResult: () => native }));
+  const renderResult = renderers?.renderResult;
+  assert.ok(renderResult, "read has no renderResult");
+  return renderResult(text("one\ntwo"), { expanded: true, isPartial: false }, theme, ctx);
+}
+
+function headerFor(name: string, args: unknown, ctx: TestContext): Component {
+  const renderers = toolRenderers(name, () => baseRenderers);
+  const renderCall = renderers?.renderCall;
+  assert.ok(renderCall, `${name} has no renderCall`);
+  return renderCall(args, theme, ctx);
+}
+
+test("render cache: a body box at the same width does not render its source again", () => {
+  const fake = countedBody(() => ["BASE RESULT"]);
+  const body = readBodyWith(fake.component, context({ args: { path: "README.md" } }));
+
+  const first = body.render(80);
+  assert.deepEqual(body.render(80), first);
+  assert.equal(fake.renders(), 1, `the body rendered its source ${fake.renders()} times at width 80`);
+
+  const header = headerFor("read", { path: "README.md" }, context({ args: { path: "README.md" } }));
+  const firstHeader = header.render(80);
+  assert.deepEqual(header.render(80), firstHeader);
+});
+
+test("render cache: a body box rerenders when the width changes", () => {
+  const widths: number[] = [];
+  const fake = countedBody((width) => {
+    widths.push(width);
+    return [`w${width}`];
+  });
+  const body = readBodyWith(fake.component, context({ args: { path: "README.md" } }));
+
+  const first = plain(body.render(80));
+  const second = plain(body.render(40));
+  assert.equal(widths.length, 2, `the source saw widths ${widths.join(",")}`);
+  assert.ok(widths[1] < widths[0], `widths ${widths.join(",")}`);
+  assert.ok(
+    first.some((line) => line.includes(`w${widths[0]}`)),
+    first.join("\n"),
+  );
+  assert.ok(
+    second.some((line) => line.includes(`w${widths[1]}`)),
+    second.join("\n"),
+  );
+  assertFits(second, 40);
+});
+
+test("render cache: a header rerenders when the rail covers more columns", () => {
+  const header = headerFor("bash", { command: "true" }, context({ args: { command: "true" }, durationMs: 1240 }));
+  const trailing = (line: string) => line.length - line.trimEnd().length;
+  const before = plain(header.render(60))[1];
+  assert.equal(trailing(before), 1, JSON.stringify(before));
+
+  try {
+    setRailCoveredColumns(2);
+    const after = plain(header.render(60))[1];
+    assert.equal(trailing(after), 3, JSON.stringify(after));
+  } finally {
+    setRailCoveredColumns(0);
+  }
+});
+
+test("render cache: a body box rerenders when the rail covers more columns", () => {
+  const fake = countedBody(() => ["x".repeat(200)]);
+  const body = readBodyWith(fake.component, context({ args: { path: "README.md" } }));
+  const shown = (line: string) => line.split("x").length - 1;
+  const before = shown(plain(body.render(60))[0]);
+
+  try {
+    setRailCoveredColumns(2);
+    const after = plain(body.render(60))[0];
+    assert.equal(shown(after), before - 2, JSON.stringify(after));
+  } finally {
+    setRailCoveredColumns(0);
+  }
+});
+
+test("render cache: a header rerenders when a running call finishes", () => {
+  const ctx = context({ args: { command: "sleep 1" }, isPartial: true });
+  const header = headerFor("bash", { command: "sleep 1" }, ctx);
+  const running = header.render(80);
+  assert.equal(plain(running)[1].trim(), "● bash sleep 1");
+  assertPainted(running, "toolPendingBg");
+
+  ctx.isPartial = false;
+  const done = header.render(80);
+  assert.equal(plain(done)[1].trim(), "✓ bash sleep 1");
+  assertPainted(done, "toolSuccessBg");
+});
+
+test("render cache: a header rerenders when the call fails", () => {
+  const ctx = context({ args: { command: "false" } });
+  const header = headerFor("bash", { command: "false" }, ctx);
+  assert.equal(plain(header.render(80))[1].trim(), "✓ bash false");
+
+  ctx.isError = true;
+  const failed = header.render(80);
+  assert.equal(plain(failed)[1].trim(), "✗ bash false");
+  assertPainted(failed, "toolErrorBg");
+});
+
+test("render cache: a header rerenders when the block is expanded", () => {
+  const command = `echo ${"x".repeat(150)}`;
+  const ctx = context({ args: { command } });
+  const header = headerFor("bash", { command }, ctx);
+  const collapsed = plain(header.render(40)).slice(1, -1);
+  assert.equal(collapsed.length, 1, collapsed.join("\n"));
+  assert.ok(collapsed[0].includes("…"), collapsed[0]);
+
+  ctx.expanded = true;
+  const expanded = plain(header.render(40)).slice(1, -1);
+  assert.ok(expanded.length > 1, expanded.join("\n"));
+  assert.equal(expanded.join("").split("x").length - 1, 150, expanded.join("\n"));
+  assertFits(expanded, 40);
+});
+
+test("render cache: a header rerenders when the duration arrives", () => {
+  const ctx = context({ args: { command: "true" } });
+  const header = headerFor("bash", { command: "true" }, ctx);
+  assert.doesNotMatch(plain(header.render(80))[1], /\d\.\ds/, plain(header.render(80))[1]);
+
+  ctx.durationMs = 1240;
+  assert.match(plain(header.render(80))[1], /1\.2s/);
+});
+
+test("render cache: a header rerenders when the result sets meta and summary", () => {
+  const ctx = context({ args: { path: "README.md" } });
+  const header = headerFor("read", { path: "README.md" }, ctx);
+  assert.equal(plain(header.render(80))[1].trim(), "✓ read README.md");
+
+  ctx.state.meta = "3 lines";
+  ctx.state.summary = "README.md (cached)";
+  const after = plain(header.render(80))[1];
+  assert.match(after, /README\.md \(cached\)/, after);
+  assert.match(after, /3 lines/, after);
+});
+
+test("render cache: a body box rerenders when the call fails", () => {
+  const ctx = context({ args: { command: "make" } });
+  const renderResult = toolRenderers("bash", () => baseRenderers)?.renderResult;
+  assert.ok(renderResult, "bash has no renderResult");
+  const body = renderResult(text("compiling\nboom"), { expanded: false, isPartial: false }, theme, ctx);
+  const passed = plain(body.render(80)).join("\n");
+  assert.ok(!passed.includes("boom"), passed);
+
+  ctx.isError = true;
+  const failed = body.render(80);
+  assert.ok(plain(failed).join("\n").includes("boom"), plain(failed).join("\n"));
+  assertPainted(failed, "toolErrorBg");
+});
+
+test("render cache: invalidate makes the next render recompute", () => {
+  const fake = countedBody(() => ["BASE RESULT"]);
+  const body = readBodyWith(fake.component, context({ args: { path: "README.md" } }));
+
+  body.render(80);
+  body.render(80);
+  body.invalidate();
+  body.render(80);
+  assert.equal(fake.renders(), 2, `the source rendered ${fake.renders()} times: twice before invalidate, once after`);
+});
