@@ -38,6 +38,11 @@ const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", 
 const BODY_INDENT = 2;
 /** Output lines shown for a failed call while it is collapsed. */
 const FAILURE_LINES = 3;
+/**
+ * The navigation timeline draws its rail over the transcript's right two columns, so both the header and the body
+ * keep that width free on the right; the counts then keep one column between them and the rail.
+ */
+const RAIL_COLUMNS = 2;
 
 interface CompactContext {
   state: Record<string, unknown>;
@@ -184,7 +189,7 @@ class HeaderComponent implements Component {
     const summary = this.context.state.summary;
     // Expanded bash ends with the timer line Pi's own body draws, so its duration is on that line only.
     const timerInBody = this.context.expanded && this.text.name === "bash";
-    return renderHeader(
+    const lines = renderHeader(
       {
         status: toolStatus(this.context),
         name: this.text.name,
@@ -195,9 +200,11 @@ class HeaderComponent implements Component {
         summaryColor: this.text.summaryColor,
         expanded: this.context.expanded,
       },
-      width,
+      Math.max(1, width - RAIL_COLUMNS),
       this.theme,
     );
+    const rail = " ".repeat(RAIL_COLUMNS);
+    return lines.map((line) => `${line}${rail}`);
   }
 
   invalidate(): void {}

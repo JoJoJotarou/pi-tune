@@ -208,6 +208,15 @@ test("the header shows the result meta and duration right-aligned on the same pa
   assert.match(plain(lines)[1].trimEnd(), /^ ✗ bash sh -c 'exit 3'\s+exit 3 · 1\.2s$/);
 });
 
+test("the header keeps the timeline rail's two columns free on the right", () => {
+  const ctx = context({ args: { command: "true" }, durationMs: 1240 });
+  const line = plain(callLines("bash", { command: "true" }, ctx, 60))[1];
+  // The rail draws over the last two columns; the counts keep one blank column in front of it.
+  const withoutRail = line.slice(0, 60 - 2);
+
+  assert.match(withoutRail, /1\.2s $/, JSON.stringify(line));
+});
+
 test("a running call has no meta", () => {
   const ctx = context({ args: { command: "sleep 1" }, executionStarted: false });
   const lines = plain(callLines("bash", { command: "sleep 1" }, ctx));
