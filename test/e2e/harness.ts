@@ -32,6 +32,10 @@ export interface StartOptions {
   settings?: Record<string, unknown>;
   /** Extra extension files, loaded with `-e` after pi-tune; relative paths resolve against the project dir. */
   extensions?: string[];
+  /** Files written under the agent dir, e.g. `skills/review/SKILL.md`. */
+  agentFiles?: Record<string, string>;
+  /** Leave `--no-skills` out, so Pi loads the skills under the agent dir. */
+  skills?: boolean;
 }
 
 export interface PiSession {
@@ -145,6 +149,12 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     writeFileSync(target, content);
   }
 
+  for (const [path, content] of Object.entries(options.agentFiles ?? {})) {
+    const target = join(agentDir, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, content);
+  }
+
   linkTools(binDir);
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark", ...options.settings }, null, 2));
   const scenarioPath = join(root, "scenario.json");
@@ -155,7 +165,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     "--offline",
     "--no-session",
     "--no-extensions",
-    "--no-skills",
+    ...(options.skills ? [] : ["--no-skills"]),
     "--no-context-files",
     "--no-prompt-templates",
     "--no-mcp",

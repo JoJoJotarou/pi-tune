@@ -168,7 +168,9 @@ export default function (pi: ExtensionAPI) {
           skills,
           mcp: { connected, configured: mcpConfigured },
         };
-        return [headerLine(parts, width, theme)];
+        // The timeline rail covers the chat's one-column right padding and Pi's scrollbar column, so the
+        // header keeps that padding too; otherwise the rail eats the last character of the right counts.
+        return [headerLine(parts, width - 1, theme)];
       },
       invalidate() {},
     }));

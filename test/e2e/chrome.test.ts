@@ -114,3 +114,35 @@ test("a short message after a measured one keeps the last token rate", { timeout
     await pi.close();
   }
 });
+
+test("the timeline rail keeps the header counts intact", { timeout: 180_000 }, async () => {
+  const twoTurns: Scenario = {
+    files: { "README.md": "# demo\n" },
+    turns: [[{ text: "ready" }], [{ text: "done" }]],
+  };
+  const pi = await startPi({
+    scenario: twoTurns,
+    cols: 100,
+    rows: 30,
+    settings: { quietStartup: "header", fullscreenScrollbar: "always" },
+    skills: true,
+    agentFiles: {
+      "skills/review/SKILL.md": "---\nname: review\ndescription: Review a diff.\n---\n\n# review\n",
+    },
+  });
+  try {
+    pi.type("first\r");
+    await pi.waitFor("ready");
+    pi.type("second\r");
+    await pi.waitFor("done");
+    // Two prompts put the rail on screen; the header counts must keep their last column.
+    await pi.waitFor(/π pi .*skill/);
+    const screen = pi.screen();
+    const lastColumn = screen.map((line) => line.at(-1));
+    assert.ok(lastColumn.includes("▴") && lastColumn.includes("▾"), screen.join("\n"));
+    const header = screen.find((line) => line.includes("π pi")) ?? "";
+    assert.match(header.trimEnd(), /\d+ skills$/, header);
+  } finally {
+    await pi.close();
+  }
+});
