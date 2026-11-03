@@ -1,14 +1,13 @@
-import {
-  type AgentToolResult,
-  type EditToolDetails,
-  type FindToolDetails,
-  type GrepToolDetails,
-  type LsToolDetails,
-  type ReadToolDetails,
-  type ReadToolInput,
-  renderDiff,
-  type Theme,
-  type ToolRendererResolver,
+import type {
+  AgentToolResult,
+  EditToolDetails,
+  FindToolDetails,
+  GrepToolDetails,
+  LsToolDetails,
+  ReadToolDetails,
+  ReadToolInput,
+  Theme,
+  ToolRendererResolver,
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
@@ -22,6 +21,7 @@ import {
   scriptOutput,
   scriptToolNames,
 } from "./codemode.ts";
+import { renderDiffRows } from "./diff.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
@@ -200,20 +200,27 @@ class HeaderBoxComponent implements Component {
   invalidate(): void {}
 }
 
-/** The body box: one painted blank row above and below the indented body lines. */
+/**
+ * The body box: one painted blank row above and below the indented body lines. A diff body sits on the neutral
+ * panel instead of the status color, so its own green and red row tints stay readable; errors keep their color.
+ */
 class BodyBoxComponent implements Component {
   private readonly lines: LineSource;
   private readonly theme: Theme;
   private readonly context: CompactContext;
+  private readonly panel: boolean;
 
-  constructor(lines: LineSource, theme: Theme, context: CompactContext) {
+  constructor(lines: LineSource, theme: Theme, context: CompactContext, panel = false) {
     this.lines = lines;
     this.theme = theme;
     this.context = context;
+    this.panel = panel;
   }
 
   render(width: number): string[] {
-    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
+    const status = toolStatus(this.context);
+    const background = this.panel && status !== "error" ? "running" : status;
+    const box = new Box(this.context.outputPad, 1, statusBackground(background, this.theme));
     box.addChild(new BodyComponent(this.lines));
     return box.render(width);
   }
@@ -250,12 +257,17 @@ function errorSource(output: string, theme: Theme): LineSource {
   };
 }
 
-/** Pi's rendered diff; collapsed, the preview starts at the first change so it shows what changed. */
+/** The diff on the neutral panel; collapsed, the preview starts at the first change so it shows what changed. */
 function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSource {
-  const lines = renderDiff(diffText).split("\n");
-  if (expanded || lines.length <= PREVIEW_LINES) return () => lines;
+  const options = { surface: theme.colors.toolPendingBg, wrap: expanded };
+  const lines = diffText.split("\n");
+  if (expanded || lines.length <= PREVIEW_LINES) return (width) => renderDiffRows(diffText, width, theme, options);
   const start = Math.min(firstChange(diffText), lines.length - PREVIEW_LINES);
-  return () => [...lines.slice(start, start + PREVIEW_LINES), truncationLine(lines.length - PREVIEW_LINES, theme)];
+  const preview = lines.slice(start, start + PREVIEW_LINES).join("\n");
+  return (width) => [
+    ...renderDiffRows(preview, width, theme, options),
+    truncationLine(lines.length - PREVIEW_LINES, theme),
+  ];
 }
 
 function bashSource(command: string, expanded: boolean, native: LineSource, theme: Theme): LineSource {
@@ -315,6 +327,7 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
           theme,
           context,
+          true,
         );
       }
 
@@ -328,14 +341,16 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         context.state.meta = plan.meta;
         if (plan.body === "none") return new EmptyComponent();
 
+        const isDiff = plan.body === "diff" && plan.diff !== undefined;
         const lines: LineSource =
-          plan.body === "diff" && plan.diff !== undefined
+          isDiff && plan.diff !== undefined
             ? diffSource(plan.diff, expanded, theme)
             : (width) => renderWriteLines(path, content, expanded, width, theme);
         return new BodyBoxComponent(
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
           theme,
           context,
+          isDiff,
         );
       }
 

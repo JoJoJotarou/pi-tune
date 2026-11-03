@@ -277,7 +277,7 @@ test("expanded failures show the whole output, command first for bash", () => {
   );
 });
 
-test("an edit shows its counts and Pi's diff from the first change until expanded", () => {
+test("an edit shows its counts and the diff from the first change until expanded", () => {
   const diff = " 1 a\n-2 b\n+2 B\n 3 c\n-4 d\n+4 D\n 5 e";
   const ctx = context({ args: { path: "a.ts" } });
   const collapsed = resultLines("edit", { content: [], details: { diff } }, { expanded: false, isPartial: false }, ctx);
@@ -287,11 +287,12 @@ test("an edit shows its counts and Pi's diff from the first change until expande
   const rendered = plain(collapsed);
   const body = rendered.slice(1, -1);
   assert.equal(body.length, 4, rendered.join("\n"));
-  assert.equal(body[0].trim(), "-2 b");
-  assert.equal(body[1].trim(), "+2 B");
-  assert.equal(body[2].trim(), "3 c");
+  assert.equal(body[0].trim(), "2 - b");
+  assert.equal(body[1].trim(), "2 + B");
+  assert.equal(body[2].trim(), "3   c");
   assert.equal(body[3].trim(), "… 4 more lines · click to expand");
-  assertPainted(collapsed, "toolSuccessBg");
+  // The diff sits on a neutral panel so its own row tints stay readable; the header keeps the status color.
+  assertPainted(collapsed, "toolPendingBg");
 
   const expanded = plain(
     resultLines("edit", { content: [], details: { diff } }, { expanded: true, isPartial: false }, ctx),
@@ -308,7 +309,7 @@ test("a short diff is shown whole while collapsed", () => {
   );
   assert.deepEqual(
     lines.slice(1, -1).map((line) => line.trim()),
-    ["1 a", "-2 b", "+2 B"],
+    ["1   a", "2 - b", "2 + B"],
   );
 });
 
@@ -352,7 +353,7 @@ test("an overwrite diffs against the old text and folds to three lines", () => {
 
   const expanded = plain(resultLines("write", text("ok"), { expanded: true, isPartial: false }, ctx));
   assert.ok(
-    expanded.some((line) => line.includes("+2 TWO")),
+    expanded.some((line) => line.includes("2 + TWO")),
     expanded.join("\n"),
   );
   assert.ok(!expanded.some((line) => line.includes("click to expand")));

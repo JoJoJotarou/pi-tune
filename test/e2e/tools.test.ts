@@ -283,7 +283,7 @@ const edits: Scenario = {
   ],
 };
 
-test("edit results show Pi's diff and fold large changes", { timeout: 240_000 }, async () => {
+test("edit results show the diff and fold large changes", { timeout: 240_000 }, async () => {
   const pi = await startPi({ scenario: edits, tune: true, cols: 100, rows: 50, settings: editSettings });
   await closeAfter(pi, async () => {
     pi.type("run it\r");
@@ -301,7 +301,7 @@ test("edit results show Pi's diff and fold large changes", { timeout: 240_000 },
 
     const serverDiff = lines.slice(first + 1, second);
     assert.ok(
-      serverDiff.some((line) => /-\s*3\s+const PORT = 3000;/.test(line)),
+      serverDiff.some((line) => /3 - const PORT = 3000;/.test(line)),
       `no removed server row:\n${lines.join("\n")}`,
     );
     assert.ok(
@@ -316,7 +316,7 @@ test("edit results show Pi's diff and fold large changes", { timeout: 240_000 },
       `folded big edit has no hint:\n${lines.join("\n")}`,
     );
     assert.ok(
-      /^-11 /.test(folded.find((line) => line.trim() !== "")?.trim() ?? ""),
+      /^11 - /.test(folded.find((line) => line.trim() !== "")?.trim() ?? ""),
       `folded big edit does not start at the change:\n${lines.join("\n")}`,
     );
     assert.equal(countBodyRows(lines, second + 1), 3, `folded big edit body:\n${lines.join("\n")}`);
@@ -324,8 +324,8 @@ test("edit results show Pi's diff and fold large changes", { timeout: 240_000 },
     await pi.shot("tools-edit");
 
     pi.press("ctrl+o");
-    await pi.waitFor(/-11 const value11 = 11;/);
-    await pi.waitFor(/\+11 const value11 = 110;/);
+    await pi.waitFor(/11 - const value11 = 11;/);
+    await pi.waitFor(/11 \+ const value11 = 110;/);
     assert.ok(!pi.screen().join("\n").includes("click to expand"));
     await pi.shot("tools-expanded-diff");
   });
@@ -381,7 +381,7 @@ test("write tells new files from overwrites and diffs overwrites", { timeout: 24
       `overwrite has no hint:\n${lines.join("\n")}`,
     );
     assert.ok(
-      body.slice(0, 3).some((line) => /^[-+]\s*\d+ /.test(line.trim())),
+      body.slice(0, 3).some((line) => /^\d+ [-+] /.test(line.trim())),
       `overwrite preview does not start at the change:\n${lines.join("\n")}`,
     );
     await pi.shot("tools-write-overwrite");
