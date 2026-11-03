@@ -3,6 +3,8 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
 const SUMMARY_WIDTH = 40;
+/** Runs at least this long leave a done title, so a glance at the tab shows the work finished. */
+const DONE_TITLE_MS = 15_000;
 const COLUMN_GAP = "   ";
 
 export type ActivityPhase = "thinking" | "responding" | "tool";
@@ -139,4 +141,10 @@ export function describe(state: ActivityState, now: number, options: DescribeOpt
   const available = width - visibleWidth(right) - COLUMN_GAP.length;
   if (available <= 0) return right;
   return `${truncateToWidth(left, available, "…")}${COLUMN_GAP}${right}`;
+}
+
+/** The terminal title after a run, or `undefined` when the run was short or aborted. */
+export function doneTitle(elapsedMs: number, aborted: boolean): string | undefined {
+  if (aborted || elapsedMs < DONE_TITLE_MS) return undefined;
+  return `✓ pi · done ${formatDuration(elapsedMs)}`;
 }

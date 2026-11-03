@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { type ActivityEvent, type ActivityState, describe, initialState, reduce, summarizeTool } from "./activity.ts";
+import {
+  type ActivityEvent,
+  type ActivityState,
+  describe,
+  doneTitle,
+  initialState,
+  reduce,
+  summarizeTool,
+} from "./activity.ts";
 
 const t0 = 1_000_000;
 const theme = testTheme("dark");
@@ -136,4 +144,10 @@ test("no message when idle or settled", () => {
   assert.equal(describe(initialState, t0, { width: 80, interruptKey: "esc", theme }), "");
   const settled = reduce(run([[t0, { type: "agent_start" }]]), { type: "agent_settled" }, t0 + 1000);
   assert.equal(describe(settled, t0 + 2000, { width: 80, interruptKey: "esc", theme }), "");
+});
+
+test("a finished run of 15 s or more sets the done title; shorter or aborted runs do not", () => {
+  assert.equal(doneTitle(15_000, false), "✓ pi · done 15s");
+  assert.equal(doneTitle(14_999, false), undefined);
+  assert.equal(doneTitle(60_000, true), undefined);
 });

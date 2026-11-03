@@ -1,11 +1,16 @@
 import { basename } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, keyText, type Theme } from "@earendil-works/pi-coding-agent";
-import { formatDuration } from "../src/shared/format.ts";
-import { type ActivityEvent, type ActivityState, describe, initialState, reduce } from "../src/status/activity.ts";
+import {
+  type ActivityEvent,
+  type ActivityState,
+  describe,
+  doneTitle,
+  initialState,
+  reduce,
+} from "../src/status/activity.ts";
 
 const REFRESH_MS = 250;
-const DONE_TITLE_MS = 15_000;
 
 function messageProgress(event: AssistantMessageEvent): "thinking" | "text" | undefined {
   switch (event.type) {
@@ -97,9 +102,8 @@ export default function (pi: ExtensionAPI) {
     stopTimer();
     if (context.mode === "tui") {
       context.ui.setWorkingMessage();
-      if (!event.aborted && elapsed >= DONE_TITLE_MS) {
-        context.ui.setTitle(`✓ pi · done ${formatDuration(elapsed)}`);
-      }
+      const title = doneTitle(elapsed, event.aborted);
+      if (title !== undefined) context.ui.setTitle(title);
     }
     apply({ type: "agent_settled" });
   });
