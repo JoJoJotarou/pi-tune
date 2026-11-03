@@ -11,11 +11,12 @@ function emptyRow(width: number): string {
   return `${GHOST_CLEAR} ${GHOST_RESTORE}${" ".repeat(width - 1)}`;
 }
 
-test("ghost text overlays the cursor cell and preserves the row width", () => {
+test("ghost text goes after the cursor cell and preserves the row width", () => {
   const row = withGhostSuggestion(emptyRow(60), "run the tests", (t) => `\x1b[2m${t}\x1b[0m`, 58);
   assert.equal(visibleWidth(row), 58);
   assert.ok(row.includes("run the tests"));
-  assert.ok(row.includes(GHOST_CLEAR) && row.includes(GHOST_RESTORE));
+  // The cursor cell between the markers stays a single cell, so the TUI's block cursor is untouched.
+  assert.ok(row.includes(`${GHOST_CLEAR} ${GHOST_RESTORE}\x1b[2mrun the tests`));
 });
 
 test("long suggestions truncate to the row width", () => {

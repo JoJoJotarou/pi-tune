@@ -1,6 +1,6 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-/** Pi's editor content rows carry fragment-cache sentinels; the ghost text must live inside them. */
+/** Pi's editor content rows carry fragment-cache sentinels around the cursor cell. */
 const GHOST_CLEAR = "\x1b_pi:fc\x07";
 const GHOST_RESTORE = "\x1b_pi:/fc\x07";
 
@@ -8,9 +8,10 @@ const GHOST_RESTORE = "\x1b_pi:/fc\x07";
 const DIGEST_CHARS = 2000;
 
 /**
- * Overlay the ghost suggestion onto an empty editor content row. The row keeps its markers and
- * its visible width, so neither the diff renderer nor the frame layout notices. Rows without the
- * marker pair (non-empty editors, other layouts) come back untouched.
+ * Overlay the ghost suggestion onto an empty editor content row. The cursor cell between Pi's
+ * fragment-cache markers stays a single cell (the TUI inverts it as the block cursor), so the
+ * suggestion goes after it and the row keeps its visible width. Rows without the marker pair
+ * (non-empty editors, other layouts) come back untouched.
  */
 export function withGhostSuggestion(
   row: string,
@@ -18,13 +19,11 @@ export function withGhostSuggestion(
   style: (text: string) => string,
   width: number,
 ): string {
-  const clear = row.indexOf(GHOST_CLEAR);
   const restore = row.indexOf(GHOST_RESTORE);
-  if (suggestion === "" || clear < 0 || restore < clear + GHOST_CLEAR.length) return row;
-  const text = truncateToWidth(suggestion, width, "").trimEnd();
-  const textWidth = visibleWidth(text);
-  const padding = " ".repeat(Math.max(0, width - textWidth));
-  return row.slice(0, clear + GHOST_CLEAR.length) + style(text) + row.slice(restore).replace(/ +$/, "") + padding;
+  if (suggestion === "" || restore < 0) return row;
+  const text = truncateToWidth(suggestion, Math.max(0, width - 1), "").trimEnd();
+  const padding = " ".repeat(Math.max(0, width - 1 - visibleWidth(text)));
+  return row.slice(0, restore + GHOST_RESTORE.length) + style(text) + padding;
 }
 
 /** Reduce a model reply to one displayable line: no fences, quotes or wrapping. */

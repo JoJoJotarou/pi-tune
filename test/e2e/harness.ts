@@ -55,6 +55,8 @@ export interface PiSession {
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
   screen(): string[];
+  /** Raw xterm buffer for tests that need cell attributes, not just text. */
+  buffer(): import("@xterm/headless").Terminal["buffer"]["active"];
   shot(name: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -305,6 +307,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
       return waitFor(text, timeoutMs, true);
     },
     screen: readScreen,
+    buffer: () => term.buffer.active,
     async shot(name) {
       const dir = process.env.PI_TUNE_SHOTS;
       if (!dir) return;
