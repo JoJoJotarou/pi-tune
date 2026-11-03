@@ -1,4 +1,4 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
@@ -36,6 +36,10 @@ export interface HeaderParts {
   summary: string;
   meta?: string;
   durationMs?: number;
+  /** Theme color of the name; the name is bold either way. Pi's own labels keep their own token. */
+  nameColor?: ThemeColor;
+  /** Theme color of the summary, `accent` unless a native label brings its own. */
+  summaryColor?: ThemeColor;
   /** An expanded block wraps the summary over as many lines as it needs instead of cutting it. */
   expanded?: boolean;
 }
@@ -49,18 +53,26 @@ const ICONS: Record<ToolStatus, { icon: string; color: "warning" | "success" | "
 /** Narrowest summary still worth keeping beside the right part, in columns. Baseline of `cutSummary`. */
 const MIN_SUMMARY = 8;
 
+/** The meta and duration column: always dim, whatever the summary beside it uses. */
+function paintRight(right: string, theme: Theme): string {
+  return theme.fg("dim", right);
+}
+
 /** One line while collapsed; the summary wrapped over as many lines as it needs when expanded. */
 export function renderHeader(parts: HeaderParts, width: number, theme: Theme): string[] {
   if (width <= 0) return [""];
 
   const { icon, color } = ICONS[parts.status];
-  const prefix = `${theme.fg(color, icon)} ${theme.bold(parts.name)}`;
+  const name = theme.bold(parts.name);
+  const prefix = `${theme.fg(color, icon)} ${parts.nameColor === undefined ? name : theme.fg(parts.nameColor, name)}`;
   const prefixWidth = visibleWidth(prefix);
   const duration = parts.durationMs === undefined ? undefined : formatDuration(parts.durationMs);
   const right = [parts.meta, duration].filter((part): part is string => Boolean(part)).join(" · ");
+  const summaryColor = parts.summaryColor ?? "accent";
+  const paintSummary = (text: string) => theme.fg(summaryColor, text);
 
-  if (parts.expanded) return wrapHeader(prefix, prefixWidth, parts.summary, right, width, theme);
-  return [oneLineHeader(parts, prefix, prefixWidth, duration, right, width, theme)];
+  if (parts.expanded) return wrapHeader(prefix, prefixWidth, parts.summary, right, paintSummary, width, theme);
+  return [oneLineHeader(parts, prefix, prefixWidth, duration, right, paintSummary, width, theme)];
 }
 
 /**
@@ -72,6 +84,7 @@ function wrapHeader(
   prefixWidth: number,
   summary: string,
   right: string,
+  paintSummary: (text: string) => string,
   width: number,
   theme: Theme,
 ): string[] {
@@ -84,15 +97,15 @@ function wrapHeader(
     segments.length === 0
       ? [prefix]
       : segments.map((segment, index) =>
-          index === 0 ? `${prefix} ${theme.fg("accent", segment)}` : `${indent}${theme.fg("accent", segment)}`,
+          index === 0 ? `${prefix} ${paintSummary(segment)}` : `${indent}${paintSummary(segment)}`,
         );
 
   if (rightWidth > 0) {
     if (beside) {
       const gap = width - visibleWidth(lines[0]) - rightWidth;
-      lines[0] = `${lines[0]}${" ".repeat(gap)}${theme.fg("dim", right)}`;
+      lines[0] = `${lines[0]}${" ".repeat(gap)}${paintRight(right, theme)}`;
     } else if (rightWidth <= width) {
-      lines.push(`${" ".repeat(width - rightWidth)}${theme.fg("dim", right)}`);
+      lines.push(`${" ".repeat(width - rightWidth)}${paintRight(right, theme)}`);
     }
   }
 
@@ -105,19 +118,20 @@ function oneLineHeader(
   prefixWidth: number,
   duration: string | undefined,
   right: string,
+  paintSummary: (text: string) => string,
   width: number,
   theme: Theme,
 ): string {
   const compose = (summary: string, right: string): string | undefined => {
-    const left = summary ? `${prefix} ${theme.fg("accent", summary)}` : prefix;
+    const left = summary ? `${prefix} ${paintSummary(summary)}` : prefix;
     const leftWidth = visibleWidth(left);
-    const rightText = theme.fg("dim", right);
+    const rightText = paintRight(right, theme);
     const gap = width - leftWidth - visibleWidth(rightText);
     return gap >= 2 ? `${left}${" ".repeat(gap)}${rightText}` : undefined;
   };
 
   const composeWithoutRight = (summary: string): string | undefined => {
-    const left = summary ? `${prefix} ${theme.fg("accent", summary)}` : prefix;
+    const left = summary ? `${prefix} ${paintSummary(summary)}` : prefix;
     const leftWidth = visibleWidth(left);
     return leftWidth <= width ? `${left}${" ".repeat(width - leftWidth)}` : undefined;
   };
@@ -153,6 +167,6 @@ function oneLineHeader(
     if (line) return line;
   }
 
-  const left = parts.summary ? `${prefix} ${theme.fg("accent", parts.summary)}` : prefix;
+  const left = parts.summary ? `${prefix} ${paintSummary(parts.summary)}` : prefix;
   return truncateToWidth(left, width, "…");
 }

@@ -138,6 +138,29 @@ test("each tool summarises its arguments", () => {
   }
 });
 
+test("a SKILL.md read keeps Pi's own [skill] label instead of the path", () => {
+  const path = "/repo/.agents/skills/use-tinyfish/SKILL.md";
+  const ctx = context({ args: { path } });
+  const lines = plain(callLines("read", { path }, ctx));
+
+  assert.equal(lines.length, 3);
+  assert.equal(lines[1].trim(), "✓ [skill] use-tinyfish");
+});
+
+test("the [skill] label and the skill name use Pi's own label colors", () => {
+  const path = "/repo/.agents/skills/use-tinyfish/SKILL.md";
+  const line = callLines("read", { path }, context({ args: { path } }))[1];
+
+  assert.ok(line.includes(theme.fg("customMessageLabel", theme.bold("[skill]"))), line);
+  assert.ok(line.includes(theme.fg("customMessageText", "use-tinyfish")), line);
+});
+
+test("a relative SKILL.md read finds the skill from the cwd", () => {
+  const path = ".agents/skills/use-tinyfish/SKILL.md";
+  const ctx = context({ args: { path }, cwd: "/repo" });
+  assert.equal(plain(callLines("read", { path }, ctx))[1].trim(), "✓ [skill] use-tinyfish");
+});
+
 test("missing or non-string args use an empty summary and never throw", () => {
   for (const args of [undefined, null, 42, {}, { command: 7 }, { path: null }]) {
     const lines = plain(callLines("bash", args, context()));

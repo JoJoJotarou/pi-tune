@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { AgentToolResult, ReadToolDetails } from "@earendil-works/pi-coding-agent";
 import { createReadTool } from "@earendil-works/pi-coding-agent";
-import { readMeta } from "./read.ts";
+import { readMeta, skillLabel } from "./read.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "pi-tune-read-meta-"));
 writeFileSync(join(dir, "three.txt"), "alpha\nbeta\ngamma\n");
@@ -68,4 +68,12 @@ test("a whole file read is not confused by a bracketed link after a blank line",
   writeFileSync(join(dir, "note.md"), "intro\n\n[docs](https://example.com)\nmore\n");
   const args = { path: "note.md" };
   assert.equal(meta(args, await readResult(args)), "4 lines");
+});
+
+test("only a SKILL.md read is labelled as a skill, by its directory name", () => {
+  assert.equal(skillLabel("/repo/.agents/skills/use-tinyfish/SKILL.md", "/repo"), "use-tinyfish");
+  assert.equal(skillLabel(".agents/skills/use-tinyfish/SKILL.md", "/repo"), "use-tinyfish");
+  assert.equal(skillLabel("README.md", "/repo"), undefined);
+  assert.equal(skillLabel("/repo/docs/SKILL.md.md", "/repo"), undefined);
+  assert.equal(skillLabel("/repo/SKILL.md", "/repo"), "repo");
 });

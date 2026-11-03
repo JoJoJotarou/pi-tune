@@ -7,6 +7,7 @@ import type {
   ReadToolDetails,
   ReadToolInput,
   Theme,
+  ThemeColor,
   ToolRendererResolver,
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
@@ -23,7 +24,7 @@ import {
 } from "./codemode.ts";
 import { previewLines, renderDiffRows } from "./diff.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
-import { readMeta } from "./read.ts";
+import { readMeta, skillLabel } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
 import { grepBody, listBody } from "./tree.ts";
 import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
@@ -129,25 +130,48 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
     .join("\n");
 }
 
-/** The header text: bash shows its whole command once expanded, every other tool keeps its summary. */
-function headerSummary(toolName: string, rawArgs: unknown, expanded: boolean): string {
-  if (toolName === "bash" && expanded) {
-    const command = stringArg(textArgs(rawArgs), "command");
-    if (command !== undefined) return command.replace(/\n$/, "");
+interface HeaderText {
+  name: string;
+  summary: string;
+  /** Set by labels Pi's own renderers style, such as the `[skill]` one. */
+  nameColor?: ThemeColor;
+  summaryColor?: ThemeColor;
+}
+
+/**
+ * The bold label and the summary beside it. A `SKILL.md` read takes Pi's own label (`[skill] <name>`)
+ * instead of the path, which says nothing about what the file is. Bash shows its whole command once
+ * expanded.
+ */
+function headerText(toolName: string, rawArgs: unknown, context: { cwd: string; expanded: boolean }): HeaderText {
+  const args = textArgs(rawArgs);
+  if (toolName === "read") {
+    const path = stringArg(args, "path");
+    const skill = path === undefined ? undefined : skillLabel(path, context.cwd);
+    if (skill !== undefined) {
+      return {
+        name: "[skill]",
+        summary: skill,
+        nameColor: "customMessageLabel",
+        summaryColor: "customMessageText",
+      };
+    }
   }
-  return summaryFor(toolName, rawArgs);
+  if (toolName === "bash" && context.expanded) {
+    const command = stringArg(args, "command");
+    if (command !== undefined) return { name: "bash", summary: command.replace(/\n$/, "") };
+  }
+  return { name: toolName, summary: summaryFor(toolName, rawArgs) };
 }
 
 /** The header, painted by the box around it: one line while collapsed, the summary wrapped once expanded. */
 class HeaderComponent implements Component {
-  private readonly toolName: string;
-  private readonly summary: string;
+  private readonly text: HeaderText;
   private readonly theme: Theme;
   private readonly context: CompactContext;
 
-  constructor(toolName: string, summary: string, theme: Theme, context: CompactContext) {
-    this.toolName = toolName;
-    this.summary = summary;
+  constructor(text: HeaderText, theme: Theme, context: CompactContext) {
+    this.text = text;
     this.theme = theme;
     this.context = context;
   }
@@ -156,14 +180,16 @@ class HeaderComponent implements Component {
     const meta = this.context.state.meta;
     const summary = this.context.state.summary;
     // Expanded bash ends with the timer line Pi's own body draws, so its duration is on that line only.
-    const timerInBody = this.context.expanded && this.toolName === "bash";
+    const timerInBody = this.context.expanded && this.text.name === "bash";
     return renderHeader(
       {
         status: toolStatus(this.context),
-        name: this.toolName,
-        summary: typeof summary === "string" ? summary : this.summary,
+        name: this.text.name,
+        summary: typeof summary === "string" ? summary : this.text.summary,
         meta: typeof meta === "string" ? meta : undefined,
         durationMs: timerInBody ? undefined : this.context.durationMs,
+        nameColor: this.text.nameColor,
+        summaryColor: this.text.summaryColor,
         expanded: this.context.expanded,
       },
       width,
@@ -287,12 +313,10 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
   return {
     ...base,
     renderShell: "self",
-    renderCall: (args, theme, context) =>
-      new HeaderBoxComponent(
-        new HeaderComponent(toolName, headerSummary(toolName, args, context.expanded), theme, context),
-        theme,
-        context,
-      ),
+    renderCall: (args, theme, context) => {
+      const text = headerText(toolName, args, context);
+      return new HeaderBoxComponent(new HeaderComponent(text, theme, context), theme, context);
+    },
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
       const expanded = options.expanded;
