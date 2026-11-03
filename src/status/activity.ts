@@ -2,26 +2,19 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
-const SUMMARY_WIDTH = 40;
 /** Runs at least this long leave a done title, so a glance at the tab shows the work finished. */
 const DONE_TITLE_MS = 15_000;
-const COLUMN_GAP = "   ";
+const COLUMN_GAP = " ";
 
 export type ActivityPhase = "working" | "thinking" | "responding" | "tool";
-
-export interface RunningTool {
-  id: string;
-  name: string;
-  summary: string;
-}
 
 export interface ActivityState {
   running: boolean;
   /** When `agent_start` fired; the only timer on the status line. */
   startedAt: number;
   phase: ActivityPhase;
-  /** Running tools in start order; the last one is the most recent. */
-  tools: RunningTool[];
+  /** Ids of the running tools; the working message never names them. */
+  tools: string[];
 }
 
 export const initialState: ActivityState = {
@@ -35,46 +28,9 @@ export type ActivityEvent =
   | { type: "agent_start" }
   | { type: "turn_start" }
   | { type: "message_update"; kind: "thinking" | "text" }
-  | { type: "tool_execution_start"; id: string; name: string; args: unknown }
+  | { type: "tool_execution_start"; id: string }
   | { type: "tool_execution_end"; id: string }
   | { type: "agent_settled" };
-
-function firstLine(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const line = value.split("\n")[0]?.trim() ?? "";
-  return line === "" ? undefined : line;
-}
-
-function arg(args: unknown, key: string): unknown {
-  return typeof args === "object" && args !== null ? (args as Record<string, unknown>)[key] : undefined;
-}
-
-function cut(text: string | undefined): string {
-  if (text === undefined) return "";
-  return truncateToWidth(text, SUMMARY_WIDTH, "…");
-}
-
-/** Short description of a tool call for the working message: `sleep 6`, `/repo/a.ts`, `"TODO"`. */
-export function summarizeTool(name: string, args: unknown): string {
-  switch (name) {
-    case "bash":
-      return cut(firstLine(arg(args, "command")));
-    case "read":
-    case "edit":
-    case "write":
-      return cut(firstLine(arg(args, "path")));
-    case "grep": {
-      const pattern = firstLine(arg(args, "pattern"));
-      return pattern === undefined ? "" : cut(`"${pattern}"`);
-    }
-    case "find":
-      return cut(firstLine(arg(args, "pattern")));
-    case "ls":
-      return cut(firstLine(arg(args, "path")) ?? ".");
-    default:
-      return "";
-  }
-}
 
 export function reduce(state: ActivityState, event: ActivityEvent, now: number): ActivityState {
   switch (event.type) {
@@ -90,14 +46,11 @@ export function reduce(state: ActivityState, event: ActivityEvent, now: number):
     case "message_update":
       return { ...state, phase: event.kind === "text" ? "responding" : "thinking" };
     case "tool_execution_start": {
-      const tools = [
-        ...state.tools.filter((tool) => tool.id !== event.id),
-        { id: event.id, name: event.name, summary: summarizeTool(event.name, event.args) },
-      ];
+      const tools = [...state.tools.filter((id) => id !== event.id), event.id];
       return { ...state, phase: "tool", tools };
     }
     case "tool_execution_end": {
-      const tools = state.tools.filter((tool) => tool.id !== event.id);
+      const tools = state.tools.filter((id) => id !== event.id);
       return { ...state, phase: tools.length === 0 ? "working" : "tool", tools };
     }
     case "agent_settled":
@@ -115,32 +68,27 @@ export interface DescribeOptions {
 
 /**
  * One line for `ctx.ui.setWorkingMessage()`, or `""` when no run is active.
- * Same colors in every phase: phase `text`, detail `muted`, total and hint `dim`.
+ * Same colors in every phase: phase `text`, total and hint `dim`.
  */
 export function describe(state: ActivityState, now: number, options: DescribeOptions): string {
   if (!state.running) return "";
   const { width, interruptKey, theme } = options;
   if (width <= 0) return "";
 
-  // Waiting for the model reads as Pi's own "Working"; the other phases name what the model is doing.
+  // Waiting for the model and running tools both read as Pi's own "Working"; only the model's own phases are named,
+  // and a tool call never adds its name or command: the transcript shows that.
   let phase = "Working";
-  let detail = "";
   if (state.phase === "thinking") {
     phase = "Thinking";
   } else if (state.phase === "responding") {
     phase = "Responding";
-  } else if (state.phase === "tool" && state.tools.length > 0) {
-    const latest = state.tools[state.tools.length - 1];
-    const others = state.tools.length - 1;
-    phase = latest.name;
-    detail = [latest.summary, others > 0 ? `+${others}` : ""].filter((part) => part !== "").join(" ");
   }
 
   const rightPlain = `${formatDuration(Math.max(0, now - state.startedAt))} · ${interruptKey} to stop`;
   const right = theme.fg("dim", rightPlain);
   if (width <= visibleWidth(right)) return truncateToWidth(right, width, "…");
 
-  const left = theme.fg("text", phase) + (detail === "" ? "" : ` ${theme.fg("muted", detail)}`);
+  const left = theme.fg("text", phase);
   const available = width - visibleWidth(right) - COLUMN_GAP.length;
   if (available <= 0) return right;
   return `${truncateToWidth(left, available, "…")}${COLUMN_GAP}${right}`;

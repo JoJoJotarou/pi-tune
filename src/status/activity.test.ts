@@ -9,7 +9,6 @@ import {
   doneTitle,
   initialState,
   reduce,
-  summarizeTool,
 } from "./activity.ts";
 
 const t0 = 1_000_000;
@@ -25,7 +24,7 @@ function line(state: ActivityState, now: number, width = 80): string {
 
 test("waits for the model with Pi's Working phase and the run timer", () => {
   const state = run([[t0, { type: "agent_start" }]]);
-  assert.equal(line(state, t0 + 3200), "Working   3.2s · esc to stop");
+  assert.equal(line(state, t0 + 3200), "Working 3.2s · esc to stop");
 });
 
 test("turn_start keeps the run timer", () => {
@@ -33,7 +32,7 @@ test("turn_start keeps the run timer", () => {
     [t0, { type: "agent_start" }],
     [t0 + 2000, { type: "turn_start" }],
   ]);
-  assert.equal(line(state, t0 + 5000), "Working   5.0s · esc to stop");
+  assert.equal(line(state, t0 + 5000), "Working 5.0s · esc to stop");
 });
 
 test("streaming thinking stays Thinking", () => {
@@ -41,7 +40,7 @@ test("streaming thinking stays Thinking", () => {
     [t0, { type: "agent_start" }],
     [t0 + 1000, { type: "message_update", kind: "thinking" }],
   ]);
-  assert.equal(line(state, t0 + 2000), "Thinking   2.0s · esc to stop");
+  assert.equal(line(state, t0 + 2000), "Thinking 2.0s · esc to stop");
 });
 
 test("Responding shows only the phase name, never the token rate", () => {
@@ -50,54 +49,57 @@ test("Responding shows only the phase name, never the token rate", () => {
     [t0 + 1000, { type: "message_update", kind: "text" }],
     [t0 + 3000, { type: "message_update", kind: "text" }],
   ]);
-  assert.equal(line(state, t0 + 3000), "Responding   3.0s · esc to stop");
+  assert.equal(line(state, t0 + 3000), "Responding 3.0s · esc to stop");
   assert.equal(line(state, t0 + 4000).includes("tok/s"), false);
 });
 
-test("a running tool shows name and first command line", () => {
+test("a running tool reads as Working, with no tool name and no command", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 10_800, { type: "tool_execution_start", id: "1", name: "bash", args: { command: "sleep 6\nrm -rf /" } }],
+    [t0 + 10_800, { type: "tool_execution_start", id: "1" }],
   ]);
-  assert.equal(line(state, t0 + 14_000), "bash sleep 6   14s · esc to stop");
+  const rendered = line(state, t0 + 14_000);
+  assert.equal(rendered, "Working 14s · esc to stop");
 });
 
-test("parallel tools show the most recent one plus the others", () => {
+test("parallel tools still read as one Working line", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "tool_execution_start", id: "a", name: "read", args: { path: "/repo/a.ts" } }],
-    [t0 + 2000, { type: "tool_execution_start", id: "b", name: "edit", args: { path: "/repo/b.ts" } }],
-    [t0 + 2500, { type: "tool_execution_start", id: "c", name: "grep", args: { pattern: "TODO" } }],
+    [t0 + 1000, { type: "tool_execution_start", id: "a" }],
+    [t0 + 2000, { type: "tool_execution_start", id: "b" }],
+    [t0 + 2500, { type: "tool_execution_start", id: "c" }],
   ]);
-  assert.equal(line(state, t0 + 3000), 'grep "TODO" +2   3.0s · esc to stop');
+  assert.equal(line(state, t0 + 3000), "Working 3.0s · esc to stop");
+  assert.deepEqual(state.tools, ["a", "b", "c"]);
 });
 
-test("ending a tool falls back to the remaining one, then to Working", () => {
+test("a tool phase covers every running tool and ends with the last one", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "tool_execution_start", id: "a", name: "read", args: { path: "/repo/a.ts" } }],
-    [t0 + 2000, { type: "tool_execution_start", id: "b", name: "edit", args: { path: "/repo/b.ts" } }],
-    [t0 + 2500, { type: "tool_execution_end", id: "b" }],
+    [t0 + 1000, { type: "message_update", kind: "text" }],
+    [t0 + 2000, { type: "tool_execution_start", id: "a" }],
+    [t0 + 2500, { type: "tool_execution_start", id: "b" }],
+    [t0 + 3000, { type: "tool_execution_end", id: "b" }],
   ]);
-  assert.equal(line(state, t0 + 3000), "read /repo/a.ts   3.0s · esc to stop");
-  const after = reduce(state, { type: "tool_execution_end", id: "a" }, t0 + 3000);
-  assert.equal(line(after, t0 + 3500), "Working   3.5s · esc to stop");
+  assert.equal(line(state, t0 + 3500), "Working 3.5s · esc to stop");
+  const after = reduce(state, { type: "tool_execution_end", id: "a" }, t0 + 3500);
+  assert.equal(line(after, t0 + 4000), "Working 4.0s · esc to stop");
 });
 
 test("colors come from the theme: phase text, detail muted, total dim", () => {
   const thinking = run([[t0, { type: "agent_start" }]]);
   assert.equal(
     describe(thinking, t0 + 3200, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "Working")}   ${theme.fg("dim", "3.2s · esc to stop")}`,
+    `${theme.fg("text", "Working")} ${theme.fg("dim", "3.2s · esc to stop")}`,
   );
 
   const tool = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "tool_execution_start", id: "a", name: "bash", args: { command: "sleep 6" } }],
+    [t0 + 1000, { type: "tool_execution_start", id: "a" }],
   ]);
   assert.equal(
     describe(tool, t0 + 2000, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "bash")} ${theme.fg("muted", "sleep 6")}   ${theme.fg("dim", "2.0s · esc to stop")}`,
+    `${theme.fg("text", "Working")} ${theme.fg("dim", "2.0s · esc to stop")}`,
   );
 
   const writing = run([
@@ -106,38 +108,20 @@ test("colors come from the theme: phase text, detail muted, total dim", () => {
   ]);
   assert.equal(
     describe(writing, t0 + 3000, { width: 80, interruptKey: "esc", theme }),
-    `${theme.fg("text", "Responding")}   ${theme.fg("dim", "3.0s · esc to stop")}`,
+    `${theme.fg("text", "Responding")} ${theme.fg("dim", "3.0s · esc to stop")}`,
   );
 });
 
 test("narrow widths keep the stop hint and never exceed the width", () => {
   const state = run([
     [t0, { type: "agent_start" }],
-    [t0 + 1000, { type: "tool_execution_start", id: "a", name: "read", args: { path: "/repo/a/very/long/path.ts" } }],
+    [t0 + 1000, { type: "tool_execution_start", id: "a" }],
   ]);
   for (const width of [40, 24, 18]) {
     const rendered = describe(state, t0 + 2000, { width, interruptKey: "esc", theme });
     assert.ok(visibleWidth(rendered) <= width, `width ${width}: ${visibleWidth(rendered)}`);
     if (width >= 18) assert.ok(stripTerminalSequences(rendered).endsWith("to stop"), rendered);
   }
-});
-
-test("summaries cover the built-in tools", () => {
-  assert.equal(summarizeTool("read", { path: "/repo/a.ts" }), "/repo/a.ts");
-  assert.equal(summarizeTool("edit", { path: "/repo/a.ts" }), "/repo/a.ts");
-  assert.equal(summarizeTool("write", { path: "/repo/a.ts" }), "/repo/a.ts");
-  assert.equal(summarizeTool("bash", { command: "sleep 6\nrm -rf /" }), "sleep 6");
-  assert.equal(summarizeTool("grep", { pattern: "TODO", path: "src" }), '"TODO"');
-  assert.equal(summarizeTool("find", { pattern: "*.ts", path: "src" }), "*.ts");
-  assert.equal(summarizeTool("ls", {}), ".");
-  assert.equal(summarizeTool("ls", { path: "src" }), "src");
-  assert.equal(summarizeTool("task", { description: "long job" }), "");
-});
-
-test("long summaries are cut to 40 columns with an ellipsis", () => {
-  const summary = summarizeTool("read", { path: `${"x".repeat(80)}.ts` });
-  assert.ok(visibleWidth(summary) <= 40, `width ${visibleWidth(summary)}`);
-  assert.ok(stripTerminalSequences(summary).endsWith("…"), summary);
 });
 
 test("no message when idle or settled", () => {

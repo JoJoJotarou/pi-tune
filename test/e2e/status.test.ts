@@ -9,19 +9,31 @@ function toolScenario(): Scenario {
   };
 }
 
-test("working line names the running bash tool", { timeout: 180_000 }, async () => {
+test("working line stays Working while a tool runs, without naming it", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: toolScenario() });
   try {
     pi.type("run it\r");
-    await pi.waitFor(/bash sleep 1.*to stop/);
+    await pi.waitFor(/to stop/);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     // The status is embedded in the editor's top border, not drawn as an extra row.
     assert.match(statusRow.trim(), /^╭─ \S.*to stop.* ─+╮$/);
-    await new Promise((done) => setTimeout(done, 500));
+    assert.match(statusRow, /Working .*to stop/, statusRow);
+    assert.equal(statusRow.includes("bash"), false, statusRow);
     await pi.shot("status-tools");
-    const screen = pi.screen().join("\n");
-    assert.ok(screen.includes("bash sleep 1"), screen);
-    assert.ok(screen.includes("to stop"), screen);
+  } finally {
+    await pi.close();
+  }
+});
+
+test("a finished run leaves an indented Worked for line", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: { files: {}, turns: [[{ text: "all done." }]] } });
+  try {
+    pi.type("go\r");
+    await pi.waitFor("all done.");
+    await pi.waitFor(/Worked for \d/);
+    const row = pi.screen().find((line) => line.includes("Worked for")) ?? "";
+    assert.match(row, /^ Worked for \d/, row);
+    await pi.shot("worked-for");
   } finally {
     await pi.close();
   }

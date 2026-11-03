@@ -11,7 +11,6 @@ import {
 } from "../src/status/activity.ts";
 
 const REFRESH_MS = 250;
-
 function messageProgress(event: AssistantMessageEvent): "thinking" | "text" | undefined {
   switch (event.type) {
     case "thinking_start":
@@ -85,7 +84,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_execution_start", async (event) => {
-    apply({ type: "tool_execution_start", id: event.toolCallId, name: event.toolName, args: event.args });
+    apply({ type: "tool_execution_start", id: event.toolCallId });
   });
 
   pi.on("tool_execution_end", async (event) => {

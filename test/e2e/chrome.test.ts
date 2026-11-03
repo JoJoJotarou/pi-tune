@@ -47,7 +47,7 @@ test("busy chrome shows steer and follow-up only while text is typed", { timeout
   const pi = await startPi({ scenario: scenario(30), cols: 100, rows: 30 });
   try {
     pi.type("run it\r");
-    await pi.waitFor(/bash sleep 1.*to stop/, 60_000);
+    await pi.waitFor(/to stop/, 60_000);
     const busy = pi.screen().find((line) => line.includes("project")) ?? "";
     assert.equal(busy.includes("enter steer"), false, busy);
 
@@ -74,6 +74,7 @@ test("footer shows the live token rate while a message streams", { timeout: 180_
     assert.ok(footer.includes("(auto)"), footer);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     assert.equal(statusRow.includes("tok/s"), false, statusRow);
+    assert.match(footer, /TTFT \d/, footer);
     await pi.shot("footer-rate");
   } finally {
     await pi.close();
