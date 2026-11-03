@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { changedSpan, renderDiffRows } from "./diff.ts";
+import { changedSpan, previewLines, renderDiffRows } from "./diff.ts";
 
 initTheme("dark");
 const theme = testTheme("dark");
@@ -78,3 +78,13 @@ for (const width of [40, 100]) {
     assert.ok(plain(wrapped)[1].startsWith("   "), "a continuation row leaves the number and marker blank");
   });
 }
+
+test("a collapsed preview pairs each removed line with the line that replaced it", () => {
+  const diff = ["  1 a", "- 2 b", "- 3 c", "- 4 d", "+ 2 B", "+ 3 C", "+ 4 D", "  5 e"].join("\n");
+  assert.deepEqual(previewLines(diff, 3), ["- 2 b", "+ 2 B", "- 3 c"]);
+});
+
+test("a preview of a change near the end starts earlier so it still fills its rows", () => {
+  const diff = ["  1 a", "  2 b", "  3 c", "- 4 d", "+ 4 D"].join("\n");
+  assert.deepEqual(previewLines(diff, 3), ["  3 c", "- 4 d", "+ 4 D"]);
+});

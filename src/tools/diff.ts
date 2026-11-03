@@ -115,6 +115,29 @@ function palette(theme: Theme, surface: Color): Palette {
   };
 }
 
+/**
+ * The lines a collapsed diff shows: from the first change, with the removed and added lines of that change paired
+ * up (`-b`, `+B`, `-c`, …) so a short preview shows what a line became, not only what was removed. A change near
+ * the end starts earlier so the preview still fills `count` rows.
+ */
+export function previewLines(diffText: string, count: number): string[] {
+  const lines = diffText.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("+") || line.startsWith("-"));
+  if (start < 0) return lines.slice(0, count);
+  let end = start;
+  const removed: string[] = [];
+  while (lines[end]?.startsWith("-")) removed.push(lines[end++]);
+  const added: string[] = [];
+  while (lines[end]?.startsWith("+")) added.push(lines[end++]);
+  const paired: string[] = [];
+  for (let index = 0; index < Math.max(removed.length, added.length); index++) {
+    if (index < removed.length) paired.push(removed[index]);
+    if (index < added.length) paired.push(added[index]);
+  }
+  const rows = [...paired, ...lines.slice(end)].slice(0, count);
+  return [...lines.slice(Math.max(0, start - (count - rows.length)), start), ...rows];
+}
+
 export interface DiffRenderOptions {
   /** The background the rows are drawn on; tints are mixed over it. */
   surface: Color;

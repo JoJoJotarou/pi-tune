@@ -11,7 +11,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
-import { bashCommandLines, diffMeta, firstChange, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
+import { bashCommandLines, diffMeta, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
 import {
   codemodeBody,
   codemodeCalls,
@@ -21,7 +21,7 @@ import {
   scriptOutput,
   scriptToolNames,
 } from "./codemode.ts";
-import { renderDiffRows } from "./diff.ts";
+import { previewLines, renderDiffRows } from "./diff.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
@@ -262,8 +262,7 @@ function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSour
   const options = { surface: theme.colors.toolPendingBg, wrap: expanded };
   const lines = diffText.split("\n");
   if (expanded || lines.length <= PREVIEW_LINES) return (width) => renderDiffRows(diffText, width, theme, options);
-  const start = Math.min(firstChange(diffText), lines.length - PREVIEW_LINES);
-  const preview = lines.slice(start, start + PREVIEW_LINES).join("\n");
+  const preview = previewLines(diffText, PREVIEW_LINES).join("\n");
   return (width) => [
     ...renderDiffRows(preview, width, theme, options),
     truncationLine(lines.length - PREVIEW_LINES, theme),

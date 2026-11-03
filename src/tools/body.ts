@@ -9,14 +9,6 @@ export function truncationLine(hidden: number, theme: Theme): string {
   return theme.fg("dim", `… ${hidden} more line${hidden === 1 ? "" : "s"} · click to expand`);
 }
 
-/** Index of the first added or removed line in Pi's diff text, which renders as ` 1 ctx`, `-2 old`, `+2 new`. */
-export function firstChange(diffText: string): number {
-  return Math.max(
-    0,
-    diffText.split("\n").findIndex((line) => line.startsWith("+") || line.startsWith("-")),
-  );
-}
-
 export interface DiffCounts {
   added: number;
   removed: number;
