@@ -774,3 +774,36 @@ test("render cache: invalidate makes the next render recompute", () => {
   body.render(80);
   assert.equal(fake.renders(), 2, `the source rendered ${fake.renders()} times: twice before invalidate, once after`);
 });
+
+test("render cache: a native body change Pi is told about reaches the screen", () => {
+  let lines = ["BEFORE"];
+  let nativeContext: { invalidate: () => void } | undefined;
+  const renderers = toolRenderers("read", () => ({
+    ...baseRenderers,
+    renderResult: (_result, _options, _theme, ctx) => {
+      nativeContext = ctx;
+      return { render: () => lines, invalidate: () => {} };
+    },
+  }));
+  const ui = { requestRender: () => {} };
+  const shell = new ToolExecutionComponent(
+    "read",
+    "call-native",
+    { path: "a.txt" },
+    { outputPad: 1 },
+    renderers,
+    ui as never,
+    "/tmp",
+  );
+  shell.updateArgs({ path: "a.txt" } as never);
+  shell.markExecutionStarted();
+  shell.updateResult({ content: [{ type: "text", text: "x" }], details: undefined, isError: false, durationMs: 1 });
+  shell.setExpanded(true);
+  assert.match(plain(shell.render(80)).join("\n"), /BEFORE/);
+
+  // A renderer component has no TUI handle: it announces a change through its context.
+  lines = ["AFTER"];
+  nativeContext?.invalidate();
+  const after = plain(shell.render(80)).join("\n");
+  assert.match(after, /AFTER/, after);
+});
