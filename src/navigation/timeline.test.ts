@@ -274,16 +274,22 @@ test("a click on a tick jumps to that prompt", () => {
   assert.equal(tui.scrollTop, prompts.prompts[1].row);
 });
 
-test("the rail and its card hide while text is selected, so a copy leaves them out", () => {
+test("while text is selected the rail blanks its column and hides its card, so a copy leaves them out", () => {
   const { rail, card, tui } = railWith(conversation(), 20);
   assert.equal(rail.visible(), true);
-  const tickRow = rail.render(2).findIndex((row) => plain(row) === " ─");
+  const drawn = rail.render(2);
+  const tickRow = drawn.findIndex((row) => plain(row) === " ─");
   rail.handleMouse(mouse({ type: "move", button: "none", y: tickRow }));
   assert.notDeepEqual(card.render(40), []);
 
   tui.selecting = true;
 
-  assert.equal(rail.visible(), false);
+  // Still drawn, so it keeps covering Pi's scrollbar, which a copy would pick up too.
+  assert.equal(rail.visible(), true);
+  assert.deepEqual(
+    rail.render(2),
+    drawn.map(() => "  "),
+  );
   assert.deepEqual(card.render(40), []);
 });
 

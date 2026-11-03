@@ -218,7 +218,7 @@ test("a single prompt leaves Pi's scrollbar alone", { timeout: 180_000 }, async 
   }
 });
 
-test("selecting text hides the rail so a copy leaves it out", { timeout: 180_000 }, async () => {
+test("selecting text blanks the rail so a copy leaves it and the scrollbar out", { timeout: 180_000 }, async () => {
   // Pi copies the selection as drawn on screen; copy-on-select off keeps the test off the system clipboard.
   const pi = await startPi({
     scenario,
@@ -234,6 +234,8 @@ test("selecting text hides the rail so a copy leaves it out", { timeout: 180_000
     pi.drag(1, 4, 59, 19);
     await pi.waitForGone("▴");
     assertNoRail(pi);
+    const transcript = pi.screen().slice(0, 20);
+    assert.ok(!transcript.some((line) => /[│┃]$/.test(line)), `Pi's scrollbar is uncovered\n${transcript.join("\n")}`);
 
     pi.click(20, 22);
     await pi.waitFor("▴");

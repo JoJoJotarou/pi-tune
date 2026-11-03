@@ -284,9 +284,7 @@ export class TimelineRail implements Component {
   /** Eligibility, also used as the overlay's `visible` gate so Pi's own scrollbar works while the rail is off. */
   visible(): boolean {
     if (this.disabled) return false;
-    // A copy takes the screen as drawn, so the rail steps aside while text is selected.
-    const shown = this.tui.terminal.columns >= MIN_TERMINAL_WIDTH && !this.tui.hasActiveSelection();
-    const layout = shown ? this.layout() : undefined;
+    const layout = this.tui.terminal.columns >= MIN_TERMINAL_WIDTH ? this.layout() : undefined;
     if (!layout) {
       this.layoutCache = undefined;
       this.resetHover();
@@ -349,6 +347,13 @@ export class TimelineRail implements Component {
     const layout = this.layoutCache ?? this.layout();
     this.layoutCache = undefined;
     if (!layout) return [];
+
+    // A copy takes the screen as drawn, overlays included. Blank rows keep the ticks out of it and still cover
+    // Pi's scrollbar, which a copy would pick up too.
+    if (this.tui.hasActiveSelection()) {
+      this.resetHover();
+      return Array.from({ length: layout.geometry.height }, () => " ".repeat(width));
+    }
 
     const hovered = this.hovered;
     const state =

@@ -1,13 +1,10 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { asScrollable, collectPrompts, jumpTo, type ScrollableTui } from "../src/internals/transcript.ts";
-import { StickyBar } from "../src/navigation/sticky.ts";
 import { promptLabel, RAIL_WIDTH, TimelineHoverCard, TimelineRail } from "../src/navigation/timeline.ts";
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;
   let timelineDisabledReason: string | undefined;
-  let stickyDisabledReason: string | undefined;
-  let stickyShown = false;
   let timelineShown = false;
 
   // Session replacement invalidates the ctx the overlays were created with, so errors are reported through a
@@ -53,31 +50,6 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      if (!stickyShown && stickyDisabledReason === undefined) {
-        const scrollable = asScrollable(tui);
-        if (!scrollable) {
-          stickyDisabledReason = "TUI has no scrollable transcript";
-          notify?.(`pi-tune sticky prompt disabled: ${stickyDisabledReason}`, "warning");
-        } else {
-          stickyShown = true;
-          const sticky = new StickyBar(
-            scrollable,
-            () => theme,
-            (error) => {
-              if (stickyDisabledReason === undefined) {
-                stickyDisabledReason = error.message;
-                notify?.(`pi-tune sticky prompt disabled: ${error.message}`, "warning");
-              }
-            },
-          );
-          tui.showOverlay(sticky, {
-            anchor: "top-left",
-            width: "100%",
-            nonCapturing: true,
-            visible: () => sticky.visible(),
-          });
-        }
-      }
       return { render: () => [], invalidate() {} };
     });
   });
