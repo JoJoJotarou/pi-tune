@@ -81,6 +81,12 @@ test("a new file is named by its line count and shows numbered rows", async () =
   ]);
 });
 
+test("the line number of a new file takes the added color", () => {
+  const rows = renderWriteLines("src/new.ts", lines(2), false, 80, theme);
+  assert.ok(rows[0].includes(theme.fg("toolDiffAdded", "1")), rows[0]);
+  assert.ok(rows[1].includes(theme.fg("toolDiffAdded", "2")), rows[1]);
+});
+
 test("a fifteen-line new file shows the first three rows and the fold marker", () => {
   const content = lines(15);
   assert.deepEqual(plain(renderWriteLines("new.ts", content, false, 80, theme)), [
