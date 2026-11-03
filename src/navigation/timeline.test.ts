@@ -195,6 +195,8 @@ function fakeTui(children: Component[] = [], viewportTop = 0) {
     terminal: { columns: 80, rows: 30 },
     viewportTop,
     scrollTop: viewportTop,
+    selecting: false,
+    hasActiveSelection: () => tui.selecting,
     scrollBy(lines: number) {
       tui.scrollTop += lines;
     },
@@ -270,6 +272,19 @@ test("a click on a tick jumps to that prompt", () => {
   const prompts = collectPrompts(tui as never);
   assert.ok(!(prompts instanceof Error));
   assert.equal(tui.scrollTop, prompts.prompts[1].row);
+});
+
+test("the rail and its card hide while text is selected, so a copy leaves them out", () => {
+  const { rail, card, tui } = railWith(conversation(), 20);
+  assert.equal(rail.visible(), true);
+  const tickRow = rail.render(2).findIndex((row) => plain(row) === " ─");
+  rail.handleMouse(mouse({ type: "move", button: "none", y: tickRow }));
+  assert.notDeepEqual(card.render(40), []);
+
+  tui.selecting = true;
+
+  assert.equal(rail.visible(), false);
+  assert.deepEqual(card.render(40), []);
 });
 
 test("hovering a tick shows the card and moving off the tick hides it", () => {

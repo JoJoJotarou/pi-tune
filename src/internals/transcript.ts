@@ -4,7 +4,8 @@ import { type Component, ScrollView, type TUI } from "@earendil-works/pi-tui";
 /**
  * Pi internals this module relies on, verified against Pi 1.4.0:
  *
- * - The fullscreen TUI exposes `viewportTop` and `scrollBy(lines)`; the TUI type does not declare them.
+ * - The fullscreen TUI exposes `viewportTop`, `scrollBy(lines)` and `hasActiveSelection()`; the TUI type does
+ *   not declare them. A selection is copied as drawn on screen, overlays included.
  * - The root is mounted as [document, pending, status, widgetsAbove, editor, widgetsBelow, footer], and
  *   the document is [header, loadedResources, chat].
  * - The private `layoutRoot` has the primary `ScrollView` around the document among its children. The
@@ -14,7 +15,11 @@ import { type Component, ScrollView, type TUI } from "@earendil-works/pi-tui";
  *
  * Every shape is checked at runtime. A mismatch returns an `Error` so the caller can disable the feature.
  */
-export type ScrollableTui = TUI & { readonly viewportTop: number; scrollBy(lines: number): void };
+export type ScrollableTui = TUI & {
+  readonly viewportTop: number;
+  scrollBy(lines: number): void;
+  hasActiveSelection(): boolean;
+};
 
 export interface Prompt {
   row: number;
@@ -36,7 +41,9 @@ function childrenOf(value: unknown): Component[] | undefined {
 
 export function asScrollable(tui: TUI): ScrollableTui | undefined {
   const candidate = tui as Partial<ScrollableTui>;
-  return typeof candidate.viewportTop === "number" && typeof candidate.scrollBy === "function"
+  return typeof candidate.viewportTop === "number" &&
+    typeof candidate.scrollBy === "function" &&
+    typeof candidate.hasActiveSelection === "function"
     ? (candidate as ScrollableTui)
     : undefined;
 }

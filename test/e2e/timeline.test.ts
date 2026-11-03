@@ -218,6 +218,30 @@ test("a single prompt leaves Pi's scrollbar alone", { timeout: 180_000 }, async 
   }
 });
 
+test("selecting text hides the rail so a copy leaves it out", { timeout: 180_000 }, async () => {
+  // Pi copies the selection as drawn on screen; copy-on-select off keeps the test off the system clipboard.
+  const pi = await startPi({
+    scenario,
+    cols,
+    rows,
+    tune: true,
+    settings: { ...settings, fullscreenCopyOnSelect: false },
+  });
+  try {
+    await runTurns(pi);
+    await pi.waitFor("▴");
+
+    pi.drag(1, 4, 59, 19);
+    await pi.waitForGone("▴");
+    assertNoRail(pi);
+
+    pi.click(20, 22);
+    await pi.waitFor("▴");
+  } finally {
+    await pi.close();
+  }
+});
+
 test("/timeline lists the prompts and jumps to one", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, cols, rows, tune: true, settings });
   try {

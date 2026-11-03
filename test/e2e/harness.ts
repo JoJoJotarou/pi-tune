@@ -40,6 +40,8 @@ export interface PiSession {
   clickText(text: string, nth?: number, count?: number): void;
   /** Move the pointer (SGR motion, no button) so an overlay's hover state updates. */
   move(col: number, row: number): void;
+  /** Press the left button at one cell, drag to another and release: a fullscreen text selection. */
+  drag(fromCol: number, fromRow: number, toCol: number, toRow: number): void;
   wheel(col: number, row: number, direction?: "up" | "down"): void;
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
@@ -241,6 +243,11 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     },
     move(col, row) {
       pty.write(`\x1b[<35;${col + 1};${row + 1}M`);
+    },
+    drag(fromCol, fromRow, toCol, toRow) {
+      pty.write(`\x1b[<0;${fromCol + 1};${fromRow + 1}M`);
+      pty.write(`\x1b[<32;${toCol + 1};${toRow + 1}M`);
+      pty.write(`\x1b[<0;${toCol + 1};${toRow + 1}m`);
     },
     wheel(col, row, direction = "down") {
       pty.write(`\x1b[<${direction === "up" ? 64 : 65};${col + 1};${row + 1}M`);
