@@ -86,9 +86,9 @@ test("a codemode script shows its header until expanded", { timeout: 180_000 }, 
     assert.ok(script >= 0, `options line not found:\n${expanded.join("\n")}`);
     assert.ok(rowIndex(expanded, /^tools\.read\(\{ path: "README\.md" \}\),/, script + 1) >= 0, expanded.join("\n"));
 
-    const call = rowIndex(expanded, /^✓ read \{"path":"README\.md"\} \d+ms$/, script + 1);
+    const call = rowIndex(expanded, /^├─ ✓ read \{"path":"README\.md"\} \d+ms$/, script + 1);
     assert.ok(call >= 0, `inner call row not found:\n${expanded.join("\n")}`);
-    assert.ok(rowIndex(expanded, /^✓ bash \{"command":"seq 1 3"\} \d+ms$/, call + 1) >= 0, expanded.join("\n"));
+    assert.ok(rowIndex(expanded, /^└─ ✓ bash \{"command":"seq 1 3"\} \d+ms$/, call + 1) >= 0, expanded.join("\n"));
     assert.ok(rowIndex(expanded, /^# demo$/, call + 1) >= 0, `output not found:\n${expanded.join("\n")}`);
     assert.ok(!expanded.some((line) => line.includes("Script completed")), expanded.join("\n"));
     assert.ok(!expanded.some((line) => line.includes("Wall time")), expanded.join("\n"));

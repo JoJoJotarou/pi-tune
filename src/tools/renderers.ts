@@ -25,6 +25,7 @@ import {
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { readMeta } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
+import { grepBody, listBody } from "./tree.ts";
 import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls", "codemode"]);
@@ -342,7 +343,13 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         baseRenderResult?.(result, { expanded: true, isPartial: false }, theme, nativeContext(context)),
       );
       const command = stringArg(textArgs(context.args), "command") ?? "";
-      const body = toolName === "bash" ? bashSource(command, expanded, native, theme) : native;
+      const search = toolName === "grep" || toolName === "find" || toolName === "ls";
+      const body =
+        toolName === "bash"
+          ? bashSource(command, expanded, native, theme)
+          : search && toolStatus(context) !== "error"
+            ? (width: number) => (toolName === "grep" ? grepBody(output, width, theme) : listBody(output, width, theme))
+            : native;
       return new BodyBoxComponent(
         (width) => {
           if (toolStatus(context) === "error" && !expanded) return errorSource(output, theme)(width);
