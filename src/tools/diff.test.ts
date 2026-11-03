@@ -7,7 +7,7 @@ import { changedSpan, previewLines, renderDiffRows } from "./diff.ts";
 
 initTheme("dark");
 const theme = testTheme("dark");
-const options = { surface: theme.colors.toolPendingBg, wrap: false };
+const options = { wrap: false };
 const plain = (rows: string[]) => rows.map((row) => stripTerminalSequences(row).trimEnd());
 /** The distinct background colors a row sets. */
 const tints = (row: string) =>
@@ -47,8 +47,13 @@ test("added and removed rows are tinted across the whole width", () => {
     assert.equal(visibleWidth(rows[index]), 60, JSON.stringify(rows[index]));
     assert.ok(tints(rows[index]).size > 0, "a tinted row sets a background");
   }
-  assert.equal(tints(rows[0]).size, 0, "a context row keeps the panel background");
+  assert.equal(tints(rows[0]).size, 0, "a context row keeps the block background");
   assert.notDeepEqual(tints(rows[1]), tints(rows[2]), "removed and added rows use different tints");
+});
+
+test("removed rows take the theme's error background as is", () => {
+  const rows = renderDiffRows(DIFF, 60, theme, options);
+  assert.ok(rows[1].includes(theme.getBgAnsi("toolErrorBg")), JSON.stringify(rows[1]));
 });
 
 test("the changed words of a removed/added pair get a stronger tint", () => {

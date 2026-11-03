@@ -22,8 +22,10 @@ const ROW = /^([ +-])\s*(\d+) (.*)$/;
 const GAP = /^\s*\.\.\.$/;
 const KIND: Record<string, RowKind> = { " ": "context", "+": "added", "-": "removed" };
 
-const ROW_TINT = 0.22;
-const WORD_TINT = 0.5;
+/** How far added rows and words lift the success block toward the added color; removed words toward red. */
+const ADDED_ROW = 0.16;
+const ADDED_WORD = 0.38;
+const REMOVED_WORD = 0.3;
 const RESET = "\x1b[0m";
 
 function parse(diffText: string): DiffRow[] {
@@ -96,15 +98,22 @@ interface Palette {
   marker: Record<"added" | "removed", string>;
 }
 
-/** Row and word tints mixed from the theme's diff colors over the surface the rows sit on. */
-function palette(theme: Theme, surface: Color): Palette {
+/**
+ * Tints for a diff inside the success block. Removed rows take the theme's own error background; added rows lift
+ * the success background toward the added color, since the same green would make them vanish.
+ */
+function palette(theme: Theme): Palette {
   const mode = theme.getColorMode();
   const colors = theme.colors;
-  const tint = (token: "toolDiffAdded" | "toolDiffRemoved", amount: number) =>
-    backgroundAnsi(mixColors(surface, colors[token], amount, "srgb"), mode);
+  const bg = (color: Color) => backgroundAnsi(color, mode);
+  const toward = (base: Color, token: "toolDiffAdded" | "toolDiffRemoved", amount: number) =>
+    mixColors(base, colors[token], amount, "srgb");
   return {
-    rowBg: { added: tint("toolDiffAdded", ROW_TINT), removed: tint("toolDiffRemoved", ROW_TINT) },
-    wordBg: { added: tint("toolDiffAdded", WORD_TINT), removed: tint("toolDiffRemoved", WORD_TINT) },
+    rowBg: { added: bg(toward(colors.toolSuccessBg, "toolDiffAdded", ADDED_ROW)), removed: bg(colors.toolErrorBg) },
+    wordBg: {
+      added: bg(toward(colors.toolSuccessBg, "toolDiffAdded", ADDED_WORD)),
+      removed: bg(toward(colors.toolErrorBg, "toolDiffRemoved", REMOVED_WORD)),
+    },
     fg: {
       context: theme.getFgAnsi("toolDiffContext"),
       added: foregroundAnsi(colors.text, mode),
@@ -139,8 +148,6 @@ export function previewLines(diffText: string, count: number): string[] {
 }
 
 export interface DiffRenderOptions {
-  /** The background the rows are drawn on; tints are mixed over it. */
-  surface: Color;
   /** Wrap long lines instead of cutting them. */
   wrap: boolean;
 }
@@ -152,7 +159,7 @@ export interface DiffRenderOptions {
 export function renderDiffRows(diffText: string, width: number, theme: Theme, options: DiffRenderOptions): string[] {
   const rows = parse(diffText);
   const spans = wordSpans(rows);
-  const colors = palette(theme, options.surface);
+  const colors = palette(theme);
   const numberWidth = Math.max(1, ...rows.map((row) => row.number.length));
   const gutter = numberWidth + 3;
   const textWidth = Math.max(1, width - gutter);

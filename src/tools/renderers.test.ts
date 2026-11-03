@@ -291,8 +291,8 @@ test("an edit shows its counts and the diff from the first change until expanded
   assert.equal(body[1].trim(), "2 + B");
   assert.equal(body[2].trim(), "3   c");
   assert.equal(body[3].trim(), "… 4 more lines · click to expand");
-  // The diff sits on a neutral panel so its own row tints stay readable; the header keeps the status color.
-  assertPainted(collapsed, "toolPendingBg");
+  // The diff sits in the status-colored block like every other body.
+  assertPainted(collapsed, "toolSuccessBg");
 
   const expanded = plain(
     resultLines("edit", { content: [], details: { diff } }, { expanded: true, isPartial: false }, ctx),

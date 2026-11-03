@@ -200,27 +200,20 @@ class HeaderBoxComponent implements Component {
   invalidate(): void {}
 }
 
-/**
- * The body box: one painted blank row above and below the indented body lines. A diff body sits on the neutral
- * panel instead of the status color, so its own green and red row tints stay readable; errors keep their color.
- */
+/** The body box: one painted blank row above and below the indented body lines. */
 class BodyBoxComponent implements Component {
   private readonly lines: LineSource;
   private readonly theme: Theme;
   private readonly context: CompactContext;
-  private readonly panel: boolean;
 
-  constructor(lines: LineSource, theme: Theme, context: CompactContext, panel = false) {
+  constructor(lines: LineSource, theme: Theme, context: CompactContext) {
     this.lines = lines;
     this.theme = theme;
     this.context = context;
-    this.panel = panel;
   }
 
   render(width: number): string[] {
-    const status = toolStatus(this.context);
-    const background = this.panel && status !== "error" ? "running" : status;
-    const box = new Box(this.context.outputPad, 1, statusBackground(background, this.theme));
+    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
     box.addChild(new BodyComponent(this.lines));
     return box.render(width);
   }
@@ -257,9 +250,9 @@ function errorSource(output: string, theme: Theme): LineSource {
   };
 }
 
-/** The diff on the neutral panel; collapsed, the preview starts at the first change so it shows what changed. */
+/** The diff with tinted rows; collapsed, the preview starts at the first change so it shows what changed. */
 function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSource {
-  const options = { surface: theme.colors.toolPendingBg, wrap: expanded };
+  const options = { wrap: expanded };
   const lines = diffText.split("\n");
   if (expanded || lines.length <= PREVIEW_LINES) return (width) => renderDiffRows(diffText, width, theme, options);
   const preview = previewLines(diffText, PREVIEW_LINES).join("\n");
@@ -326,7 +319,6 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
           theme,
           context,
-          true,
         );
       }
 
@@ -340,16 +332,14 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         context.state.meta = plan.meta;
         if (plan.body === "none") return new EmptyComponent();
 
-        const isDiff = plan.body === "diff" && plan.diff !== undefined;
         const lines: LineSource =
-          isDiff && plan.diff !== undefined
+          plan.body === "diff" && plan.diff !== undefined
             ? diffSource(plan.diff, expanded, theme)
             : (width) => renderWriteLines(path, content, expanded, width, theme);
         return new BodyBoxComponent(
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
           theme,
           context,
-          isDiff,
         );
       }
 
