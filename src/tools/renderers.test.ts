@@ -4,6 +4,7 @@ import type { AgentToolResult, ToolRenderers } from "@earendil-works/pi-coding-a
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { setRailCoveredColumns } from "./rail.ts";
 import { toolRenderers } from "./renderers.ts";
 import { rememberWriteRecord } from "./write.ts";
 
@@ -208,6 +209,29 @@ test("the header shows the result meta and duration right-aligned on the same pa
   assert.match(plain(lines)[1].trimEnd(), /^ ✗ bash sh -c 'exit 3'\s+exit 3 · 1\.2s$/);
 });
 
+test("right-aligned text pads by the columns the timeline rail covers", () => {
+  const ctx = context({ args: { command: "true" }, durationMs: 1240 });
+  const header = () => plain(callLines("bash", { command: "true" }, ctx, 60))[1];
+  const diff = `+1 ${"x".repeat(120)}`;
+  const result: AgentToolResult<unknown> = { content: [{ type: "text", text: "ok" }], details: { diff } };
+  const body = () =>
+    plain(resultLines("edit", result, { expanded: true, isPartial: false }, context({ args: { path: "a.ts" } }), 60));
+  const trailing = (line: string) => line.length - line.trimEnd().length;
+
+  // Rail off: one column inside the block on the right, like the left.
+  assert.match(header(), /1\.2s $/);
+  assert.equal(trailing(body()[1]), 3);
+
+  try {
+    setRailCoveredColumns(2);
+    // The rail covers the last two columns, so the counts and the body keep their columns in front of it.
+    assert.match(header(), /1\.2s {3}$/);
+    assert.equal(trailing(body()[1]), 5);
+  } finally {
+    setRailCoveredColumns(0);
+  }
+});
+
 test("a running call has no meta", () => {
   const ctx = context({ args: { command: "sleep 1" }, executionStarted: false });
   const lines = plain(callLines("bash", { command: "sleep 1" }, ctx));
@@ -239,6 +263,20 @@ test("expanded results are Pi's own output in a painted body, indented under the
   assert.equal(rendered[1].trim(), "");
   assertPainted(lines, "toolSuccessBg");
   assertFits(lines, 40);
+});
+
+test("an expanded body keeps two columns free on the right, like the left indent", () => {
+  const diff = `-1 ${"x".repeat(120)}\n+1 ${"y".repeat(120)}`;
+  const result: AgentToolResult<unknown> = { content: [{ type: "text", text: "ok" }], details: { diff } };
+  const ctx = context({ args: { path: "src/a.ts" } });
+  const rows = plain(resultLines("edit", result, { expanded: true, isPartial: false }, ctx, 60));
+
+  assert.ok(rows.length > 3, rows.join("\n"));
+  for (const row of rows.slice(1, -1)) {
+    assert.equal(visibleWidth(row), 60, JSON.stringify(row));
+    assert.ok(row.endsWith("  "), `no right inset: ${JSON.stringify(row)}`);
+    assert.ok(row.startsWith("  "), `no left inset: ${JSON.stringify(row)}`);
+  }
 });
 
 test("an expanded bash call draws the whole command in its header, wrapped, and no $ line", () => {

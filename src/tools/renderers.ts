@@ -24,6 +24,7 @@ import {
 } from "./codemode.ts";
 import { previewLines, renderDiffRows } from "./diff.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
+import { railCoveredColumns } from "./rail.ts";
 import { readMeta, skillLabel } from "./read.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
 import { grepBody, listBody } from "./tree.ts";
@@ -31,7 +32,10 @@ import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls", "codemode"]);
 
-/** Body lines start under the tool name: the header is indented by `outputPad`, the body by two more. */
+/**
+ * The body starts under the tool name and keeps the same width free on the right: the header is indented by
+ * `outputPad`, the body by two more on both sides.
+ */
 const BODY_INDENT = 2;
 /** Output lines shown for a failed call while it is collapsed. */
 const FAILURE_LINES = 3;
@@ -181,7 +185,9 @@ class HeaderComponent implements Component {
     const summary = this.context.state.summary;
     // Expanded bash ends with the timer line Pi's own body draws, so its duration is on that line only.
     const timerInBody = this.context.expanded && this.text.name === "bash";
-    return renderHeader(
+    // The timeline rail sits on top of the transcript's right columns: keep them blank so the counts stay whole.
+    const covered = railCoveredColumns();
+    const lines = renderHeader(
       {
         status: toolStatus(this.context),
         name: this.text.name,
@@ -192,17 +198,18 @@ class HeaderComponent implements Component {
         summaryColor: this.text.summaryColor,
         expanded: this.context.expanded,
       },
-      width,
+      Math.max(1, width - covered),
       this.theme,
     );
+    return covered === 0 ? lines : lines.map((line) => `${line}${" ".repeat(covered)}`);
   }
 
   invalidate(): void {}
 }
 
 /**
- * Body lines indented under the tool name and cut to the width the box gives them, plus the painted blank row
- * that closes the block. The header already brings the blank row above the body.
+ * Body lines indented under the tool name, the same two columns kept free on the right plus whatever the timeline
+ * rail covers, and the painted blank row that closes the block. The header already brings the blank row above it.
  */
 class BodyComponent implements Component {
   private readonly source: LineSource;
@@ -213,9 +220,15 @@ class BodyComponent implements Component {
 
   render(width: number): string[] {
     const indent = " ".repeat(BODY_INDENT);
-    const lines = this.source(Math.max(1, width - BODY_INDENT));
+    const covered = railCoveredColumns();
+    const contentWidth = Math.max(1, width - 2 * BODY_INDENT - covered);
+    const lines = this.source(contentWidth);
     if (lines.length === 0) return [];
-    return [...lines.map((line) => truncateToWidth(`${indent}${line}`, width, "…")), indent];
+    const right = " ".repeat(BODY_INDENT + covered);
+    return [
+      ...lines.map((line) => `${truncateToWidth(`${indent}${line}`, contentWidth + BODY_INDENT, "…")}${right}`),
+      indent,
+    ];
   }
 
   invalidate(): void {}

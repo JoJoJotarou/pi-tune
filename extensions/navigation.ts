@@ -1,6 +1,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { asScrollable, collectPrompts, jumpTo, type ScrollableTui } from "../src/internals/transcript.ts";
 import { promptLabel, RAIL_WIDTH, TimelineHoverCard, TimelineRail } from "../src/navigation/timeline.ts";
+import { RAIL_CHANNEL } from "../src/shared/rail.ts";
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;
@@ -37,6 +38,7 @@ export default function (pi: ExtensionAPI) {
                 notify?.(`pi-tune timeline disabled: ${error.message}`, "warning");
               }
             },
+            (covered) => pi.events.emit(RAIL_CHANNEL, covered),
             card,
           );
           // The rail only exists while it has something to show; Pi's own scrollbar works otherwise.

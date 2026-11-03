@@ -390,6 +390,32 @@ test("write tells new files from overwrites and diffs overwrites", { timeout: 24
   });
 });
 
+const railTurns: Scenario = {
+  files,
+  turns: [[{ tool: "read", args: { path: "README.md" } }], [{ text: "Second answer." }]],
+};
+
+test("the timeline rail leaves the tool header counts whole", { timeout: 180_000 }, async () => {
+  const pi = await startPi({
+    scenario: railTurns,
+    tune: true,
+    cols: 100,
+    rows: 30,
+    settings: { tuiMode: "fullscreen", fullscreenScrollbar: "hidden" },
+  });
+  await closeAfter(pi, async () => {
+    pi.type("first turn\r");
+    await pi.waitFor(/✓ read README\.md/);
+    pi.type("second turn\r");
+    await pi.waitFor("Second answer.");
+    await pi.waitFor(/▾$/m);
+
+    const screen = pi.screen();
+    const header = screen.find((line) => line.includes("✓ read README.md")) ?? "";
+    assert.match(header, /3 lines · 0\.0s/, `the rail ate the counts: ${JSON.stringify(header)}`);
+  });
+});
+
 test("reference task before pi-tune", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: reference, tune: false });
   await closeAfter(pi, async () => {

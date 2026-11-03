@@ -11,6 +11,7 @@ import {
   hoverCardLines,
   hoverCardState,
   jumpTarget,
+  railOverlap,
   railRows,
   type TimelineGeometry,
   TimelineHoverCard,
@@ -229,6 +230,7 @@ function railWith(children: Component[], viewportTop = 0) {
     tui as never,
     () => testTheme("dark"),
     () => {},
+    () => {},
     card,
   );
   return { tui, card, rail };
@@ -242,6 +244,31 @@ function conversation(): Component[] {
     { render: () => Array.from({ length: 40 }, () => "answer"), invalidate: () => {} },
   ];
 }
+
+test("the rail covers two columns, less Pi's scrollbar column when it is shown", () => {
+  assert.equal(railOverlap(100, 100), 2);
+  assert.equal(railOverlap(100, 99), 1);
+  assert.equal(railOverlap(100, 98), 0);
+});
+
+test("reports the covered columns, once per change, and clears them when the rail hides", () => {
+  const published: number[] = [];
+  const tui = fakeTui(conversation());
+  const rail = new TimelineRail(
+    tui as never,
+    () => testTheme("dark"),
+    () => {},
+    (covered) => published.push(covered),
+  );
+
+  assert.equal(rail.visible(), true);
+  assert.equal(rail.visible(), true);
+  assert.deepEqual(published, [2], "an unchanged width is not reported again");
+
+  tui.terminal.columns = 50;
+  assert.equal(rail.visible(), false);
+  assert.deepEqual(published, [2, 0]);
+});
 
 test("the rail is hidden with a single prompt", () => {
   const { rail } = railWith([new UserMessageComponent("only question")]);
@@ -317,6 +344,7 @@ test("renders with the theme current at render time", () => {
   const rail = new TimelineRail(
     tui as never,
     () => themes[current],
+    () => {},
     () => {},
   );
 

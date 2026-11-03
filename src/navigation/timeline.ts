@@ -13,11 +13,18 @@ import {
   type Prompt,
   type ScrollableTui,
   transcriptViewportHeight,
+  transcriptWidth,
 } from "../internals/transcript.ts";
 import { frame } from "../shared/frame.ts";
 
 /** Columns reserved for the rail; it covers Pi's scrollbar column and the right padding. */
 export const RAIL_WIDTH = 2;
+/**
+ * Columns of the transcript the rail covers: its own two, less the scrollbar column the transcript never draws into.
+ */
+export function railOverlap(terminalWidth: number, contentWidth: number): number {
+  return Math.max(0, RAIL_WIDTH - (terminalWidth - contentWidth));
+}
 /** Terminals narrower than this hide the rail: the transcript needs the columns more than the navigator. */
 export const MIN_TERMINAL_WIDTH = 60;
 /** A one-prompt timeline is noise. */
@@ -243,16 +250,26 @@ export class TimelineRail implements Component {
   private readonly getTheme: () => Theme;
   private readonly onError: (error: Error) => void;
   private readonly card: TimelineHoverCard | undefined;
+  /** Reports how many transcript columns the rail covers; the tools area pads right-aligned text by it. */
+  private readonly publish: (covered: number) => void;
   private hovered: TimelineHit | undefined;
   private disabled = false;
+  private covered = 0;
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   /** Layout computed by `visible()` (or by the last render) and reused by the next render in the same frame. */
   private layoutCache: Layout | undefined;
 
-  constructor(tui: ScrollableTui, getTheme: () => Theme, onError: (error: Error) => void, card?: TimelineHoverCard) {
+  constructor(
+    tui: ScrollableTui,
+    getTheme: () => Theme,
+    onError: (error: Error) => void,
+    publish: (covered: number) => void,
+    card?: TimelineHoverCard,
+  ) {
     this.tui = tui;
     this.getTheme = getTheme;
     this.onError = onError;
+    this.publish = publish;
     this.card = card;
     if (card) card.onDismiss = () => this.clearHover();
   }
@@ -283,15 +300,37 @@ export class TimelineRail implements Component {
 
   /** Eligibility, also used as the overlay's `visible` gate so Pi's own scrollbar works while the rail is off. */
   visible(): boolean {
-    if (this.disabled) return false;
+    if (this.disabled) {
+      this.publishCovered(0);
+      return false;
+    }
     const layout = this.tui.terminal.columns >= MIN_TERMINAL_WIDTH ? this.layout() : undefined;
     if (!layout) {
       this.layoutCache = undefined;
       this.resetHover();
+      this.publishCovered(0);
       return false;
     }
     this.layoutCache = layout;
+    this.publishCovered(this.overlap());
     return true;
+  }
+
+  private overlap(): number {
+    const width = transcriptWidth(this.tui);
+    if (width instanceof Error) return RAIL_WIDTH;
+    return railOverlap(this.tui.terminal.columns, width);
+  }
+
+  /**
+   * Publish how much of a transcript row the rail covers. The frame already drawn read the previous value, so the
+   * transcript draws once more with the new one.
+   */
+  private publishCovered(columns: number): void {
+    if (this.covered === columns) return;
+    this.covered = columns;
+    this.publish(columns);
+    this.tui.requestRender();
   }
 
   private cardState(layout: Layout, index: number): HoverCardState | undefined {
