@@ -16,7 +16,7 @@ function preview(rows = 40): { modal: PastePreview; actions: (PastePreviewAction
   return { modal: new PastePreview(theme, 1, content, rows, (action) => actions.push(action)), actions };
 }
 
-test("the preview is the viewer's rounded modal", () => {
+test("the preview is a rounded modal", () => {
   const lines = preview().modal.render(60).map(plain);
   assert.match(lines[0] ?? "", /^╭─ paste #1 ─+ 30 lines · \d+ B ─╮$/);
   assert.ok(lines[1]?.startsWith("│ line 1"), lines[1]);

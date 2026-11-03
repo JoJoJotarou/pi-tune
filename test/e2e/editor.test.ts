@@ -45,7 +45,7 @@ test("the editor is a rounded box with a paste preview", { timeout: 180_000 }, a
     assert.ok(pi.screen().join("\n").includes("alpha"));
     await pi.shot("editor-multiline");
 
-    // 3. A large paste collapses into a marker; enter previews it in the viewer modal.
+    // 3. A large paste collapses into a marker; enter previews it in a modal.
     await clearEditor(pi);
     await pi.waitForGone("gamma");
     pi.paste(pasted);

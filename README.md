@@ -27,8 +27,7 @@ pi install /path/to/pi-tune
 |---|---|
 | `tools.ts` | Built-in tool calls fold to one line in Pi's own pending, success and error colors: summary, result counts and duration. Click a block to expand it, or `ctrl+o` for all. `edit` and `write` diffs tint whole added and removed rows and the changed words, and preview from the first change. `ls`, `find`, `grep` results and `codemode`'s inner calls show as trees. |
 | `thinking.ts` | Folded thinking reads `◆ Thinking · click to expand`; an open block starts with `◆ Thought for 3.4s`. Click toggles one block, `ctrl+t` all of them. |
-| `navigation.ts` | Fullscreen only: a timeline over the scrollbar column (hover a tick to see its prompt, click it or `▴` `▾` to jump, or `/timeline`), and the current prompt stays pinned, up to 3 lines, while you scroll up. The timeline hides below 60 columns or with fewer than 2 prompts. |
-| `viewer.ts` | `alt+o` or `/view` opens the latest tool output or code block in a modal with scroll, search (`/`), copy (`y`) and `[` `]` to switch blocks. |
+| `navigation.ts` | Fullscreen only: a timeline over the scrollbar column (hover a tick to see its prompt, click it or `▴` `▾` to jump, or `/timeline`). It hides below 60 columns or with fewer than 2 prompts. |
 | `status.ts` | The input box's top border says what is running and for how long. Runs of 15 s or more end with a done title in the terminal title bar. |
 | `editor.ts` | A rounded input box with the model and thinking level on its border. `ctrl+v` collapses large pastes like `cmd+v`; `enter` on a paste marker, or a double click on it, previews it; `ctrl+s` stashes a draft and asks before it replaces a held one. |
 | `chrome.ts` | One-line header with the skill count and connected/configured MCP servers on the right; the footer shows the folder, branch, Pi's own token and context stats and the token rate, and its key hints follow what Pi is doing. |
@@ -48,15 +47,15 @@ In `~/.pi/agent/settings.json`:
 - `hideThinkingBlock` starts thinking folded; without it, every block opens expanded.
 - `quietStartup` hides the `[Extensions]` / `[Skills]` listing that extensions cannot hide.
 - `fullscreenScrollbar: "always"` reserves the right-hand column that the timeline draws over, so it never covers
-  text.
+  text. While the timeline is hidden, Pi 1.4 copies that scrollbar along with selected lines.
 
-The timeline and pinned prompt rely on Pi 1.4 internals. If a Pi update changes them, those features turn themselves
-off with a warning instead of misbehaving.
+The timeline relies on Pi 1.4 internals. If a Pi update changes them, it turns itself off with a warning instead of
+misbehaving.
 
 ## Terminal notes
 
-- On macOS, `alt+o` (like Pi's own `alt+enter`) needs the option key to send meta: in Ghostty set
-  `macos-option-as-alt = true`, in Zed set `"terminal": { "option_as_meta": true }`. `/view` works either way.
+- On macOS, Pi's `alt+enter` (follow-up while Pi runs) needs the option key to send meta: in Ghostty set
+  `macos-option-as-alt = true`, in Zed set `"terminal": { "option_as_meta": true }`.
 - Zed shows the terminal title in its breadcrumb bar only, not on the tab.
 
 ## Develop
