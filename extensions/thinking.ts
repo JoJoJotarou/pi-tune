@@ -131,10 +131,8 @@ export default (pi: ExtensionAPI) => {
     const ansi = process.env.TERM !== "dumb" && !process.env.NO_COLOR;
     if (!thinkingStreaming) {
       const durationMs = timing.durationFor(markdown);
-      if (durationMs !== undefined) {
-        const head = buildThoughtSummary(markdown, durationMs, context.availableWidth, visibleWidth);
-        return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, ansi, WINDOW_LINES, head);
-      }
+      if (durationMs !== undefined)
+        return buildThoughtSummary(markdown, durationMs, context.availableWidth, visibleWidth);
     }
     // No measured duration: keep the rolling window as the residue rather than invent a summary.
     return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, ansi, WINDOW_LINES);

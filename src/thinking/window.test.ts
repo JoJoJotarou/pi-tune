@@ -131,8 +131,8 @@ const noopTheme = {
 };
 
 /** True rendering invariant for multi-line windows: markdown re-parse must not merge or widen rows. */
-function renderedRows(markdown: string, width: number, maxLines: number, head?: string): string[] {
-  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines, head);
+function renderedRows(markdown: string, width: number, maxLines: number): string[] {
+  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines);
   const md = new Markdown(output, 0, 0, noopTheme);
   return md
     .render(width)
@@ -140,8 +140,8 @@ function renderedRows(markdown: string, width: number, maxLines: number, head?: 
     .filter((row) => row !== "");
 }
 
-function assertBoundedRows(markdown: string, width: number, maxLines: number, head?: string): string[] {
-  const rows = renderedRows(markdown, width, maxLines, head);
+function assertBoundedRows(markdown: string, width: number, maxLines: number): string[] {
+  const rows = renderedRows(markdown, width, maxLines);
   assert.ok(rows.length <= maxLines, `expected ≤ ${maxLines} rows, got ${rows.length}:\n${rows.join("\n")}`);
   for (const row of rows) {
     assert.ok(visibleWidth(row) <= width, `row width ${visibleWidth(row)} exceeds ${width}: ${row}`);
@@ -169,35 +169,20 @@ for (const width of [40, 80, 120]) {
   for (const source of [multiMarkdown(), multiCjk()]) {
     test(`multi-line window holds ≤4 rows at width ${width} (${source.slice(0, 6)}…)`, () => {
       const rows = assertBoundedRows(source, width, 4);
-      assert.ok(rows[0].includes("◆ Thinking:"), `label row expected:\n${rows.join("\n")}`);
+      assert.ok(rows[0].includes("◆ Thinking"), `label row expected:\n${rows.join("\n")}`);
     });
   }
 }
 
-test("multi-line window marks a dropped head with a bare ellipsis", () => {
+test("multi-line window marks a dropped head with Thinking...", () => {
   const rows = assertBoundedRows(multiCjk(), 40, 4);
   assert.ok(rows[rows.length - 1].endsWith("。"), `newest text stays at the tail:\n${rows.join("\n")}`);
-  assert.match(rows[0], /◆ Thinking: …$/);
+  assert.equal(rows[0], "◆ Thinking...");
 });
 
 test("multi-line window without overflow shows every row and no ellipsis", () => {
   const rows = assertBoundedRows("short thought", 80, 4);
   assert.equal(rows.length, 2);
   assert.equal(rows[0], "◆ Thinking:");
-  assert.equal(rows[1], "short thought");
-});
-
-test("a settled summary head replaces the label row", () => {
-  const head = "◆ Thought for 4.0s (56 tokens)";
-  const rows = assertBoundedRows(multiCjk(), 80, 4, head);
-  assert.equal(rows[0], head);
-  assert.ok(rows.length <= 4);
-  assert.ok(rows[rows.length - 1].endsWith("。"));
-});
-
-test("a settled head keeps its own row even when the content fits", () => {
-  const head = "◆ Thought for 0.7s (28 tokens)";
-  const rows = assertBoundedRows("short thought", 80, 4, head);
-  assert.equal(rows[0], head);
   assert.equal(rows[1], "short thought");
 });

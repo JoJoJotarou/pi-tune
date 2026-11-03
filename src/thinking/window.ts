@@ -286,9 +286,8 @@ export function clipToTailIndex(text: string, maxWidth: number, widthOf: WidthFn
 /**
  * Compress a thinking block into a bounded stack of rows. With `maxLines = 1` this is a
  * single continuously rolling line (label inline, head dropped behind a `…`). With more
- * lines the head becomes its own row (`◆ Thinking: …` when truncated, or a custom head
- * such as the settled summary) followed by the last `maxLines - 1` wrapped rows of the
- * stream, so the newest text stays visible.
+ * lines the label becomes its own row (`◆ Thinking...` when truncated) followed by the
+ * last `maxLines - 1` wrapped rows of the stream, so the newest text stays visible.
  * `availableWidth` is the content width pi hands the transformer (padding already removed).
  */
 export function buildThinkingWindow(
@@ -297,7 +296,6 @@ export function buildThinkingWindow(
   widthOf: WidthFn,
   ansi = true,
   maxLines = 1,
-  head?: string,
 ): string {
   const body = markdown.replace(/\t/g, " ").trim();
   if (body === "") return markdown;
@@ -321,13 +319,9 @@ export function buildThinkingWindow(
     );
     const bodyRows = Math.max(1, maxLines - 1);
     const hidden = rows.length - bodyRows;
-    const headText = head ?? LABEL;
-    if (width < widthOf(headText)) return [ELLIPSIS, ...rows.slice(-bodyRows)].join("\n");
-    // The bare ellipsis signals a dropped head only for the rolling label; a settled
-    // summary head already says what the rows below are.
-    const headRow =
-      italicOff + (hidden > 0 && head === undefined ? `${headText.trimEnd()} ${ELLIPSIS}` : headText) + italicOn;
-    return [headRow, ...rows.slice(-bodyRows)].join("\n");
+    if (width < labelWidth) return [ELLIPSIS, ...rows.slice(-bodyRows)].join("\n");
+    const label = italicOff + (hidden > 0 ? "◆ Thinking..." : LABEL) + italicOn;
+    return [label, ...rows.slice(-bodyRows)].join("\n");
   }
 
   const useLabel = width >= minLabeledWidth;
