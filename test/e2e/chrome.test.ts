@@ -95,3 +95,22 @@ test("narrow chrome keeps the footer inside 40 columns", { timeout: 180_000 }, a
     await pi.close();
   }
 });
+
+test("a short message after a measured one keeps the last token rate", { timeout: 180_000 }, async () => {
+  const shortAfterLong: Scenario = {
+    files: { "README.md": "# demo\n" },
+    // The first message streams for over a second; the short one after the tool is too quick to measure.
+    turns: [[{ text: "reading ".repeat(40) }, { tool: "bash", args: { command: "true" } }], [{ text: "all done" }]],
+    tokensPerSecond: 30,
+  };
+  const pi = await startPi({ scenario: shortAfterLong, cols: 100, rows: 30 });
+  try {
+    pi.type("go\r");
+    await pi.waitFor("all done", 60_000);
+    await pi.waitForGone("to stop");
+    const footer = pi.screen().find((line) => line.includes("%/")) ?? "";
+    assert.ok(footer.includes("tok/s"), footer);
+  } finally {
+    await pi.close();
+  }
+});

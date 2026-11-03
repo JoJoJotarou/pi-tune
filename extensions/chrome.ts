@@ -83,7 +83,10 @@ export default function (pi: ExtensionAPI) {
   let streamStartedAt: number | undefined;
   /** Output tokens of the streaming message, from its partial usage. */
   let streamOutputTokens = 0;
-  /** Final rate of the last finished message, shown until the next one streams. */
+  /**
+   * Last measured rate. A message too short to measure (under a second, or a provider that reports output tokens
+   * only at the end) keeps it instead of clearing it, so the footer does not flicker.
+   */
   let rate: number | undefined;
   /** Enabled MCP servers from the config files, read once per session. */
   let mcpConfigured = 0;
@@ -134,7 +137,7 @@ export default function (pi: ExtensionAPI) {
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     if (started === undefined) return;
-    rate = streamRate(event.message.usage.output, started, Date.now());
+    rate = streamRate(event.message.usage.output, started, Date.now()) ?? rate;
     tui?.requestRender();
   });
 
@@ -190,7 +193,10 @@ export default function (pi: ExtensionAPI) {
             contextPercent: context?.percent ?? null,
             contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
             autoCompact: settings.compaction?.enabled !== false,
-            rate: streamStartedAt === undefined ? rate : streamRate(streamOutputTokens, streamStartedAt, Date.now()),
+            rate:
+              (streamStartedAt === undefined
+                ? undefined
+                : streamRate(streamOutputTokens, streamStartedAt, Date.now())) ?? rate,
           };
           const state = running ? (session.ui.getEditorText().trim() ? "busy-typing" : "busy-empty") : "idle";
           const hints = formatHints(hintFor(state, { stash: stashReady }), theme);
