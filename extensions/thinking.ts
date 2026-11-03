@@ -33,6 +33,8 @@ function hydrateDurations(entries: readonly unknown[], seed: (markdown: string, 
 }
 
 export default (pi: ExtensionAPI) => {
+  // Rows shown for an expanded, still-unsettled thinking block. 1 = the single rolling line.
+  const WINDOW_LINES = 4;
   const timing = createThinkingTiming();
   // context.isStreaming covers the whole message; thinking settles earlier, so track its own
   // boundary. Events after thinking_end close the run for backends that never send thinking_end.
@@ -79,6 +81,6 @@ export default (pi: ExtensionAPI) => {
       }
     }
     // No measured duration: keep the rolling window as the residue rather than invent a summary.
-    return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, ansi);
+    return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, ansi, WINDOW_LINES);
   });
 };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, visibleWidth } from "@earendil-works/pi-tui";
 import {
   buildThinkingWindow,
   clipToTailIndex,
@@ -16,7 +16,7 @@ const ANSI_TRUE = true;
 /** The core invariant: the output is exactly one line and never exceeds the width. */
 function assertSingleLine(markdown: string, width: number, ansi = ANSI_TRUE): string {
   const line = buildThinkingWindow(markdown, width, visibleWidth, ansi);
-  const lineBreak = new RegExp("[\\n\\r\\u0085\\u000b\\u000c\\u2028\\u2029]");
+  const lineBreak = /[\n\r\u2028\u2029]/;
   assert.ok(!lineBreak.test(line), "must not contain line breaks");
   assert.ok(visibleWidth(line) <= width, `width ${visibleWidth(line)} exceeds ${width}`);
   return line;
@@ -111,4 +111,79 @@ test("right inset keeps the line off the right edge", () => {
   const text = Array.from({ length: 60 }, (_, i) => `w${i}`).join(" ");
   const line = assertSingleLine(text, 80);
   assert.ok(visibleWidth(line) <= 80 - 3);
+});
+
+const noopTheme = {
+  heading: (t: string) => t,
+  link: (t: string) => t,
+  linkUrl: (t: string) => t,
+  code: (t: string) => t,
+  codeBlock: (t: string) => t,
+  codeBlockBorder: (t: string) => t,
+  quote: (t: string) => t,
+  quoteBorder: (t: string) => t,
+  hr: (t: string) => t,
+  listBullet: (t: string) => t,
+  bold: (t: string) => t,
+  italic: (t: string) => t,
+  strikethrough: (t: string) => t,
+  underline: (t: string) => t,
+};
+
+/** True rendering invariant for multi-line windows: markdown re-parse must not merge or widen rows. */
+function renderedRows(markdown: string, width: number, maxLines: number): string[] {
+  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines);
+  const md = new Markdown(output, 0, 0, noopTheme);
+  return md
+    .render(width)
+    .map((row) => row.trimEnd())
+    .filter((row) => row !== "");
+}
+
+function assertBoundedRows(markdown: string, width: number, maxLines: number): string[] {
+  const rows = renderedRows(markdown, width, maxLines);
+  assert.ok(rows.length <= maxLines, `expected ≤ ${maxLines} rows, got ${rows.length}:\n${rows.join("\n")}`);
+  for (const row of rows) {
+    assert.ok(visibleWidth(row) <= width, `row width ${visibleWidth(row)} exceeds ${width}: ${row}`);
+  }
+  return rows;
+}
+
+function multiMarkdown(): string {
+  return [
+    "## Heading with `code` and <angle>",
+    "",
+    "- list item `a\nb` spanning",
+    "contact foo@example.com and [docs](https://x.y) plus array[0](weird)",
+    "",
+    "中文段落接缝测试,多行窗口的宽度与行数都要稳。",
+  ].join("\n");
+}
+
+function multiCjk(): string {
+  const sentence = "先读一遍需求,确认改动范围只在渲染层。超出预算时从头部丢弃,行尾永远是最新写下的内容。";
+  return `${Array.from({ length: 5 }, () => sentence).join("\n\n")}这一句必须留在最后一行。`;
+}
+
+for (const width of [40, 80, 120]) {
+  for (const source of [multiMarkdown(), multiCjk()]) {
+    test(`multi-line window holds ≤4 rows at width ${width} (${source.slice(0, 6)}…)`, () => {
+      const rows = assertBoundedRows(source, width, 4);
+      assert.ok(rows[0].includes("◆ Think:"), `label row expected:\n${rows.join("\n")}`);
+    });
+  }
+}
+
+test("multi-line window shows the tail and the hidden count", () => {
+  const rows = assertBoundedRows(multiCjk(), 40, 4);
+  assert.ok(rows[rows.length - 1].endsWith("。"), `newest text stays at the tail:\n${rows.join("\n")}`);
+  const head = rows[0];
+  assert.match(head, /\+\d+ lines/);
+});
+
+test("multi-line window without overflow shows every row and no count", () => {
+  const rows = assertBoundedRows("short thought", 80, 4);
+  assert.equal(rows.length, 2);
+  assert.ok(!rows[0].includes("+"));
+  assert.equal(rows[1], "short thought");
 });
