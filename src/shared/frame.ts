@@ -1,5 +1,5 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { type OverlayOptions, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export interface FrameLabels {
   /** Pre-styled text at the left of the border line. */
@@ -77,19 +77,4 @@ export function frame(lines: readonly string[], width: number, theme: Theme, opt
     ...lines.map((line) => frameRow(line, width, theme, options.color, options.paddingX)),
     frameBottom(width, theme, options.color, { left: options.hints }),
   ];
-}
-
-/** Overlay placement shared by every modal: centered, full width minus a 2-column margin on each side. */
-export const MODAL_OVERLAY: OverlayOptions = { anchor: "center", width: "100%", margin: { left: 2, right: 2 } };
-
-/** Body rows for a modal: at least 60% of the terminal so short content still reads as a window, at most rows − 6. */
-export function modalBodyRows(contentRows: number, terminalRows: number): number {
-  const max = Math.max(1, terminalRows - 6);
-  const min = Math.min(max, Math.ceil(terminalRows * 0.6) - 2);
-  return Math.max(min, Math.min(contentRows, max));
-}
-
-/** Join key hints with Pi's dim separator. Build each hint with Pi's `keyHint` / `rawKeyHint`. */
-export function joinHints(theme: Theme, hints: readonly string[]): string {
-  return hints.join(theme.fg("dim", " · "));
 }

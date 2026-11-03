@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { frame, frameBottom, frameRow, frameTop, modalBodyRows } from "./frame.ts";
+import { frame, frameBottom, frameRow, frameTop } from "./frame.ts";
 
 const theme = testTheme();
 const plain = (line: string) => stripTerminalSequences(line);
@@ -46,11 +46,4 @@ test("no frame line is wider than the width it was given", () => {
     });
     for (const line of lines) assert.equal(visibleWidth(line), width, `width ${width}: ${plain(line)}`);
   }
-});
-
-test("modal bodies take at least 60% of the screen and stop 6 rows short of it", () => {
-  assert.equal(modalBodyRows(3, 40), 22);
-  assert.equal(modalBodyRows(30, 40), 30);
-  assert.equal(modalBodyRows(100, 40), 34);
-  assert.equal(modalBodyRows(3, 5), 1);
 });

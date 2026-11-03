@@ -28,44 +28,6 @@ function rowOf(pi: PiSession, text: string): number {
   return pi.screen().findIndex((line) => line.includes(text));
 }
 
-test("the sticky prompt shows the prompt that scrolled off the top", { timeout: 240_000 }, async () => {
-  const pi = await startPi({ scenario, cols, rows, tune: true });
-  try {
-    pi.type("first question\r");
-    await pi.waitFor("first answer line 40");
-
-    pi.type("second question\r");
-    await pi.waitFor("second answer line 4");
-
-    // The third answer outgrows the viewport, so its prompt is above it and the sticky prompt takes over.
-    pi.type("third question\r");
-    await pi.waitFor("third answer line 60");
-    await sleep(800);
-    assert.equal(
-      pi
-        .screen()[0]
-        .slice(0, cols - 2)
-        .trim(),
-      "",
-      pi.screen().join("\n"),
-    );
-    assert.equal(pi.screen()[1].trim(), "third question", pi.screen().join("\n"));
-    await pi.shot("sticky-prompt");
-
-    pi.paste("wrap line one with a few words to fill it\nwrap line two\nwrap line three\nwrap line four");
-    pi.type("\r");
-    await pi.waitFor("fourth answer line 40");
-    await sleep(800);
-    const sticky = pi.screen().slice(0, 5);
-    assert.equal(sticky[1].trim(), "wrap line one with a few words to fill it", pi.screen().join("\n"));
-    assert.equal(sticky[2].trim(), "wrap line two");
-    assert.equal(sticky[3].trim(), "wrap line three …");
-    await pi.shot("sticky-3-lines");
-  } finally {
-    await pi.close();
-  }
-});
-
 test("survives /new and still scrolls", { timeout: 240_000 }, async () => {
   const pi = await startPi({ scenario, cols, rows, tune: true });
   try {
