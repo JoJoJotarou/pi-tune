@@ -218,23 +218,24 @@ test("expanded results are Pi's own output in a painted body, indented under the
   assertFits(lines, 40);
 });
 
-test("expanded bash starts with the full command, then a blank line, then the output", () => {
+test("an expanded bash call draws the whole command in its header, wrapped, and no $ line", () => {
   const command = `echo ${"x".repeat(150)}`;
-  const ctx = context({ args: { command } });
-  const lines = resultLines("bash", text("output\n"), { expanded: true, isPartial: false }, ctx, 40);
-  const rendered = plain(lines);
+  const ctx = context({ args: { command }, expanded: true });
+  const header = plain(callLines("bash", { command }, ctx, 40)).slice(1, -1);
 
-  assert.equal(rendered[0].slice(0, 2), "  ");
-  assert.equal(rendered[0].trimStart().slice(0, 2), "$ ");
-  const commandText = rendered.slice(0, -1).join("").trimStart();
-  assert.ok(commandText.startsWith("$ echo "), commandText);
+  assert.ok(header.length > 1, header.join("\n"));
+  assert.ok(header[0].trimStart().startsWith("✓ bash echo "), header.join("\n"));
+  const commandText = header.join("");
   assert.equal(commandText.split("x").length - 1, 150);
+  assert.ok(!commandText.includes("…"), commandText);
+  assertFits(header, 40);
 
-  const blankAt = rendered.findIndex((line, index) => index > 0 && line.trim() === "");
-  const outputAt = rendered.findIndex((line) => line.trim() === "BASE RESULT");
-  assert.ok(blankAt > 0 && outputAt === blankAt + 1, rendered.join("\n"));
-  assertPainted(lines, "toolSuccessBg");
-  assertFits(lines, 40);
+  const body = plain(resultLines("bash", text("output\n"), { expanded: true, isPartial: false }, ctx, 40));
+  assert.deepEqual(
+    body.map((line) => line.trim()),
+    ["BASE RESULT", ""],
+    body.join("\n"),
+  );
 });
 
 test("a failed bash call shows the last 3 output lines and the truncation line", () => {
@@ -271,13 +272,17 @@ test("a failed bash call with few output lines shows them all and no truncation 
   );
 });
 
-test("expanded failures show the whole output, command first for bash", () => {
-  const ctx = context({ args: { command: "sh -c 'seq 1 5; exit 3'" }, isError: true });
+test("an expanded failure keeps its command in the header and the whole output in the body", () => {
+  const command = "sh -c 'seq 1 5; exit 3'";
+  const ctx = context({ args: { command }, isError: true, expanded: true });
+  assert.equal(plain(callLines("bash", { command }, ctx))[1].trim(), `✗ bash ${command}`);
+
   const lines = plain(
     resultLines("bash", text("1\n2\n3\n4\n5\nCommand exited with code 3"), { expanded: true, isPartial: false }, ctx),
   );
+  assert.ok(!lines.some((line) => line.includes("$ sh -c")), lines.join("\n"));
   assert.ok(
-    lines.some((line) => line.trim() === "$ sh -c 'seq 1 5; exit 3'"),
+    lines.some((line) => line.trim() === "BASE RESULT"),
     lines.join("\n"),
   );
 });
@@ -524,7 +529,7 @@ test("expanding a bash call never hands our block back to Pi's renderer", () => 
   const text = lines.join("\n");
   assert.ok(!text.includes("(no output)"), `Pi drew its fallback:\n${text}`);
   assert.ok(text.includes("NATIVE"), text);
-  assert.ok(text.includes("$ true # tok1 "), text);
+  assert.ok(text.includes("✓ bash true # tok1 "), text);
   assert.ok(text.includes("tok35"), `the command was cut:\n${text}`);
   assertFits(lines, 80);
 });

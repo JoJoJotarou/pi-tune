@@ -1,5 +1,4 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Body lines shown before folding. */
 export const PREVIEW_LINES = 3;
@@ -29,20 +28,6 @@ export function diffCounts(diffText: string): DiffCounts {
 export function diffMeta(diffText: string, prefix?: string): string {
   const { added, removed } = diffCounts(diffText);
   return [prefix, `+${added} −${removed}`].filter((part) => Boolean(part)).join(" · ");
-}
-
-const PROMPT = "$ ";
-
-/** The full shell command wrapped to `width`, drawn as Pi's native title (`$ ` plus the command). */
-export function bashCommandLines(command: string, width: number, theme: Theme): string[] {
-  const lines: string[] = [];
-  for (const source of command.replace(/\n$/, "").split("\n")) {
-    const wrapped = wrapTextWithAnsi(source, Math.max(1, width - PROMPT.length));
-    lines.push(...(wrapped.length === 0 ? [""] : wrapped));
-  }
-  return lines.map((line, index) =>
-    theme.fg("toolTitle", `${index === 0 ? PROMPT : " ".repeat(PROMPT.length)}${line}`),
-  );
 }
 
 /** Pi's render result lines without the blank lines it pads around its output and its trailing spaces. */

@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
 export type ToolStatus = "running" | "success" | "error";
@@ -36,6 +36,8 @@ export interface HeaderParts {
   summary: string;
   meta?: string;
   durationMs?: number;
+  /** An expanded block wraps the summary over as many lines as it needs instead of cutting it. */
+  expanded?: boolean;
 }
 
 const ICONS: Record<ToolStatus, { icon: string; color: "warning" | "success" | "error" }> = {
@@ -44,15 +46,68 @@ const ICONS: Record<ToolStatus, { icon: string; color: "warning" | "success" | "
   error: { icon: "✗", color: "error" },
 };
 
-/** Exactly one line, never wider than `width`. */
-export function renderHeader(parts: HeaderParts, width: number, theme: Theme): string {
-  if (width <= 0) return "";
+/** Narrowest summary still worth keeping beside the right part, in columns. Baseline of `cutSummary`. */
+const MIN_SUMMARY = 8;
+
+/** One line while collapsed; the summary wrapped over as many lines as it needs when expanded. */
+export function renderHeader(parts: HeaderParts, width: number, theme: Theme): string[] {
+  if (width <= 0) return [""];
 
   const { icon, color } = ICONS[parts.status];
   const prefix = `${theme.fg(color, icon)} ${theme.bold(parts.name)}`;
   const prefixWidth = visibleWidth(prefix);
   const duration = parts.durationMs === undefined ? undefined : formatDuration(parts.durationMs);
+  const right = [parts.meta, duration].filter((part): part is string => Boolean(part)).join(" · ");
 
+  if (parts.expanded) return wrapHeader(prefix, prefixWidth, parts.summary, right, width, theme);
+  return [oneLineHeader(parts, prefix, prefixWidth, duration, right, width, theme)];
+}
+
+/**
+ * The summary wrapped to the width, with the right part right-aligned on the first line when it leaves
+ * at least {@link MIN_SUMMARY} columns for the summary, and closing the header on its own line otherwise.
+ */
+function wrapHeader(
+  prefix: string,
+  prefixWidth: number,
+  summary: string,
+  right: string,
+  width: number,
+  theme: Theme,
+): string[] {
+  const rightWidth = visibleWidth(right);
+  const beside = rightWidth > 0 && width - prefixWidth - 1 - rightWidth - 2 >= MIN_SUMMARY;
+  const textWidth = Math.max(1, width - prefixWidth - 1 - (beside ? rightWidth + 2 : 0));
+  const segments = summary ? wrapTextWithAnsi(summary, textWidth) : [];
+  const indent = " ".repeat(Math.min(prefixWidth + 1, Math.max(0, width - 1)));
+  const lines =
+    segments.length === 0
+      ? [prefix]
+      : segments.map((segment, index) =>
+          index === 0 ? `${prefix} ${theme.fg("accent", segment)}` : `${indent}${theme.fg("accent", segment)}`,
+        );
+
+  if (rightWidth > 0) {
+    if (beside) {
+      const gap = width - visibleWidth(lines[0]) - rightWidth;
+      lines[0] = `${lines[0]}${" ".repeat(gap)}${theme.fg("dim", right)}`;
+    } else if (rightWidth <= width) {
+      lines.push(`${" ".repeat(width - rightWidth)}${theme.fg("dim", right)}`);
+    }
+  }
+
+  return lines.map((line) => truncateToWidth(line, width, "…"));
+}
+
+function oneLineHeader(
+  parts: HeaderParts,
+  prefix: string,
+  prefixWidth: number,
+  duration: string | undefined,
+  right: string,
+  width: number,
+  theme: Theme,
+): string {
   const compose = (summary: string, right: string): string | undefined => {
     const left = summary ? `${prefix} ${theme.fg("accent", summary)}` : prefix;
     const leftWidth = visibleWidth(left);
@@ -68,21 +123,20 @@ export function renderHeader(parts: HeaderParts, width: number, theme: Theme): s
   };
 
   const cutSummary = (summary: string, available: number): string | undefined => {
-    if (!summary || available < 8) return undefined;
+    if (!summary || available < MIN_SUMMARY) return undefined;
     return truncateToWidth(summary, available, "…");
   };
 
-  const tryRight = (right: string): string | undefined => {
-    const full = compose(parts.summary, right);
+  const tryRight = (candidate: string): string | undefined => {
+    const full = compose(parts.summary, candidate);
     if (full) return full;
-    const available = width - prefixWidth - 3 - visibleWidth(right);
+    const available = width - prefixWidth - 3 - visibleWidth(candidate);
     const cut = cutSummary(parts.summary, available);
-    return cut === undefined ? undefined : compose(cut, right);
+    return cut === undefined ? undefined : compose(cut, candidate);
   };
 
-  const combined = [parts.meta, duration].filter((part): part is string => Boolean(part)).join(" · ");
-  if (combined) {
-    const full = tryRight(combined);
+  if (right) {
+    const full = tryRight(right);
     if (full) return full;
     if (parts.meta && duration) {
       const withoutMeta = tryRight(duration);

@@ -11,7 +11,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
-import { bashCommandLines, diffMeta, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
+import { diffMeta, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
 import {
   codemodeBody,
   codemodeCalls,
@@ -38,6 +38,7 @@ const FAILURE_LINES = 3;
 interface CompactContext {
   state: Record<string, unknown>;
   executionStarted: boolean;
+  expanded: boolean;
   isPartial: boolean;
   isError: boolean;
   durationMs: number | undefined;
@@ -128,7 +129,16 @@ function resultText(result: { content: Array<{ type: string; text?: string }> })
     .join("\n");
 }
 
-/** The one header line, painted by the box around it. */
+/** The header text: bash shows its whole command once expanded, every other tool keeps its summary. */
+function headerSummary(toolName: string, rawArgs: unknown, expanded: boolean): string {
+  if (toolName === "bash" && expanded) {
+    const command = stringArg(textArgs(rawArgs), "command");
+    if (command !== undefined) return command.replace(/\n$/, "");
+  }
+  return summaryFor(toolName, rawArgs);
+}
+
+/** The header, painted by the box around it: one line while collapsed, the summary wrapped once expanded. */
 class HeaderComponent implements Component {
   private readonly toolName: string;
   private readonly summary: string;
@@ -145,19 +155,20 @@ class HeaderComponent implements Component {
   render(width: number): string[] {
     const meta = this.context.state.meta;
     const summary = this.context.state.summary;
-    return [
-      renderHeader(
-        {
-          status: toolStatus(this.context),
-          name: this.toolName,
-          summary: typeof summary === "string" ? summary : this.summary,
-          meta: typeof meta === "string" ? meta : undefined,
-          durationMs: this.context.durationMs,
-        },
-        width,
-        this.theme,
-      ),
-    ];
+    // Expanded bash ends with the timer line Pi's own body draws, so its duration is on that line only.
+    const timerInBody = this.context.expanded && this.toolName === "bash";
+    return renderHeader(
+      {
+        status: toolStatus(this.context),
+        name: this.toolName,
+        summary: typeof summary === "string" ? summary : this.summary,
+        meta: typeof meta === "string" ? meta : undefined,
+        durationMs: timerInBody ? undefined : this.context.durationMs,
+        expanded: this.context.expanded,
+      },
+      width,
+      this.theme,
+    );
   }
 
   invalidate(): void {}
@@ -267,11 +278,6 @@ function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSour
   ];
 }
 
-function bashSource(command: string, expanded: boolean, native: LineSource, theme: Theme): LineSource {
-  if (!expanded) return native;
-  return (width) => [...bashCommandLines(command, width, theme), "", ...native(width)];
-}
-
 export const toolRenderers: ToolRendererResolver = (toolName, next) => {
   const base = next();
   if (!COMPACT_TOOLS.has(toolName) || !base) return base;
@@ -282,7 +288,11 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
     ...base,
     renderShell: "self",
     renderCall: (args, theme, context) =>
-      new HeaderBoxComponent(new HeaderComponent(toolName, summaryFor(toolName, args), theme, context), theme, context),
+      new HeaderBoxComponent(
+        new HeaderComponent(toolName, headerSummary(toolName, args, context.expanded), theme, context),
+        theme,
+        context,
+      ),
     renderResult: (result, options, theme, context) => {
       const output = resultText(result);
       const expanded = options.expanded;
@@ -351,14 +361,11 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
       const native = componentSource(
         baseRenderResult?.(result, { expanded: true, isPartial: false }, theme, nativeContext(context)),
       );
-      const command = stringArg(textArgs(context.args), "command") ?? "";
       const search = toolName === "grep" || toolName === "find" || toolName === "ls";
       const body =
-        toolName === "bash"
-          ? bashSource(command, expanded, native, theme)
-          : search && toolStatus(context) !== "error"
-            ? (width: number) => (toolName === "grep" ? grepBody(output, width, theme) : listBody(output, width, theme))
-            : native;
+        search && toolStatus(context) !== "error"
+          ? (width: number) => (toolName === "grep" ? grepBody(output, width, theme) : listBody(output, width, theme))
+          : native;
       return new BodyBoxComponent(
         (width) => {
           if (toolStatus(context) === "error" && !expanded) return errorSource(output, theme)(width);
