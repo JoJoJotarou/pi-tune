@@ -44,7 +44,7 @@ test("working line shows Thinking while the model streams thinking", { timeout: 
   }
 });
 
-test("working line shows Writing without the token rate", { timeout: 180_000 }, async () => {
+test("working line shows Responding without the token rate", { timeout: 180_000 }, async () => {
   const pi = await startPi({
     scenario: {
       files: { "README.md": "# demo\n" },
@@ -54,11 +54,11 @@ test("working line shows Writing without the token rate", { timeout: 180_000 }, 
   });
   try {
     pi.type("write\r");
-    await pi.waitFor(/Writing +.*to stop/);
+    await pi.waitFor(/Responding +.*to stop/);
     await new Promise((done) => setTimeout(done, 1500));
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     assert.equal(statusRow.includes("tok/s"), false, statusRow);
-    await pi.shot("status-writing");
+    await pi.shot("status-responding");
   } finally {
     await pi.close();
   }

@@ -3,9 +3,9 @@ import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, keyText, type Theme } from "@earendil-works/pi-coding-agent";
 import { formatDuration } from "../src/shared/format.ts";
 import { type ActivityEvent, type ActivityState, describe, initialState, reduce } from "../src/status/activity.ts";
-import { sendNotification, shouldNotify } from "../src/status/notify.ts";
 
 const REFRESH_MS = 250;
+const DONE_TITLE_MS = 15_000;
 
 function messageProgress(event: AssistantMessageEvent): "thinking" | "text" | undefined {
   switch (event.type) {
@@ -29,7 +29,6 @@ export default function (pi: ExtensionAPI) {
   /** Stable theme object handed out by `session_start`, so renderers never touch a stored ctx. */
   let theme: Theme | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
-  let notifyFailureReported = false;
   let shutDown = false;
 
   function stopTimer(): void {
@@ -57,7 +56,6 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, context) => {
     if (context.mode !== "tui") return;
     theme = context.ui.theme;
-    notifyFailureReported = false;
     shutDown = false;
   });
 
@@ -89,7 +87,7 @@ export default function (pi: ExtensionAPI) {
     apply({ type: "tool_execution_end", id: event.toolCallId });
   });
 
-  pi.on("agent_settled", async (event, context) => {
+  pi.on("agent_settled", (event, context) => {
     if (shutDown) {
       state = reduce(state, { type: "agent_settled" }, Date.now());
       return;
@@ -99,17 +97,8 @@ export default function (pi: ExtensionAPI) {
     stopTimer();
     if (context.mode === "tui") {
       context.ui.setWorkingMessage();
-      if (shouldNotify(elapsed, event.aborted)) {
-        const total = formatDuration(elapsed);
-        context.ui.setTitle(`✓ pi · done ${total}`);
-        try {
-          await sendNotification("pi", `Done in ${total}`, { env: process.env, platform: process.platform });
-        } catch (error) {
-          if (!notifyFailureReported && !shutDown) {
-            notifyFailureReported = true;
-            context.ui.notify(`pi-tune notification failed: ${String(error)}`, "warning");
-          }
-        }
+      if (!event.aborted && elapsed >= DONE_TITLE_MS) {
+        context.ui.setTitle(`✓ pi · done ${formatDuration(elapsed)}`);
       }
     }
     apply({ type: "agent_settled" });
