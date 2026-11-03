@@ -94,6 +94,11 @@ export function describe(state: ActivityState, now: number, options: DescribeOpt
   return `${truncateToWidth(left, available, "…")}${COLUMN_GAP}${right}`;
 }
 
+/** The line a finished run leaves in the transcript. */
+export function workedFor(elapsedMs: number): string {
+  return `Worked for ${formatDuration(Math.max(0, elapsedMs))}`;
+}
+
 /** The terminal title after a run, or `undefined` when the run was short or aborted. */
 export function doneTitle(elapsedMs: number, aborted: boolean): string | undefined {
   if (aborted || elapsedMs < DONE_TITLE_MS) return undefined;

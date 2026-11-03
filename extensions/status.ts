@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, keyText, type Theme } from "@earendil-works/pi-coding-agent";
+import { type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import {
   type ActivityEvent,
   type ActivityState,
@@ -8,9 +9,34 @@ import {
   doneTitle,
   initialState,
   reduce,
+  workedFor,
 } from "../src/status/activity.ts";
 
 const REFRESH_MS = 250;
+/** Session entry a finished run leaves behind: `Worked for 2.9s`, outside the model's context. */
+const WORKED_TYPE = "pi-tune:worked";
+
+interface WorkedData {
+  ms: number;
+}
+
+/** One dim transcript line, indented like the transcript text around it and cut to the width it gets. */
+class WorkedLine implements Component {
+  private readonly text: string;
+  private readonly theme: Theme;
+
+  constructor(text: string, theme: Theme) {
+    this.text = text;
+    this.theme = theme;
+  }
+
+  render(width: number): string[] {
+    return [truncateToWidth(` ${this.theme.fg("dim", this.text)}`, width, "…")];
+  }
+
+  invalidate(): void {}
+}
+
 function messageProgress(event: AssistantMessageEvent): "thinking" | "text" | undefined {
   switch (event.type) {
     case "thinking_start":
@@ -91,6 +117,12 @@ export default function (pi: ExtensionAPI) {
     apply({ type: "tool_execution_end", id: event.toolCallId });
   });
 
+  pi.registerEntryRenderer<WorkedData>(WORKED_TYPE, (entry, _options, renderTheme) => {
+    const data = entry.data;
+    if (data === undefined || !Number.isFinite(data.ms)) return undefined;
+    return new WorkedLine(workedFor(data.ms), renderTheme);
+  });
+
   pi.on("agent_settled", (event, context) => {
     if (shutDown) {
       state = reduce(state, { type: "agent_settled" }, Date.now());
@@ -104,6 +136,7 @@ export default function (pi: ExtensionAPI) {
       const title = doneTitle(elapsed, event.aborted);
       if (title !== undefined) context.ui.setTitle(title);
     }
+    pi.appendEntry<WorkedData>(WORKED_TYPE, { ms: elapsed });
     apply({ type: "agent_settled" });
   });
 

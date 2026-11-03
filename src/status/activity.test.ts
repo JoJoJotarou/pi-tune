@@ -9,6 +9,7 @@ import {
   doneTitle,
   initialState,
   reduce,
+  workedFor,
 } from "./activity.ts";
 
 const t0 = 1_000_000;
@@ -128,6 +129,11 @@ test("no message when idle or settled", () => {
   assert.equal(describe(initialState, t0, { width: 80, interruptKey: "esc", theme }), "");
   const settled = reduce(run([[t0, { type: "agent_start" }]]), { type: "agent_settled" }, t0 + 1000);
   assert.equal(describe(settled, t0 + 2000, { width: 80, interruptKey: "esc", theme }), "");
+});
+
+test("a finished run leaves its elapsed time", () => {
+  assert.equal(workedFor(2900), "Worked for 2.9s");
+  assert.equal(workedFor(0), "Worked for 0.0s");
 });
 
 test("a finished run of 15 s or more sets the done title; shorter or aborted runs do not", () => {
