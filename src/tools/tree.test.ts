@@ -125,6 +125,34 @@ test("grep shows each line once when context windows overlap, and a match wins o
   assert.ok(rows[1].includes(theme.fg("dim", "one")), "line 25 stays context");
 });
 
+test("a file named after the previous one plus -digits- is its own file", () => {
+  const text = ["notes/2024:1: hit", "notes/2024-01-report.md:1: total"].join("\n");
+  assert.deepEqual(plain(grepBody(text, 100, theme)), [
+    "├─ notes/2024",
+    "│  └─ 1  hit",
+    "└─ notes/2024-01-report.md",
+    "   └─ 1  total",
+  ]);
+});
+
+test("a context row whose text holds a timestamp or a port stays a context row of its file", () => {
+  const text = [
+    "a.ts:1: x",
+    "app.log-3- 2024-10-01 12:30:45 start",
+    "app.log:4: failed",
+    "b.md-3- see http://x:80: ok",
+  ].join("\n");
+  assert.deepEqual(plain(grepBody(text, 100, theme)), [
+    "├─ a.ts",
+    "│  └─ 1  x",
+    "├─ app.log",
+    "│  ├─ 3  2024-10-01 12:30:45 start",
+    "│  └─ 4  failed",
+    "└─ b.md",
+    "   └─ 3  see http://x:80: ok",
+  ]);
+});
+
 test("grep keeps lines that do not parse as rows under the file before them", () => {
   const text = ["before any file", "src/a.ts:1: match", "not a row", "src/b.ts:2: other"].join("\n");
   assert.deepEqual(plain(grepBody(text, 100, theme)), [

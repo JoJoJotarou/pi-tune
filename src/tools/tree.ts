@@ -9,8 +9,8 @@ export interface TreeItem {
 }
 
 /** A grep match row: `path:line: text`. Context rows use `-line-` and are dim. */
-const GREP_MATCH = /^(.*?):(\d+):(.*)$/;
-const GREP_CONTEXT = /^(.*?)-(\d+)-(.*)$/;
+const GREP_MATCH = /^(.*?):(\d+):( .*|)$/;
+const GREP_CONTEXT = /^(.*?)-(\d+)-( .*|)$/;
 
 interface GrepRow {
   path: string;
@@ -20,8 +20,9 @@ interface GrepRow {
 }
 
 /**
- * One grep row. The file of the row before is tried first: a path such as `2024-01-report.md` itself looks like
- * a context separator to the plain pattern.
+ * One grep row: `path:12: text` for a match, `path-12- text` for context. A path can hold `-12-` and a text
+ * `:30:`, so the separator must be followed by a space (or end the line). The file of the row before is tried
+ * first; when both shapes still fit, the one with the shorter path wins.
  */
 function parseGrepRow(line: string, knownPath: string | undefined): GrepRow | undefined {
   if (knownPath !== undefined) {
@@ -32,14 +33,17 @@ function parseGrepRow(line: string, knownPath: string | undefined): GrepRow | un
       if (!line.startsWith(`${knownPath}${separator}`)) continue;
       const tail = line.slice(knownPath.length + 1);
       const end = tail.indexOf(separator);
-      if (end > 0 && /^\d+$/.test(tail.slice(0, end))) {
-        return { path: knownPath, number: tail.slice(0, end), rest: tail.slice(end + 1), context };
+      const rest = tail.slice(end + 1);
+      if (end > 0 && /^\d+$/.test(tail.slice(0, end)) && (rest === "" || rest.startsWith(" "))) {
+        return { path: knownPath, number: tail.slice(0, end), rest, context };
       }
     }
   }
   const match = GREP_MATCH.exec(line);
-  if (match) return { path: match[1], number: match[2], rest: match[3], context: false };
   const context = GREP_CONTEXT.exec(line);
+  if (match && (!context || match[1].length <= context[1].length)) {
+    return { path: match[1], number: match[2], rest: match[3], context: false };
+  }
   if (context) return { path: context[1], number: context[2], rest: context[3], context: true };
   return undefined;
 }
