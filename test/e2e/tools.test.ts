@@ -108,7 +108,8 @@ test("one-line tool calls hide output until expanded", { timeout: 180_000 }, asy
 
     const first = Math.min(rowIndex(lines, bash), rowIndex(lines, read));
     const last = Math.max(rowIndex(lines, bash), rowIndex(lines, read));
-    assert.ok(last - first + 1 <= 4, `tool rows span ${last - first + 1} rows:\n${lines.join("\n")}`);
+    // Each call is its header between one painted blank row above and below; Pi adds one plain blank row.
+    assert.ok(last - first + 1 <= 5, `tool rows span ${last - first + 1} rows:\n${lines.join("\n")}`);
 
     for (let line = 1; line <= 40; line++) {
       assert.ok(!lines.includes(String(line)), `output line ${line} is visible:\n${lines.join("\n")}`);

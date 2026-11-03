@@ -163,7 +163,10 @@ class HeaderComponent implements Component {
   invalidate(): void {}
 }
 
-/** Body lines indented under the tool name and cut to the width the box gives them. */
+/**
+ * Body lines indented under the tool name and cut to the width the box gives them, plus the painted blank row
+ * that closes the block. The header already brings the blank row above the body.
+ */
 class BodyComponent implements Component {
   private readonly source: LineSource;
 
@@ -173,13 +176,15 @@ class BodyComponent implements Component {
 
   render(width: number): string[] {
     const indent = " ".repeat(BODY_INDENT);
-    return this.source(Math.max(1, width - BODY_INDENT)).map((line) => truncateToWidth(`${indent}${line}`, width, "…"));
+    const lines = this.source(Math.max(1, width - BODY_INDENT));
+    if (lines.length === 0) return [];
+    return [...lines.map((line) => truncateToWidth(`${indent}${line}`, width, "…")), indent];
   }
 
   invalidate(): void {}
 }
 
-/** The header box: one line, no painted rows around it. The background follows the live status. */
+/** The header box: the header line between one painted blank row above and below. The background follows the live status. */
 class HeaderBoxComponent implements Component {
   private readonly header: HeaderComponent;
   private readonly theme: Theme;
@@ -192,7 +197,7 @@ class HeaderBoxComponent implements Component {
   }
 
   render(width: number): string[] {
-    const box = new Box(this.context.outputPad, 0, statusBackground(toolStatus(this.context), this.theme));
+    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
     box.addChild(this.header);
     return box.render(width);
   }
@@ -200,7 +205,7 @@ class HeaderBoxComponent implements Component {
   invalidate(): void {}
 }
 
-/** The body box: one painted blank row above and below the indented body lines. */
+/** The body box: the indented body lines under one painted blank row, which closes the tool block. */
 class BodyBoxComponent implements Component {
   private readonly lines: LineSource;
   private readonly theme: Theme;
@@ -213,7 +218,7 @@ class BodyBoxComponent implements Component {
   }
 
   render(width: number): string[] {
-    const box = new Box(this.context.outputPad, 1, statusBackground(toolStatus(this.context), this.theme));
+    const box = new Box(this.context.outputPad, 0, statusBackground(toolStatus(this.context), this.theme));
     box.addChild(new BodyComponent(this.lines));
     return box.render(width);
   }

@@ -131,39 +131,45 @@ test("each tool summarises its arguments", () => {
   ];
   for (const [name, args, summary] of summaries) {
     const lines = plain(callLines(name, args, context()));
-    assert.equal(lines.length, 1);
-    assert.equal(lines[0].trim(), `✓ ${name} ${summary}`);
+    assert.deepEqual(
+      lines.map((line) => line.trim()),
+      ["", `✓ ${name} ${summary}`, ""],
+    );
   }
 });
 
 test("missing or non-string args use an empty summary and never throw", () => {
   for (const args of [undefined, null, 42, {}, { command: 7 }, { path: null }]) {
-    const lines = callLines("bash", args, context());
-    assert.ok(lines.length === 1);
+    const lines = plain(callLines("bash", args, context()));
+    assert.equal(lines.length, 3);
+    assert.equal(lines[1].trim(), "✓ bash");
   }
 });
 
-test("the header is one painted line in the status background", () => {
+test("the header is one painted line between two blank rows in the status background", () => {
   const running = callLines("bash", { command: "sleep 1" }, context({ executionStarted: false }));
-  assert.equal(running.length, 1);
+  assert.equal(running.length, 3);
   assertPainted(running, "toolPendingBg");
-  assert.equal(plain(running)[0].trim(), "● bash sleep 1");
+  assert.deepEqual(
+    plain(running).map((line) => line.trim()),
+    ["", "● bash sleep 1", ""],
+  );
 
   const done = callLines("bash", { command: "true" }, context());
   assertPainted(done, "toolSuccessBg");
 
   const failed = callLines("bash", { command: "false" }, context({ isError: true }));
   assertPainted(failed, "toolErrorBg");
-  assert.equal(plain(failed)[0].trim(), "✗ bash false");
+  assert.equal(plain(failed)[1].trim(), "✗ bash false");
 });
 
 test("renderCall applies outputPad and still fits the width", () => {
   for (const pad of [0, 1, 3]) {
     for (const width of [40, 100]) {
       const lines = callLines("bash", { command: "seq 1 40" }, context({ outputPad: pad }), width);
-      assert.equal(lines.length, 1);
+      assert.equal(lines.length, 3);
       assertFits(lines, width);
-      const line = plain(lines)[0];
+      const line = plain(lines)[1];
       assert.equal(line.slice(0, pad), " ".repeat(pad));
       assert.equal(line.slice(pad).trim(), "✓ bash seq 1 40");
     }
@@ -174,15 +180,15 @@ test("the header shows the result meta and duration right-aligned on the same pa
   const ctx = context({ args: { command: "sh -c 'exit 3'" }, isError: true, durationMs: 1240 });
   resultLines("bash", text("boom\nCommand exited with code 3"), { expanded: false, isPartial: false }, ctx);
   const lines = callLines("bash", { command: "sh -c 'exit 3'" }, ctx);
-  assert.equal(lines.length, 1);
+  assert.equal(lines.length, 3);
   assertPainted(lines, "toolErrorBg");
-  assert.match(plain(lines)[0].trimEnd(), /^ ✗ bash sh -c 'exit 3'\s+exit 3 · 1\.2s$/);
+  assert.match(plain(lines)[1].trimEnd(), /^ ✗ bash sh -c 'exit 3'\s+exit 3 · 1\.2s$/);
 });
 
 test("a running call has no meta", () => {
   const ctx = context({ args: { command: "sleep 1" }, executionStarted: false });
   const lines = plain(callLines("bash", { command: "sleep 1" }, ctx));
-  assert.equal(lines[0].trim(), "● bash sleep 1");
+  assert.equal(lines[1].trim(), "● bash sleep 1");
 });
 
 test("collapsed successes have no body", () => {
@@ -205,10 +211,9 @@ test("expanded results are Pi's own output in a painted body, indented under the
   const lines = resultLines("read", text("one\ntwo"), { expanded: true, isPartial: false }, ctx, 40);
   const rendered = plain(lines);
 
-  assert.equal(rendered.length, 3, rendered.join("\n"));
-  assert.equal(rendered[0].trim(), "");
-  assert.equal(rendered[1].trim(), "BASE RESULT");
-  assert.equal(rendered[2].trim(), "");
+  assert.equal(rendered.length, 2, rendered.join("\n"));
+  assert.equal(rendered[0].trim(), "BASE RESULT");
+  assert.equal(rendered[1].trim(), "");
   assertPainted(lines, "toolSuccessBg");
   assertFits(lines, 40);
 });
@@ -219,15 +224,15 @@ test("expanded bash starts with the full command, then a blank line, then the ou
   const lines = resultLines("bash", text("output\n"), { expanded: true, isPartial: false }, ctx, 40);
   const rendered = plain(lines);
 
-  assert.equal(rendered[1].slice(0, 2), "  ");
-  assert.equal(rendered[1].trimStart().slice(0, 2), "$ ");
-  const commandText = rendered.slice(1, -1).join("").trimStart();
+  assert.equal(rendered[0].slice(0, 2), "  ");
+  assert.equal(rendered[0].trimStart().slice(0, 2), "$ ");
+  const commandText = rendered.slice(0, -1).join("").trimStart();
   assert.ok(commandText.startsWith("$ echo "), commandText);
   assert.equal(commandText.split("x").length - 1, 150);
 
-  const blankAt = rendered.findIndex((line, index) => index > 1 && line.trim() === "");
+  const blankAt = rendered.findIndex((line, index) => index > 0 && line.trim() === "");
   const outputAt = rendered.findIndex((line) => line.trim() === "BASE RESULT");
-  assert.ok(blankAt > 1 && outputAt === blankAt + 1, rendered.join("\n"));
+  assert.ok(blankAt > 0 && outputAt === blankAt + 1, rendered.join("\n"));
   assertPainted(lines, "toolSuccessBg");
   assertFits(lines, 40);
 });
@@ -242,7 +247,7 @@ test("a failed bash call shows the last 3 output lines and the truncation line",
   );
   assert.deepEqual(
     plain(lines).map((line) => line.trim()),
-    ["", "18", "19", "20", "… 17 more lines · click to expand", ""],
+    ["18", "19", "20", "… 17 more lines · click to expand", ""],
   );
   assertPainted(lines, "toolErrorBg");
 });
@@ -262,7 +267,7 @@ test("a failed bash call with few output lines shows them all and no truncation 
   );
   assert.deepEqual(
     two.map((line) => line.trim()),
-    ["", "boom", ""],
+    ["boom", ""],
   );
 });
 
@@ -281,11 +286,11 @@ test("an edit shows its counts and the diff from the first change until expanded
   const diff = " 1 a\n-2 b\n+2 B\n 3 c\n-4 d\n+4 D\n 5 e";
   const ctx = context({ args: { path: "a.ts" } });
   const collapsed = resultLines("edit", { content: [], details: { diff } }, { expanded: false, isPartial: false }, ctx);
-  const header = plain(callLines("edit", { path: "a.ts" }, ctx))[0];
+  const header = plain(callLines("edit", { path: "a.ts" }, ctx))[1];
   assert.match(header, /\+2 −2/);
 
   const rendered = plain(collapsed);
-  const body = rendered.slice(1, -1);
+  const body = rendered.slice(0, -1);
   assert.equal(body.length, 4, rendered.join("\n"));
   assert.equal(body[0].trim(), "2 - b");
   assert.equal(body[1].trim(), "2 + B");
@@ -297,7 +302,7 @@ test("an edit shows its counts and the diff from the first change until expanded
   const expanded = plain(
     resultLines("edit", { content: [], details: { diff } }, { expanded: true, isPartial: false }, ctx),
   );
-  assert.equal(expanded.length, diff.split("\n").length + 2);
+  assert.equal(expanded.length, diff.split("\n").length + 1);
   assert.ok(!expanded.some((line) => line.includes("click to expand")));
 });
 
@@ -308,7 +313,7 @@ test("a short diff is shown whole while collapsed", () => {
     resultLines("edit", { content: [], details: { diff } }, { expanded: false, isPartial: false }, ctx),
   );
   assert.deepEqual(
-    lines.slice(1, -1).map((line) => line.trim()),
+    lines.slice(0, -1).map((line) => line.trim()),
     ["1   a", "2 - b", "2 + B"],
   );
 });
@@ -320,7 +325,7 @@ test("an edit without diff details falls back to Pi's renderer", () => {
     lines.some((line) => line.trim() === "BASE RESULT"),
     lines.join("\n"),
   );
-  assert.equal(callLines("edit", { path: "a.ts" }, ctx)[0].includes("+"), false);
+  assert.equal(callLines("edit", { path: "a.ts" }, ctx)[1].includes("+"), false);
 });
 
 test("a new file shows its first three lines and a truncation line", () => {
@@ -329,14 +334,14 @@ test("a new file shows its first three lines and a truncation line", () => {
   const ctx = context({ args: { path: "src/new.ts", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
 
-  assert.match(plain(callLines("write", { path: "src/new.ts" }, ctx))[0], /new · 15 lines/);
+  assert.match(plain(callLines("write", { path: "src/new.ts" }, ctx))[1], /new · 15 lines/);
   assert.deepEqual(
-    lines.slice(1, -1).map((line) => line.trim()),
+    lines.slice(0, -1).map((line) => line.trim()),
     ["1 │ const value1 = 1;", "2 │ const value2 = 2;", "3 │ const value3 = 3;", "… 12 more lines · click to expand"],
   );
 
   const expanded = plain(resultLines("write", text("ok"), { expanded: true, isPartial: false }, ctx));
-  assert.equal(expanded.length, 17);
+  assert.equal(expanded.length, 16);
 });
 
 test("an overwrite diffs against the old text and folds to three lines", () => {
@@ -346,8 +351,8 @@ test("an overwrite diffs against the old text and folds to three lines", () => {
   const ctx = context({ args: { path: "notes.txt", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
 
-  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[0], /overwrite · \+2 −1/);
-  const body = lines.slice(1, -1);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /overwrite · \+2 −1/);
+  const body = lines.slice(0, -1);
   assert.equal(body.length, 4, lines.join("\n"));
   assert.match(body[3].trim(), /^… \d+ more lines · click to expand$/);
 
@@ -364,9 +369,9 @@ test("an overwrite without old text shows the new lines and says only overwrite"
   const content = "one\ntwo\nthree\nfour\n";
   const ctx = context({ args: { path: "notes.txt", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
-  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[0], /overwrite\s/);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /overwrite\s/);
   assert.deepEqual(
-    lines.slice(1, -1).map((line) => line.trim()),
+    lines.slice(0, -1).map((line) => line.trim()),
     ["1 │ one", "2 │ two", "3 │ three", "… 1 more line · click to expand"],
   );
 });
@@ -374,7 +379,7 @@ test("an overwrite without old text shows the new lines and says only overwrite"
 test("a write without a record has only a line count", () => {
   const ctx = context({ args: { path: "notes.txt", content: "one\ntwo\n" }, toolCallId: "unknown" });
   assert.deepEqual(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx), []);
-  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[0], /2 lines/);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /2 lines/);
 });
 
 test("an unfinished write has no body", () => {
@@ -387,7 +392,7 @@ test("expanded grep draws a tree instead of Pi's own result output", () => {
   const ctx = context({ args: { pattern: "TODO" } });
   const lines = plain(resultLines("grep", text("a.ts:1: TODO"), { expanded: true, isPartial: false }, ctx));
   assert.deepEqual(
-    lines.slice(1, -1).map((line) => line.slice(3).trimEnd()),
+    lines.slice(0, -1).map((line) => line.slice(3).trimEnd()),
     ["└─ a.ts", "   └─ 1  TODO"],
   );
   assert.ok(!lines.some((line) => line.includes("BASE RESULT")), lines.join("\n"));
