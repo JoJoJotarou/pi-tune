@@ -6,11 +6,10 @@ import { type Component, ScrollView, type TUI } from "@earendil-works/pi-tui";
  *
  * - The fullscreen TUI exposes `viewportTop`, `scrollBy(lines)` and `hasActiveSelection()`; the TUI type does
  *   not declare them. A selection is copied as drawn on screen, overlays included.
- * - The root is mounted as [document, pending, status, widgetsAbove, editor, widgetsBelow, footer], and
- *   the document is [header, loadedResources, chat].
+ * - The root's first child is the document, and the document is [header, loadedResources, chat].
  * - The private `layoutRoot` has the primary `ScrollView` around the document among its children. The
  *   document renders at that view's content width, a column narrower than the terminal while the scrollbar
- *   is always shown.
+ *   is always shown, and the view's `viewportHeight` is the number of transcript rows on screen.
  * - User prompts are `UserMessageComponent` children of the chat; the prompt text is the private `text` field.
  *
  * Every shape is checked at runtime. A mismatch returns an `Error` so the caller can disable the feature.
@@ -25,8 +24,6 @@ export interface Prompt {
   row: number;
   text: string;
 }
-
-type WithChildren = Component & { children: Component[] };
 
 function isComponent(value: unknown): value is Component {
   return typeof value === "object" && value !== null && typeof (value as Component).render === "function";
@@ -48,12 +45,16 @@ export function asScrollable(tui: TUI): ScrollableTui | undefined {
     : undefined;
 }
 
-/** Content width of the transcript scroll view: the terminal width minus Pi's scrollbar column when it is shown. */
-export function transcriptWidth(tui: TUI): number | Error {
+function transcriptView(tui: TUI): ScrollView | Error {
   const layoutRoot = (tui as unknown as { layoutRoot?: unknown }).layoutRoot;
   const view = childrenOf(layoutRoot)?.find((child) => child instanceof ScrollView && child.primary);
-  if (!(view instanceof ScrollView)) return new Error("TUI layout has no transcript scroll view");
-  return view.getContentWidth(tui.terminal.columns);
+  return view instanceof ScrollView ? view : new Error("TUI layout has no transcript scroll view");
+}
+
+/** Content width of the transcript scroll view: the terminal width minus Pi's scrollbar column when it is shown. */
+export function transcriptWidth(tui: TUI): number | Error {
+  const view = transcriptView(tui);
+  return view instanceof Error ? view : view.getContentWidth(tui.terminal.columns);
 }
 
 export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } | Error {
@@ -83,11 +84,10 @@ export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } |
   return { prompts, total: row };
 }
 
-export function transcriptViewportHeight(tui: TUI, width: number): number {
-  const dock = (tui as unknown as WithChildren).children
-    .slice(1)
-    .reduce((sum, child) => sum + child.render(width).length, 0);
-  return Math.max(1, tui.terminal.rows - dock);
+/** Transcript rows on screen, as laid out for the frame being drawn. */
+export function transcriptViewportHeight(tui: TUI): number | Error {
+  const view = transcriptView(tui);
+  return view instanceof Error ? view : Math.max(1, view.viewportHeight);
 }
 
 export function jumpTo(tui: ScrollableTui, row: number): void {
