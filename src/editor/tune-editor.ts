@@ -171,8 +171,10 @@ export class TuneEditor extends CustomEditor {
     const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
     if (!this.framed || bottom < 0) return lines;
     const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
+    // The working status takes the border color, like the model label on the bottom border.
+    const status = topBorderLabel(plain[0] ?? "");
     return frameEditor(plain, width, this.borderColor, bottom, {
-      top: topBorderLabel(plain[0] ?? ""),
+      top: status === undefined ? undefined : this.borderColor(stripTerminalSequences(status)),
       left: this.leftLabel(),
       right: this.borderColor(`${this.model} · ${this.thinking}`),
     });

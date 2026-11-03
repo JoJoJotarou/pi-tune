@@ -84,6 +84,21 @@ test("the working status stays on the top border, inside the corners", () => {
   assert.ok(top.includes("⚙ Thinking  ls -la"), top);
 });
 
+test("the working status takes the border color, like the model label", () => {
+  const editor = makeEditor();
+  const magenta = (text: string) => `\x1b[35m${text}\x1b[39m`;
+  (editor as unknown as { borderColor: (text: string) => string }).borderColor = magenta;
+  type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
+  editor.setWorkingStatusIndicator({
+    renderInBorder: () => `${theme.fg("text", "Working")}  ${theme.fg("dim", "3.2s · esc to stop")}`,
+    renderSpinnerInBorder: () => "",
+    dispose() {},
+  } as unknown as Indicator);
+  const top = editor.render(60)[0] ?? "";
+  assert.ok(top.includes(magenta("Working  3.2s · esc to stop")), JSON.stringify(top));
+  assert.ok(!top.includes(theme.getFgAnsi("text")), "the status keeps none of its own colors");
+});
+
 test("autocomplete lines below the box are left unwrapped and never wider than the width", () => {
   const lines = ["──────", "text  ", "──────", "  a completion row that is far too long to fit"];
   const framed = frameEditor(lines, 20, (text) => text, 2, {});
