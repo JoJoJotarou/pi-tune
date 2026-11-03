@@ -81,7 +81,7 @@ test("asScrollable ignores a TUI without scrollBy", () => {
 });
 
 test("asScrollable accepts a fullscreen TUI", () => {
-  const tui = { viewportTop: 0, scrollBy: () => {} } as unknown as TUI;
+  const tui = { viewportTop: 0, scrollBy: () => {}, hasActiveSelection: () => false } as unknown as TUI;
 
   assert.equal(asScrollable(tui), tui);
 });
