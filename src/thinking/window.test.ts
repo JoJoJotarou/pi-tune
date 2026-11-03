@@ -24,7 +24,7 @@ function assertSingleLine(markdown: string, width: number, ansi = ANSI_TRUE): st
 
 test("short thinking fits and keeps the label", () => {
   const line = assertSingleLine("step one and two", 80);
-  assert.equal(line, "\x1b[23m◆ Think: \x1b[3mstep one and two");
+  assert.equal(line, "\x1b[23m◆ Thinking: \x1b[3mstep one and two");
 });
 
 test("overflow drops the head behind an ellipsis and keeps the tail", () => {
@@ -91,14 +91,14 @@ test("clipToTailIndex keeps the tail within budget", () => {
 
 test("no ANSI when disabled", () => {
   const line = buildThinkingWindow("hello", 80, visibleWidth, false);
-  assert.equal(line, "◆ Think: hello");
+  assert.equal(line, "◆ Thinking: hello");
   assert.ok(!line.includes("\x1b"));
 });
 
 test("narrow terminal keeps content and drops the label", () => {
   const long = Array.from({ length: 30 }, (_, i) => `w${i}`).join("");
   const line = assertSingleLine(long, 10);
-  assert.ok(!line.includes("Think: "));
+  assert.ok(!line.includes("Thinking: "));
   assert.ok(line.startsWith("…"));
   assert.ok(line.endsWith("w29"));
 });
@@ -131,8 +131,8 @@ const noopTheme = {
 };
 
 /** True rendering invariant for multi-line windows: markdown re-parse must not merge or widen rows. */
-function renderedRows(markdown: string, width: number, maxLines: number): string[] {
-  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines);
+function renderedRows(markdown: string, width: number, maxLines: number, head?: string): string[] {
+  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines, head);
   const md = new Markdown(output, 0, 0, noopTheme);
   return md
     .render(width)
@@ -140,8 +140,8 @@ function renderedRows(markdown: string, width: number, maxLines: number): string
     .filter((row) => row !== "");
 }
 
-function assertBoundedRows(markdown: string, width: number, maxLines: number): string[] {
-  const rows = renderedRows(markdown, width, maxLines);
+function assertBoundedRows(markdown: string, width: number, maxLines: number, head?: string): string[] {
+  const rows = renderedRows(markdown, width, maxLines, head);
   assert.ok(rows.length <= maxLines, `expected ≤ ${maxLines} rows, got ${rows.length}:\n${rows.join("\n")}`);
   for (const row of rows) {
     assert.ok(visibleWidth(row) <= width, `row width ${visibleWidth(row)} exceeds ${width}: ${row}`);
@@ -169,21 +169,35 @@ for (const width of [40, 80, 120]) {
   for (const source of [multiMarkdown(), multiCjk()]) {
     test(`multi-line window holds ≤4 rows at width ${width} (${source.slice(0, 6)}…)`, () => {
       const rows = assertBoundedRows(source, width, 4);
-      assert.ok(rows[0].includes("◆ Think:"), `label row expected:\n${rows.join("\n")}`);
+      assert.ok(rows[0].includes("◆ Thinking:"), `label row expected:\n${rows.join("\n")}`);
     });
   }
 }
 
-test("multi-line window shows the tail and the hidden count", () => {
+test("multi-line window marks a dropped head with a bare ellipsis", () => {
   const rows = assertBoundedRows(multiCjk(), 40, 4);
   assert.ok(rows[rows.length - 1].endsWith("。"), `newest text stays at the tail:\n${rows.join("\n")}`);
-  const head = rows[0];
-  assert.match(head, /\+\d+ lines/);
+  assert.match(rows[0], /◆ Thinking: …$/);
 });
 
-test("multi-line window without overflow shows every row and no count", () => {
+test("multi-line window without overflow shows every row and no ellipsis", () => {
   const rows = assertBoundedRows("short thought", 80, 4);
   assert.equal(rows.length, 2);
-  assert.ok(!rows[0].includes("+"));
+  assert.equal(rows[0], "◆ Thinking:");
+  assert.equal(rows[1], "short thought");
+});
+
+test("a settled summary head replaces the label row", () => {
+  const head = "◆ Thought for 4.0s (56 tokens)";
+  const rows = assertBoundedRows(multiCjk(), 80, 4, head);
+  assert.equal(rows[0], head);
+  assert.ok(rows.length <= 4);
+  assert.ok(rows[rows.length - 1].endsWith("。"));
+});
+
+test("a settled head keeps its own row even when the content fits", () => {
+  const head = "◆ Thought for 0.7s (28 tokens)";
+  const rows = assertBoundedRows("short thought", 80, 4, head);
+  assert.equal(rows[0], head);
   assert.equal(rows[1], "short thought");
 });

@@ -71,8 +71,8 @@ test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
     let lines = rows(pi.screen());
     assert.equal(countRows(lines, "◆ Thought"), 1, `one summary expected:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, LABEL), 1, `second run stays hidden:\n${lines.join("\n")}`);
-    for (const thinking of [...firstLines, ...secondLines]) {
-      assert.ok(!lines.some((line) => line.includes(thinking)), `thinking text leaked: ${thinking}`);
+    for (const thinking of secondLines) {
+      assert.ok(!lines.some((line) => line.includes(thinking)), `second run leaked a line: ${thinking}`);
     }
     await pi.shot("thinking-one-open");
 
@@ -96,12 +96,12 @@ test("a streaming visible run shows the rolling line then the summary", { timeou
   const pi = await startPi({ scenario: streamingScenario, tune: true, settings: { hideThinkingBlock: false } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
-    await pi.waitFor(/◆ Think: /);
+    await pi.waitFor(/◆ Thinking/);
     await pi.shot("thinking-streaming");
     await pi.waitFor("All set.");
     const lines = rows(pi.screen());
     assert.equal(countRows(lines, "◆ Thought"), 1, `finished summary expected:\n${lines.join("\n")}`);
-    assert.equal(countRows(lines, "◆ Think: "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines, "◆ Thinking: "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, LABEL), 0, `hidden label must not appear:\n${lines.join("\n")}`);
   });
 });

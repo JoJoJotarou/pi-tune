@@ -2,49 +2,27 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createThinkingTiming } from "./timing.ts";
 
-test("a finished block is looked up by its trimmed text", () => {
+test("a duration is looked up by its trimmed text", () => {
   const timing = createThinkingTiming();
-  timing.start(1_000);
-  timing.finish("  plan\nthe answer \n", 3_400);
+  timing.seed("  plan\nthe answer \n", 2_400);
   assert.equal(timing.durationFor("plan\nthe answer"), 2_400);
   assert.equal(timing.durationFor("  plan\nthe answer  "), 2_400);
   assert.equal(timing.durationFor("other"), undefined);
 });
 
-test("the start time is exposed while a block streams and cleared when it ends", () => {
+test("seed rejects empty text and non-finite or negative durations", () => {
   const timing = createThinkingTiming();
-  assert.equal(timing.startedAt(), undefined);
-  timing.start(5_000);
-  assert.equal(timing.startedAt(), 5_000);
-  timing.finish("done", 6_500);
-  assert.equal(timing.startedAt(), undefined);
-  assert.equal(timing.durationFor("done"), 1_500);
-});
-
-test("finishing without a start records nothing", () => {
-  const timing = createThinkingTiming();
-  timing.finish("orphan", 1_000);
-  assert.equal(timing.durationFor("orphan"), undefined);
-});
-
-test("reset clears the running start and all durations", () => {
-  const timing = createThinkingTiming();
-  timing.start(1_000);
-  timing.finish("first", 2_000);
-  timing.start(3_000);
-  timing.reset();
-  assert.equal(timing.startedAt(), undefined);
-  assert.equal(timing.durationFor("first"), undefined);
-});
-
-test("seed pre-fills a duration for blocks that will not stream again", () => {
-  const timing = createThinkingTiming();
-  timing.seed("old block", 5_500);
-  assert.equal(timing.durationFor("old block"), 5_500);
   timing.seed("", 1_000);
   timing.seed("negative", -1);
   timing.seed("nan", Number.NaN);
   assert.equal(timing.durationFor(""), undefined);
   assert.equal(timing.durationFor("negative"), undefined);
   assert.equal(timing.durationFor("nan"), undefined);
+});
+
+test("reset clears all durations", () => {
+  const timing = createThinkingTiming();
+  timing.seed("first", 1_000);
+  timing.reset();
+  assert.equal(timing.durationFor("first"), undefined);
 });

@@ -17,7 +17,7 @@
 
 export type WidthFn = (text: string) => number;
 
-const LABEL = "◆ Think: ";
+const LABEL = "◆ Thinking: ";
 const ELLIPSIS = "…";
 const ITALIC_OFF = "\x1b[23m";
 const ITALIC_ON = "\x1b[3m";
@@ -246,23 +246,6 @@ export function hookAwareWidth(text: string, widthOf: WidthFn): number {
   return widthOf(text) + scanMarkdownHooks(text).inserted;
 }
 
-function truncateTail(text: string, maxWidth: number, widthOf: WidthFn): string {
-  if (maxWidth <= 0) return "";
-  if (widthOf(text) <= maxWidth) return text;
-  let end = text.length;
-  while (end > 0 && widthOf(text.slice(0, end)) > maxWidth - widthOf(ELLIPSIS)) end -= prevCodePointLength(text, end);
-  return `${text.slice(0, end).replace(/\s+$/, "")}${ELLIPSIS}`;
-}
-
-function prevCodePointLength(text: string, end: number): number {
-  const low = text.charCodeAt(end - 1);
-  if (low >= 0xdc00 && low <= 0xdfff && end >= 2) {
-    const high = text.charCodeAt(end - 2);
-    if (high >= 0xd800 && high <= 0xdbff) return 2;
-  }
-  return 1;
-}
-
 /** Break text into rows of at most `budget` visible columns, never splitting a code point. */
 function wrapByWidth(text: string, budget: number, widthOf: WidthFn): string[] {
   const rows: string[] = [];
@@ -303,8 +286,9 @@ export function clipToTailIndex(text: string, maxWidth: number, widthOf: WidthFn
 /**
  * Compress a thinking block into a bounded stack of rows. With `maxLines = 1` this is a
  * single continuously rolling line (label inline, head dropped behind a `…`). With more
- * lines the label becomes its own row (`◆ Think: … +K lines` when truncated) followed by
- * the last `maxLines - 1` wrapped rows of the stream, so the newest text stays visible.
+ * lines the head becomes its own row (`◆ Thinking: …` when truncated, or a custom head
+ * such as the settled summary) followed by the last `maxLines - 1` wrapped rows of the
+ * stream, so the newest text stays visible.
  * `availableWidth` is the content width pi hands the transformer (padding already removed).
  */
 export function buildThinkingWindow(
@@ -313,6 +297,7 @@ export function buildThinkingWindow(
   widthOf: WidthFn,
   ansi = true,
   maxLines = 1,
+  head?: string,
 ): string {
   const body = markdown.replace(/\t/g, " ").trim();
   if (body === "") return markdown;
@@ -336,14 +321,13 @@ export function buildThinkingWindow(
     );
     const bodyRows = Math.max(1, maxLines - 1);
     const hidden = rows.length - bodyRows;
-    const showLabel = width >= labelWidth;
-    const label = italicOff + LABEL + italicOn;
-    if (hidden > 0) {
-      const headText = showLabel ? `${LABEL}… +${hidden} lines` : `… +${hidden} lines`;
-      const head = italicOff + truncateTail(headText, budget, widthOf) + italicOn;
-      return [head, ...rows.slice(-bodyRows)].join("\n");
-    }
-    return showLabel ? [label, ...rows].join("\n") : rows.join("\n");
+    const headText = head ?? LABEL;
+    if (width < widthOf(headText)) return [ELLIPSIS, ...rows.slice(-bodyRows)].join("\n");
+    // The bare ellipsis signals a dropped head only for the rolling label; a settled
+    // summary head already says what the rows below are.
+    const headRow =
+      italicOff + (hidden > 0 && head === undefined ? `${headText.trimEnd()} ${ELLIPSIS}` : headText) + italicOn;
+    return [headRow, ...rows.slice(-bodyRows)].join("\n");
   }
 
   const useLabel = width >= minLabeledWidth;
