@@ -98,7 +98,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`pi-tune timeline disabled: ${timelineDisabledReason}`, "warning");
         return;
       }
-      const transcript = collectPrompts(tui, tui.terminal.columns);
+      const transcript = collectPrompts(tui);
       if (transcript instanceof Error) {
         timelineDisabledReason = transcript.message;
         ctx.ui.notify(`pi-tune timeline disabled: ${transcript.message}`, "warning");

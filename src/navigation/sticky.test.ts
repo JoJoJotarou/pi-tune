@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
-import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, ScrollView, stripTerminalSequences, VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { StickyBar, stickyPrompt, stickyRows } from "./sticky.ts";
 
@@ -19,6 +19,7 @@ function stickyTui(columns: number, questions = ["first question"]) {
   };
   return {
     children: [document],
+    layoutRoot: new VStack([new ScrollView(document as never, { primary: true })]),
     terminal: { columns, rows: 30 },
     viewportTop: 5,
     scrollBy: () => {},

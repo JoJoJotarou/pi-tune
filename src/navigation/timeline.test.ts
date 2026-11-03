@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { initTheme, UserMessageComponent } from "@earendil-works/pi-coding-agent";
 import type { Component, TuiMouseEvent } from "@earendil-works/pi-tui";
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { ScrollView, stripTerminalSequences, VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { collectPrompts } from "../internals/transcript.ts";
 import {
@@ -191,6 +191,7 @@ function fakeTui(children: Component[] = [], viewportTop = 0) {
   };
   const tui = {
     children: [document],
+    layoutRoot: new VStack([new ScrollView(document as never, { primary: true })]),
     terminal: { columns: 80, rows: 30 },
     viewportTop,
     scrollTop: viewportTop,
@@ -266,7 +267,7 @@ test("a click on a tick jumps to that prompt", () => {
   const tickRow = rows.findIndex((row) => plain(row) === " ─");
 
   rail.handleMouse(mouse({ y: tickRow }));
-  const prompts = collectPrompts(tui as never, 80);
+  const prompts = collectPrompts(tui as never);
   assert.ok(!(prompts instanceof Error));
   assert.equal(tui.scrollTop, prompts.prompts[1].row);
 });
