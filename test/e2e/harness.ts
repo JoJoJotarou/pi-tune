@@ -37,7 +37,7 @@ export interface PiSession {
   press(key: string): void;
   paste(text: string): void;
   click(col: number, row: number, count?: number): void;
-  clickText(text: string, nth?: number): void;
+  clickText(text: string, nth?: number, count?: number): void;
   /** Move the pointer (SGR motion, no button) so an overlay's hover state updates. */
   move(col: number, row: number): void;
   wheel(col: number, row: number, direction?: "up" | "down"): void;
@@ -245,7 +245,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     wheel(col, row, direction = "down") {
       pty.write(`\x1b[<${direction === "up" ? 64 : 65};${col + 1};${row + 1}M`);
     },
-    clickText(text, nth = 1) {
+    clickText(text, nth = 1, count = 1) {
       let seen = 0;
       const current = term.buffer.active;
       for (let y = 0; y < rows; y++) {
@@ -257,7 +257,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
           seen++;
           if (seen === nth) {
             const col = columnOf(y, offset);
-            session.click(col, y);
+            session.click(col, y, count);
             return;
           }
           from = offset + 1;
