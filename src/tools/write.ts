@@ -81,7 +81,7 @@ export function renderWriteLines(
   const rows: string[] = [];
   for (let index = 0; index < shown; index++) {
     const number = String(index + 1).padStart(numberWidth);
-    const row = `${theme.fg("dim", `${number} │ `)}${styled?.[index] ?? lines[index]}`;
+    const row = `${theme.fg("toolDiffAdded", number)}${theme.fg("dim", " │ ")}${styled?.[index] ?? lines[index]}`;
     rows.push(truncateToWidth(row, width, "…"));
   }
   if (total > shown) rows.push(truncateToWidth(truncationLine(total - shown, theme), width, "…"));

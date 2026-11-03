@@ -68,6 +68,18 @@ test("meta and duration are right-aligned at the right edge", () => {
   assert.ok(!durationOnly.includes("·"));
 });
 
+test("diff counts in the right part take the added and removed colors", () => {
+  const line = renderHeader({ status: "success", name: "edit", summary: "src/a.ts", meta: "+16 −12" }, 80);
+
+  assert.ok(line.includes(theme.fg("toolDiffAdded", "+16")), line);
+  assert.ok(line.includes(theme.fg("toolDiffRemoved", "−12")), line);
+
+  const write = renderHeader({ status: "success", name: "write", summary: "README.md", meta: "overwrite · +2 −1" }, 80);
+  assert.ok(write.includes(theme.fg("toolDiffAdded", "+2")), write);
+  assert.ok(write.includes(theme.fg("toolDiffRemoved", "−1")), write);
+  assert.ok(write.includes(theme.fg("dim", "overwrite · ")), write);
+});
+
 test("the right part is dimmed", () => {
   const raw = renderHeader({ status: "success", name: "bash", summary: "seq", meta: "exit 1", durationMs: 1240 }, 80);
   assert.ok(raw.includes(theme.getFgAnsi("dim")));

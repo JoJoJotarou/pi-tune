@@ -1,9 +1,10 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { highlightCode, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   backgroundAnsi,
   type Color,
   foregroundAnsi,
   mixColors,
+  sliceByColumn,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -94,8 +95,9 @@ function wordSpans(rows: DiffRow[]): Map<number, [number, number]> {
 interface Palette {
   rowBg: Record<"added" | "removed", string>;
   wordBg: Record<"added" | "removed", string>;
-  fg: Record<RowKind | "number", string>;
-  marker: Record<"added" | "removed", string>;
+  fg: Record<RowKind, string>;
+  /** Number and marker: the change color on added and removed rows, dim on context. */
+  gutter: Record<RowKind, string>;
 }
 
 /**
@@ -118,9 +120,12 @@ function palette(theme: Theme): Palette {
       context: theme.getFgAnsi("toolDiffContext"),
       added: foregroundAnsi(colors.text, mode),
       removed: foregroundAnsi(colors.text, mode),
-      number: theme.getFgAnsi("dim"),
     },
-    marker: { added: theme.getFgAnsi("toolDiffAdded"), removed: theme.getFgAnsi("toolDiffRemoved") },
+    gutter: {
+      context: theme.getFgAnsi("dim"),
+      added: theme.getFgAnsi("toolDiffAdded"),
+      removed: theme.getFgAnsi("toolDiffRemoved"),
+    },
   };
 }
 
@@ -152,13 +157,64 @@ export interface DiffRenderOptions {
   wrap: boolean;
 }
 
+export interface PreparedDiff {
+  rows: DiffRow[];
+  /** The changed middle of each removed/added pair, in plain-text offsets. */
+  spans: Map<number, [number, number]>;
+  /** Each row's text with syntax colors, `undefined` where there is no language or highlighting failed. */
+  highlighted: (string | undefined)[];
+}
+
+/**
+ * Syntax colors for each row's text. A diff interleaves two files, so the code is highlighted once per side — context
+ * and removed rows against the old file, context and added rows against the new one — and a context row keeps the new
+ * side's colors. Highlighting row by row would restart on every line and break block comments and template strings.
+ */
+function highlightSides(rows: DiffRow[], language: string | undefined): (string | undefined)[] {
+  const highlighted: (string | undefined)[] = rows.map(() => undefined);
+  if (language === undefined) return highlighted;
+
+  const highlightSide = (indexes: number[]) => {
+    const lines = highlightCode(indexes.map((index) => rows[index].text).join("\n"), language);
+    // A language the highlighter cannot split one line per row is left plain rather than colored out of step.
+    if (lines.length !== indexes.length) return;
+    indexes.forEach((index, line) => {
+      highlighted[index] = lines[line];
+    });
+  };
+
+  highlightSide(rows.flatMap((row, index) => (row.kind === "added" || row.kind === "gap" ? [] : [index])));
+  highlightSide(rows.flatMap((row, index) => (row.kind === "removed" || row.kind === "gap" ? [] : [index])));
+  return highlighted;
+}
+
+/** A diff's rows, word spans and highlighted code, ready to be rendered at any width. */
+export function prepareDiff(diffText: string, language: string | undefined): PreparedDiff {
+  const rows = parse(diffText);
+  return { rows, spans: wordSpans(rows), highlighted: highlightSides(rows, language) };
+}
+
+/** The changed words of a row, tinted stronger on top of the already highlighted text. */
+function tintSpan(text: string, plain: string, span: [number, number], resetTo: string, bg: string): string {
+  const start = visibleWidth(plain.slice(0, span[0]));
+  const end = visibleWidth(plain.slice(0, span[1]));
+  const width = visibleWidth(plain);
+  return [
+    sliceByColumn(text, 0, start),
+    bg,
+    sliceByColumn(text, start, Math.max(0, end - start)),
+    resetTo,
+    sliceByColumn(text, end, Math.max(0, width - end)),
+  ].join("");
+}
+
 /**
  * Pi's diff text as one row per line: line number, marker, text. Added and removed rows are tinted across the
- * whole width and the changed words of a removed/added pair are tinted stronger.
+ * whole width, their numbers and markers take the change color, and the changed words of a removed/added pair are
+ * tinted stronger.
  */
-export function renderDiffRows(diffText: string, width: number, theme: Theme, options: DiffRenderOptions): string[] {
-  const rows = parse(diffText);
-  const spans = wordSpans(rows);
+export function renderDiffRows(diff: PreparedDiff, width: number, theme: Theme, options: DiffRenderOptions): string[] {
+  const { rows, spans, highlighted } = diff;
   const colors = palette(theme);
   const numberWidth = Math.max(1, ...rows.map((row) => row.number.length));
   const gutter = numberWidth + 3;
@@ -172,17 +228,15 @@ export function renderDiffRows(diffText: string, width: number, theme: Theme, op
     const changed = kind === "added" || kind === "removed" ? kind : undefined;
     const rowBg = changed ? colors.rowBg[changed] : "";
     const span = spans.get(index);
-    const text =
-      span && changed
-        ? `${row.text.slice(0, span[0])}${colors.wordBg[changed]}${row.text.slice(span[0], span[1])}${rowBg}${row.text.slice(span[1])}`
-        : row.text;
-    const styled = `${rowBg}${colors.fg[kind]}${text}`;
+    const text = highlighted[index] ?? row.text;
+    const tinted = span && changed ? tintSpan(text, row.text, span, rowBg, colors.wordBg[changed]) : text;
+    const styled = `${rowBg}${colors.fg[kind]}${tinted}`;
     const lines = options.wrap ? wrapTextWithAnsi(styled, textWidth) : [truncateToWidth(styled, textWidth, "…")];
-    const marker = changed ? `${colors.marker[changed]}${changed === "added" ? "+" : "-"}` : " ";
+    const marker = changed ? `${colors.gutter[changed]}${changed === "added" ? "+" : "-"}` : " ";
 
     return lines.map((line, part) => {
       const number = part === 0 ? row.number.padStart(numberWidth) : " ".repeat(numberWidth);
-      const head = `${rowBg}${colors.fg.number}${number} ${part === 0 ? marker : " "} `;
+      const head = `${rowBg}${colors.gutter[kind]}${number} ${part === 0 ? marker : " "} `;
       const fill = " ".repeat(Math.max(0, textWidth - visibleWidth(line)));
       return `${head}${rowBg}${colors.fg[kind]}${line}${rowBg}${fill}${RESET}`;
     });

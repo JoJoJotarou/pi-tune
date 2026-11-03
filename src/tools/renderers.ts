@@ -10,6 +10,7 @@ import type {
   ThemeColor,
   ToolRendererResolver,
 } from "@earendil-works/pi-coding-agent";
+import { getLanguageFromPath } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
 import { diffMeta, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
@@ -22,7 +23,7 @@ import {
   scriptOutput,
   scriptToolNames,
 } from "./codemode.ts";
-import { previewLines, renderDiffRows } from "./diff.ts";
+import { prepareDiff, previewLines, renderDiffRows } from "./diff.ts";
 import { renderHeader, statusBackground, toolStatus } from "./header.ts";
 import { railCoveredColumns } from "./rail.ts";
 import { readMeta, skillLabel } from "./read.ts";
@@ -305,16 +306,20 @@ function errorSource(output: string, theme: Theme): LineSource {
   };
 }
 
-/** The diff with tinted rows; collapsed, the preview starts at the first change so it shows what changed. */
-function diffSource(diffText: string, expanded: boolean, theme: Theme): LineSource {
+/**
+ * The diff with tinted rows and highlighted code; collapsed, the preview starts at the first change so it shows what
+ * changed. The code is highlighted once here, not on every redraw.
+ */
+function diffSource(diffText: string, path: string, expanded: boolean, theme: Theme): LineSource {
   const options = { wrap: expanded };
   const lines = diffText.split("\n");
-  if (expanded || lines.length <= PREVIEW_LINES) return (width) => renderDiffRows(diffText, width, theme, options);
-  const preview = previewLines(diffText, PREVIEW_LINES).join("\n");
-  return (width) => [
-    ...renderDiffRows(preview, width, theme, options),
-    truncationLine(lines.length - PREVIEW_LINES, theme),
-  ];
+  const folded = !expanded && lines.length > PREVIEW_LINES;
+  const shown = folded ? previewLines(diffText, PREVIEW_LINES).join("\n") : diffText;
+  const prepared = prepareDiff(shown, getLanguageFromPath(path));
+  return (width) => {
+    const rows = renderDiffRows(prepared, width, theme, options);
+    return folded ? [...rows, truncationLine(lines.length - PREVIEW_LINES, theme)] : rows;
+  };
 }
 
 export const toolRenderers: ToolRendererResolver = (toolName, next) => {
@@ -366,7 +371,7 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         }
         const diff = details.diff;
         context.state.meta = diffMeta(diff);
-        const lines = diffSource(diff, expanded, theme);
+        const lines = diffSource(diff, stringArg(textArgs(context.args), "path") ?? "", expanded, theme);
         return new BodyBoxComponent(
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),
           theme,
@@ -386,7 +391,7 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
 
         const lines: LineSource =
           plan.body === "diff" && plan.diff !== undefined
-            ? diffSource(plan.diff, expanded, theme)
+            ? diffSource(plan.diff, path, expanded, theme)
             : (width) => renderWriteLines(path, content, expanded, width, theme);
         return new BodyBoxComponent(
           (width) => (toolStatus(context) === "error" ? errorSource(output, theme)(width) : lines(width)),

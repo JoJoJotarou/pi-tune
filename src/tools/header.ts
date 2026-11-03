@@ -53,9 +53,20 @@ const ICONS: Record<ToolStatus, { icon: string; color: "warning" | "success" | "
 /** Narrowest summary still worth keeping beside the right part, in columns. Baseline of `cutSummary`. */
 const MIN_SUMMARY = 8;
 
-/** The meta and duration column: always dim, whatever the summary beside it uses. */
+/**
+ * The meta and duration column: dim, except the diff counts, which take the added and removed colors so `+16 −12`
+ * reads at a glance.
+ */
 function paintRight(right: string, theme: Theme): string {
-  return theme.fg("dim", right);
+  return right
+    .split(/([+−]\d+)/)
+    .filter((part) => part !== "")
+    .map((part) => {
+      if (part.startsWith("+")) return theme.fg("toolDiffAdded", part);
+      if (part.startsWith("−")) return theme.fg("toolDiffRemoved", part);
+      return theme.fg("dim", part);
+    })
+    .join("");
 }
 
 /** One line while collapsed; the summary wrapped over as many lines as it needs when expanded. */
