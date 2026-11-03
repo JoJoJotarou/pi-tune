@@ -44,7 +44,13 @@ function startPi({ tune, sessionArgs, scenario }) {
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(
     join(agentDir, "settings.json"),
-    JSON.stringify({ theme: "dark", tuiMode: "fullscreen", fullscreenScrollbar: "always", quietStartup: "header" }),
+    JSON.stringify({
+      theme: "dark",
+      tuiMode: "fullscreen",
+      fullscreenScrollbar: "always",
+      quietStartup: "header",
+      hideThinkingBlock: false,
+    }),
   );
   const scenarioPath = join(agentDir, "scenario.json");
   writeFileSync(scenarioPath, JSON.stringify(scenario ?? { turns: [] }));
