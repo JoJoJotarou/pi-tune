@@ -73,7 +73,7 @@ export class StickyBar implements Component {
 
   private current(): StickyFrame | undefined {
     const columns = this.tui.terminal.columns;
-    const transcript = collectPrompts(this.tui, columns);
+    const transcript = collectPrompts(this.tui);
     if (transcript instanceof Error) {
       if (!this.disabled) {
         this.disabled = true;

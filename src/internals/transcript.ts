@@ -1,5 +1,5 @@
 import { UserMessageComponent } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import { type Component, ScrollView, type TUI } from "@earendil-works/pi-tui";
 
 /**
  * Pi internals this module relies on, verified against Pi 1.4.0:
@@ -7,6 +7,9 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
  * - The fullscreen TUI exposes `viewportTop` and `scrollBy(lines)`; the TUI type does not declare them.
  * - The root is mounted as [document, pending, status, widgetsAbove, editor, widgetsBelow, footer], and
  *   the document is [header, loadedResources, chat].
+ * - The private `layoutRoot` has the primary `ScrollView` around the document among its children. The
+ *   document renders at that view's content width, a column narrower than the terminal while the scrollbar
+ *   is always shown.
  * - User prompts are `UserMessageComponent` children of the chat; the prompt text is the private `text` field.
  *
  * Every shape is checked at runtime. A mismatch returns an `Error` so the caller can disable the feature.
@@ -38,7 +41,16 @@ export function asScrollable(tui: TUI): ScrollableTui | undefined {
     : undefined;
 }
 
-export function collectPrompts(tui: TUI, width: number): { prompts: Prompt[]; total: number } | Error {
+function transcriptWidth(tui: TUI): number | Error {
+  const layoutRoot = (tui as unknown as { layoutRoot?: unknown }).layoutRoot;
+  const view = childrenOf(layoutRoot)?.find((child) => child instanceof ScrollView && child.primary);
+  if (!(view instanceof ScrollView)) return new Error("TUI layout has no transcript scroll view");
+  return view.getContentWidth(tui.terminal.columns);
+}
+
+export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } | Error {
+  const width = transcriptWidth(tui);
+  if (width instanceof Error) return width;
   const root = childrenOf(tui);
   if (!root) return new Error("TUI root has no component children");
   const document = childrenOf(root[0]);

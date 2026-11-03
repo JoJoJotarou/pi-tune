@@ -259,7 +259,7 @@ export class TimelineRail implements Component {
 
   private layout(): Layout | undefined {
     const columns = this.tui.terminal.columns;
-    const transcript = collectPrompts(this.tui, columns);
+    const transcript = collectPrompts(this.tui);
     if (transcript instanceof Error) {
       this.disable(transcript);
       return undefined;
