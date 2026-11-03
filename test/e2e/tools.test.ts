@@ -11,7 +11,7 @@ const reference: Scenario = {
   turns: [
     [
       { thinking: "Print the lines and read the README." },
-      { tool: "bash", args: { command: "sleep 1; seq 1 40" } },
+      { tool: "bash", args: { command: "seq 1 40" } },
       { tool: "read", args: { path: "README.md" } },
     ],
     [{ text: "Done: printed 40 lines and read the README." }],
@@ -101,7 +101,7 @@ test("one-line tool calls hide output until expanded", { timeout: 180_000 }, asy
     await pi.waitFor("Done:");
     const lines = rows(pi.screen());
 
-    const bash = /^✓ bash sleep 1; seq 1 40/;
+    const bash = /^✓ bash seq 1 40/;
     const read = /^✓ read README\.md/;
     assert.equal(countRows(lines, bash), 1, lines.join("\n"));
     assert.equal(countRows(lines, read), 1, lines.join("\n"));

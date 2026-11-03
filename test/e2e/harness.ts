@@ -320,10 +320,31 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
   try {
     // The footer names the model once Pi is ready; it omits "(faux)" when faux is the only provider.
     await waitFor("scripted", 30_000);
-    await sleep(1500);
+    await waitForStableScreen();
   } catch (error) {
     await session.close();
     throw error;
   }
   return session;
+
+  /** Startup keeps painting after the footer names the model; wait until three polls in a row agree. */
+  async function waitForStableScreen(intervalMs = 100, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    let previous = await settledScreen();
+    let stable = 1;
+    while (stable < 3) {
+      await sleep(intervalMs);
+      const current = await settledScreen();
+      if (exited) throw new Error("Pi exited before the startup screen settled");
+      if (Date.now() >= deadline) {
+        throw new Error(`startup screen never settled:\n${current.join("\n")}`);
+      }
+      stable = sameRows(previous, current) ? stable + 1 : 1;
+      previous = current;
+    }
+  }
+
+  function sameRows(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((row, index) => row === b[index]);
+  }
 }

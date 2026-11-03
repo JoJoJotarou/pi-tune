@@ -35,10 +35,12 @@ test("survives /new and still scrolls", { timeout: 240_000 }, async () => {
     await pi.waitFor("first answer line 40");
 
     pi.type("/new\r");
-    await sleep(1500);
+    // The cleared transcript proves /new ran; no fixed settle delay.
+    await pi.waitForGone("first answer line 40");
 
     pi.type("second question\r");
-    await sleep(3000);
+    // /new resets the faux provider, so the reply streams the first turn again.
+    await pi.waitFor("first answer line 40");
 
     for (let i = 0; i < 4; i++) {
       pi.press("pageup");

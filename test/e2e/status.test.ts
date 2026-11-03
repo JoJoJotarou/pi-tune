@@ -5,7 +5,7 @@ import { type Scenario, startPi } from "./harness.ts";
 function toolScenario(): Scenario {
   return {
     files: { "README.md": "# demo\n" },
-    turns: [[{ tool: "bash", args: { command: "sleep 3" } }], [{ text: "finished" }]],
+    turns: [[{ tool: "bash", args: { command: "sleep 1" } }], [{ text: "finished" }]],
   };
 }
 
@@ -13,14 +13,14 @@ test("working line names the running bash tool", { timeout: 180_000 }, async () 
   const pi = await startPi({ scenario: toolScenario() });
   try {
     pi.type("run it\r");
-    await pi.waitFor(/bash sleep 3.*to stop/);
+    await pi.waitFor(/bash sleep 1.*to stop/);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     // The status is embedded in the editor's top border, not drawn as an extra row.
     assert.match(statusRow.trim(), /^╭─ \S.*to stop.* ─+╮$/);
-    await new Promise((done) => setTimeout(done, 1500));
+    await new Promise((done) => setTimeout(done, 500));
     await pi.shot("status-tools");
     const screen = pi.screen().join("\n");
-    assert.ok(screen.includes("bash sleep 3"), screen);
+    assert.ok(screen.includes("bash sleep 1"), screen);
     assert.ok(screen.includes("to stop"), screen);
   } finally {
     await pi.close();
@@ -49,7 +49,7 @@ test("working line shows Responding without the token rate", { timeout: 180_000 
     scenario: {
       files: { "README.md": "# demo\n" },
       tokensPerSecond: 30,
-      turns: [[{ text: "word ".repeat(200) }]],
+      turns: [[{ text: "word ".repeat(80) }]],
     },
   });
   try {
