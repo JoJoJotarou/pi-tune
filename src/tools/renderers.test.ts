@@ -241,6 +241,20 @@ test("expanded results are Pi's own output in a painted body, indented under the
   assertFits(lines, 40);
 });
 
+test("an expanded body keeps two columns free on the right, like the left indent", () => {
+  const diff = `-1 ${"x".repeat(120)}\n+1 ${"y".repeat(120)}`;
+  const result: AgentToolResult<unknown> = { content: [{ type: "text", text: "ok" }], details: { diff } };
+  const ctx = context({ args: { path: "src/a.ts" } });
+  const rows = plain(resultLines("edit", result, { expanded: true, isPartial: false }, ctx, 60));
+
+  assert.ok(rows.length > 3, rows.join("\n"));
+  for (const row of rows.slice(1, -1)) {
+    assert.equal(visibleWidth(row), 60, JSON.stringify(row));
+    assert.ok(row.endsWith("  "), `no right inset: ${JSON.stringify(row)}`);
+    assert.ok(row.startsWith("  "), `no left inset: ${JSON.stringify(row)}`);
+  }
+});
+
 test("an expanded bash call draws the whole command in its header, wrapped, and no $ line", () => {
   const command = `echo ${"x".repeat(150)}`;
   const ctx = context({ args: { command }, expanded: true });

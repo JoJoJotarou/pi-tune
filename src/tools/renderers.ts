@@ -31,7 +31,10 @@ import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls", "codemode"]);
 
-/** Body lines start under the tool name: the header is indented by `outputPad`, the body by two more. */
+/**
+ * The body starts under the tool name and keeps the same width free on the right: the header is indented by
+ * `outputPad`, the body by two more on both sides.
+ */
 const BODY_INDENT = 2;
 /** Output lines shown for a failed call while it is collapsed. */
 const FAILURE_LINES = 3;
@@ -201,7 +204,7 @@ class HeaderComponent implements Component {
 }
 
 /**
- * Body lines indented under the tool name and cut to the width the box gives them, plus the painted blank row
+ * Body lines indented under the tool name, the same two columns kept free on the right, plus the painted blank row
  * that closes the block. The header already brings the blank row above the body.
  */
 class BodyComponent implements Component {
@@ -213,9 +216,13 @@ class BodyComponent implements Component {
 
   render(width: number): string[] {
     const indent = " ".repeat(BODY_INDENT);
-    const lines = this.source(Math.max(1, width - BODY_INDENT));
+    const contentWidth = Math.max(1, width - 2 * BODY_INDENT);
+    const lines = this.source(contentWidth);
     if (lines.length === 0) return [];
-    return [...lines.map((line) => truncateToWidth(`${indent}${line}`, width, "…")), indent];
+    return [
+      ...lines.map((line) => `${truncateToWidth(`${indent}${line}`, contentWidth + BODY_INDENT, "…")}${indent}`),
+      indent,
+    ];
   }
 
   invalidate(): void {}
