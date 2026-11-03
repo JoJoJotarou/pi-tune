@@ -324,8 +324,9 @@ test("edit results show the diff and fold large changes", { timeout: 240_000 }, 
     await pi.shot("tools-edit");
 
     pi.press("ctrl+o");
-    await pi.waitFor(/11 - const value11 = 11;/);
-    await pi.waitFor(/11 \+ const value11 = 110;/);
+    // The collapsed preview already pairs line 11; the last added line shows only once expanded.
+    await pi.waitFor(/20 \+ const value20 = 200;/);
+    await pi.waitForGone("click to expand");
     assert.ok(!pi.screen().join("\n").includes("click to expand"));
     await pi.shot("tools-expanded-diff");
   });
