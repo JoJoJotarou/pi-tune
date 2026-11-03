@@ -68,29 +68,22 @@ test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
 
     pi.clickText(LABEL, 1);
     await pi.waitFor(/◆ Thought for \d/);
-    await pi.waitFor(firstLines[0]);
     let lines = rows(pi.screen());
+    assert.equal(countRows(lines, "◆ Thought"), 1, `one summary expected:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, LABEL), 1, `second run stays hidden:\n${lines.join("\n")}`);
-    for (const thinking of firstLines) {
-      assert.ok(
-        lines.some((line) => line.includes(thinking)),
-        `open run hides a line: ${thinking}`,
-      );
-    }
     for (const thinking of secondLines) {
       assert.ok(!lines.some((line) => line.includes(thinking)), `second run leaked a line: ${thinking}`);
     }
     await pi.shot("thinking-one-open");
 
     pi.press("ctrl+t");
-    await pi.waitFor(secondLines[0]);
+    await pi.waitForGone(LABEL);
     lines = rows(pi.screen());
     assert.equal(countRows(lines, LABEL), 0, `ctrl+t shows both runs:\n${lines.join("\n")}`);
     assert.ok(countRows(lines, "◆ Thought") === 2, `both headers expected:\n${lines.join("\n")}`);
 
     pi.press("ctrl+t");
     await pi.waitFor(LABEL);
-    await pi.waitForGone(secondLines[0]);
     assertHidden(rows(pi.screen()), "after ctrl+t twice");
 
     pi.press("ctrl+o");
@@ -99,16 +92,16 @@ test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
   });
 });
 
-test("a streaming visible run shows its header", { timeout: 180_000 }, async () => {
+test("a streaming visible run shows the rolling line then the summary", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: streamingScenario, tune: true, settings: { hideThinkingBlock: false } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
-    await pi.waitFor(/◆ Thinking \d+\.\d+s/);
-    await pi.waitFor("Check the surrounding code.");
+    await pi.waitFor(/◆ Thinking/);
     await pi.shot("thinking-streaming");
     await pi.waitFor("All set.");
     const lines = rows(pi.screen());
-    assert.equal(countRows(lines, "◆ Thought"), 1, `finished header expected:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines, "◆ Thought"), 1, `finished summary expected:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines, "◆ Thinking: "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, LABEL), 0, `hidden label must not appear:\n${lines.join("\n")}`);
   });
 });
