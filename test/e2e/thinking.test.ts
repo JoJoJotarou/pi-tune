@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
-const LABEL = "◆ Thinking · click to expand · ctrl+t all";
+const LABEL = "◆ Thinking · click to expand";
 
 const firstLines = [
   "Read the first request carefully.",
@@ -41,6 +41,7 @@ function countRows(lines: string[], text: string): number {
 
 function assertHidden(lines: string[], why: string): void {
   assert.equal(countRows(lines, LABEL), 2, `both labels expected (${why}):\n${lines.join("\n")}`);
+  assert.equal(countRows(lines, "ctrl+t"), 0, `the label carries no key hint (${why}):\n${lines.join("\n")}`);
   for (const thinking of [...firstLines, ...secondLines]) {
     assert.ok(!lines.some((line) => line.includes(thinking)), `thinking line is visible (${why}): ${thinking}`);
   }
@@ -66,7 +67,7 @@ test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
     await pi.shot("thinking-hidden");
 
     pi.clickText(LABEL, 1);
-    await pi.waitFor(/◆ Thought .* · 4 lines/);
+    await pi.waitFor(/◆ Thought for \d/);
     await pi.waitFor(firstLines[0]);
     let lines = rows(pi.screen());
     assert.equal(countRows(lines, LABEL), 1, `second run stays hidden:\n${lines.join("\n")}`);

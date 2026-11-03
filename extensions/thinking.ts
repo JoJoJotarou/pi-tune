@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { keyText } from "@earendil-works/pi-coding-agent";
 import { thinkingHeader } from "../src/thinking/header.ts";
 import { createThinkingTiming } from "../src/thinking/timing.ts";
 
@@ -9,7 +8,7 @@ export default (pi: ExtensionAPI) => {
   pi.on("session_start", (_event, ctx) => {
     timing.reset();
     if (ctx.mode !== "tui") return;
-    ctx.ui.setHiddenThinkingLabel(`◆ Thinking · click to expand · ${keyText("app.thinking.toggle")} all`);
+    ctx.ui.setHiddenThinkingLabel("◆ Thinking · click to expand");
   });
 
   pi.on("message_update", (event) => {

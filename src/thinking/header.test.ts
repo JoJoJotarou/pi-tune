@@ -4,11 +4,11 @@ import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { Markdown, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { thinkingHeader } from "./header.ts";
 
-test("a finished block reports duration and line count above the full text", () => {
+test("a finished block reports its duration above the full text", () => {
   const markdown = "one\ntwo\n\nthree\nfour\nfive\nsix";
   assert.equal(
     thinkingHeader(markdown, { isStreaming: false, durationMs: 3_200 }),
-    "◆ Thought 3.2s · 6 lines\n\none\ntwo\n\nthree\nfour\nfive\nsix",
+    "◆ Thought for 3.2s\n\none\ntwo\n\nthree\nfour\nfive\nsix",
   );
 });
 
@@ -19,12 +19,8 @@ test("a streaming block reports the elapsed time", () => {
   );
 });
 
-test("a single line is singular", () => {
-  assert.equal(thinkingHeader("one", { isStreaming: false, durationMs: 900 }), "◆ Thought 0.9s · 1 line\n\none");
-});
-
 test("an unknown duration is omitted", () => {
-  assert.equal(thinkingHeader("one\ntwo", { isStreaming: false }), "◆ Thought · 2 lines\n\none\ntwo");
+  assert.equal(thinkingHeader("one\ntwo", { isStreaming: false }), "◆ Thought\n\none\ntwo");
   assert.equal(thinkingHeader("one", { isStreaming: true }), "◆ Thinking\n\none");
 });
 
@@ -42,7 +38,7 @@ test("the rendered block shows the header above every thinking line", () => {
   const text = new Markdown(header, 0, 0, getMarkdownTheme())
     .render(40)
     .map((row) => stripTerminalSequences(row).trim());
-  assert.equal(text[0], "◆ Thought 2.4s · 3 lines");
+  assert.equal(text[0], "◆ Thought for 2.4s");
   for (const line of ["first thought", "second thought", "third thought"]) {
     assert.ok(text.includes(line), text.join("\n"));
   }
