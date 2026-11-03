@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { highlightCode, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { changedSpan, prepareDiff, previewLines, renderDiffRows } from "./diff.ts";
@@ -73,22 +73,25 @@ test("line numbers and markers take the change color, context numbers stay dim",
 });
 
 test("both sides are highlighted, and a context row keeps the new side's colors", () => {
-  const diff = ["  1 const a = 1;", "- 2 // old note", "+ 2 // new note", "  3 const b = 2;"].join("\n");
+  const diff = ["  1 const a = 1;", "- 2 // gone", "  3 mid", '+ 4 "added"'].join("\n");
   const rows = rendered(diff, 60, options, "typescript");
 
-  assert.ok(rows[0].includes(theme.getFgAnsi("syntaxKeyword")), JSON.stringify(rows[0]));
-  assert.ok(rows[1].includes(theme.getFgAnsi("syntaxComment")), JSON.stringify(rows[1]));
-  assert.ok(rows[2].includes(theme.getFgAnsi("syntaxComment")), JSON.stringify(rows[2]));
-  assert.deepEqual(plain(rows), ["1   const a = 1;", "2 - // old note", "2 + // new note", "3   const b = 2;"]);
+  // The highlighter colors by the terminal's mode, so compare against its own output rather than the theme's.
+  assert.ok(rows[0].includes(highlightCode("const a = 1;", "typescript")[0]), JSON.stringify(rows[0]));
+  assert.ok(rows[1].includes(highlightCode("// gone", "typescript")[0]), JSON.stringify(rows[1]));
+  assert.ok(rows[3].includes(highlightCode('"added"', "typescript")[0]), JSON.stringify(rows[3]));
+  assert.deepEqual(plain(rows), ["1   const a = 1;", "2 - // gone", "3   mid", '4 + "added"']);
 });
 
 test("highlighting keeps a construct that spans several removed lines", () => {
   const diff = ["- 1 /* note", "- 2    still note", "  3 const a = 1;"].join("\n");
+  const whole = highlightCode("/* note\n   still note", "typescript");
   const prepared = prepareDiff(diff, "typescript");
-  const comment = theme.getFgAnsi("syntaxComment");
 
-  assert.ok(prepared.highlighted[0]?.startsWith(comment), JSON.stringify(prepared.highlighted[0]));
-  assert.ok(prepared.highlighted[1]?.startsWith(comment), JSON.stringify(prepared.highlighted[1]));
+  // One run over the removed lines, not one per line: the second line is still inside the comment.
+  assert.equal(prepared.highlighted[0], whole[0]);
+  assert.equal(prepared.highlighted[1], whole[1]);
+  assert.notEqual(whole[1], highlightCode("   still note", "typescript")[0]);
 });
 
 test("an unknown language leaves the code plain", () => {
