@@ -37,8 +37,21 @@ path loads one pi-tune extension alone.
 ## Run
 
 ```sh
-npm run e2e                                      # all e2e tests
+npm run e2e                                      # all e2e tests, 4 scenarios at a time
 PI_TUNE_SHOTS=shots npm run e2e                  # also write shots/<name>.png
+npm run e2e -- test/e2e/tools.test.ts            # one area
+npm run e2e -- --test-name-pattern="edit results" # one test
 ```
+
+## Speed
+
+Scenarios spawn a real Pi each, so keep the loop tight:
+
+1. Unit tests (`npm test`, seconds) cover the pure renderers — run them first.
+2. Run the one e2e file for the area you touched.
+3. Full `npm run e2e` before opening a PR; `npm run ci` does not include it.
+
+Scenarios must not pad with fixed sleeps: wait for the observable state (`waitFor`, `waitForRow`,
+`waitForShift`) instead, and keep slow streaming (`tokensPerSecond`) only where a test asserts it.
 
 Chrome comes from `CHROME_PATH`, else `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`.

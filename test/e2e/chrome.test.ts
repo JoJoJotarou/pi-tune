@@ -9,7 +9,7 @@ process.env.TMPDIR = "/tmp";
 function scenario(tokensPerSecond?: number): Scenario {
   return {
     files: { "README.md": "# demo\n" },
-    turns: [[{ tool: "bash", args: { command: "sleep 2" } }], [{ text: "done ".repeat(40) }]],
+    turns: [[{ tool: "bash", args: { command: "sleep 1" } }], [{ text: "done ".repeat(40) }]],
     tokensPerSecond,
   };
 }
@@ -47,7 +47,7 @@ test("busy chrome shows steer and follow-up only while text is typed", { timeout
   const pi = await startPi({ scenario: scenario(30), cols: 100, rows: 30 });
   try {
     pi.type("run it\r");
-    await pi.waitFor(/bash sleep 2.*to stop/, 60_000);
+    await pi.waitFor(/bash sleep 1.*to stop/, 60_000);
     const busy = pi.screen().find((line) => line.includes("project")) ?? "";
     assert.equal(busy.includes("enter steer"), false, busy);
 
