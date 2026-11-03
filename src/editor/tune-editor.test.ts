@@ -260,3 +260,56 @@ test("the bottom border carries model and thinking at every width", () => {
   }
   assert.match(plain(lastLine(editor, 80)), /scripted · high/);
 });
+
+test("the ghost suggestion overlays the empty editor's content row", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("run the tests");
+  const lines = editor.render(40).map(plain);
+  assert.equal(lines.length, 3, "the box keeps its size:\n" + lines.join("\n"));
+  assert.match(lines[1] ?? "", /run the tests/);
+});
+
+test("the ghost suggestion disappears once the editor has text", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("run the tests");
+  editor.setText("hello");
+  const lines = editor.render(40).map(plain);
+  assert.match(lines[1] ?? "", /^│hello +│$/);
+  assert.ok(!lines.some((line) => line.includes("run the tests")));
+});
+
+test("clearing the editor shows the suggestion again until it is discarded", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("run the tests");
+  editor.setText("hello");
+  editor.setText("");
+  assert.match(plain(editor.render(40)[1] ?? ""), /run the tests/);
+  editor.setSuggestion(undefined);
+  assert.ok(!plain(editor.render(40)[1] ?? "").includes("run the tests"));
+});
+
+test("tab fills the suggestion without submitting it", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("run the tests");
+  editor.handleInput("\t");
+  assert.equal(editor.getText(), "run the tests");
+  assert.equal(editor.getSuggestion(), undefined, "filling consumes the suggestion");
+});
+
+test("tab does nothing while the suggestion is hidden", () => {
+  const editor = makeEditor();
+  editor.handleInput("\t");
+  assert.equal(editor.getText(), "");
+  editor.setSuggestion("run the tests");
+  editor.setText("x");
+  editor.handleInput("\t");
+  assert.equal(editor.getText(), "x");
+});
+
+test("the ghost line never exceeds the width it was given", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("a suggestion that is far too long for a narrow editor box".repeat(2));
+  for (const width of [40, 60, 80]) {
+    for (const line of editor.render(width)) assert.equal(visibleWidth(line), width);
+  }
+});
