@@ -141,7 +141,10 @@ test("the timeline rail keeps the header counts intact", { timeout: 180_000 }, a
     const lastColumn = screen.map((line) => line.at(-1));
     assert.ok(lastColumn.includes("▴") && lastColumn.includes("▾"), screen.join("\n"));
     const header = screen.find((line) => line.includes("π pi")) ?? "";
-    assert.match(header.trimEnd(), /\d+ skills$/, header);
+    // CI loads a single skill, so the header reads "1 skill"; a clipped plural loses its last "s".
+    const counts = header.trimEnd().match(/(\d+) (skill|skills)$/);
+    assert.ok(counts, header);
+    assert.equal(counts[2], counts[1] === "1" ? "skill" : "skills", header);
   } finally {
     await pi.close();
   }
