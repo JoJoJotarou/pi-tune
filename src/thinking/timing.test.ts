@@ -36,3 +36,15 @@ test("reset clears the running start and all durations", () => {
   assert.equal(timing.startedAt(), undefined);
   assert.equal(timing.durationFor("first"), undefined);
 });
+
+test("seed pre-fills a duration for blocks that will not stream again", () => {
+  const timing = createThinkingTiming();
+  timing.seed("old block", 5_500);
+  assert.equal(timing.durationFor("old block"), 5_500);
+  timing.seed("", 1_000);
+  timing.seed("negative", -1);
+  timing.seed("nan", Number.NaN);
+  assert.equal(timing.durationFor(""), undefined);
+  assert.equal(timing.durationFor("negative"), undefined);
+  assert.equal(timing.durationFor("nan"), undefined);
+});

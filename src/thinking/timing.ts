@@ -7,6 +7,8 @@ export interface ThinkingTiming {
   startedAt(): number | undefined;
   /** Duration of a finished block, keyed by the trimmed markdown the renderer receives. */
   durationFor(markdown: string): number | undefined;
+  /** Pre-fill a duration for a block that will not stream again (session resume). */
+  seed(markdown: string, ms: number): void;
   reset(): void;
 }
 
@@ -27,6 +29,10 @@ export function createThinkingTiming(): ThinkingTiming {
     },
     durationFor(markdown) {
       return durations.get(markdown.trim());
+    },
+    seed(markdown, ms) {
+      const key = markdown.trim();
+      if (key !== "" && Number.isFinite(ms) && ms >= 0) durations.set(key, ms);
     },
     reset() {
       started = undefined;
