@@ -28,7 +28,10 @@ export interface StartOptions {
   cols?: number;
   rows?: number;
   tune?: boolean;
+  codemode?: boolean;
   settings?: Record<string, unknown>;
+  /** Extra extension files, loaded with `-e` after pi-tune; relative paths resolve against the project dir. */
+  extensions?: string[];
 }
 
 export interface PiSession {
@@ -155,6 +158,8 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     fauxExtension,
   ];
   if (options.tune ?? true) args.push("-e", repoRoot);
+  for (const extension of options.extensions ?? []) args.push("-e", resolve(projectDir, extension));
+  if (options.codemode) args.push("-e", "builtin:codemode");
   args.push("--provider", "faux", "--model", "scripted");
 
   const env = Object.fromEntries(
