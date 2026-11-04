@@ -152,8 +152,11 @@ describe("renderBtw", () => {
     assert.match(bottom, /↑ \d+ · 4\.2s · 98% cached · \$0\.004 ─╯$/);
     const free = plain(draw({ width: 100 }).lines).at(-2) ?? "";
     assert.match(free, /3\.2s · 98% cached ─╯$/, "no cost when the model has no price");
-    const running = plain(draw({ pending: { question: "q", answer: "", elapsedMs: 0, spinner: "⠋" } }).lines).at(-2);
-    assert.doesNotMatch(running ?? "", /cached/, "no usage while an answer runs");
+    const pending = { question: "q", answer: "", elapsedMs: 0, spinner: "⠋" };
+    const running = plain(draw({ width: 100, pending }).lines).at(-2) ?? "";
+    assert.match(running, /3\.2s · 98% cached ─╯$/, "the previous answer's usage stays while the next one runs");
+    const first = plain(draw({ thread: null, width: 100, pending }).lines).at(-2) ?? "";
+    assert.doesNotMatch(first, /cached/, "nothing to show before the first answer");
   });
 
   it("keeps the key hints over the usage when the width is tight", () => {

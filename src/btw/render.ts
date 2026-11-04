@@ -196,8 +196,9 @@ export function renderBtw(input: DrawerInput): DrawerOutput {
   const frame = (row: string) => frameRow(row, width, theme, BTW_BORDER, PAD_X);
   const padding = padded ? [frame("")] : [];
 
-  // The usage gives way first when the bottom border is too narrow for the two main hints.
-  const latest = pending ? undefined : thread?.turns.at(-1);
+  // The usage gives way first when the bottom border is too narrow for the main hints.
+  // The last finished answer's usage stays while the next one runs, and is replaced once that one finishes.
+  const latest = thread?.turns.at(-1);
   const scrolled = position(top, maxTop - top);
   const bottomRight = (withStats: boolean) => {
     const parts = [
@@ -210,7 +211,7 @@ export function renderBtw(input: DrawerInput): DrawerOutput {
   const room = (label: string | undefined) => width - 2 - 1 - 3 - (label ? visibleWidth(label) + 3 : 0);
   let right = bottomRight(true);
   let hints = fitHints(pending !== undefined, maxTop > 0, room(right), theme);
-  if (latest && hints.length < 2) {
+  if (latest && hints.length < (pending ? 1 : 2)) {
     right = bottomRight(false);
     hints = fitHints(pending !== undefined, maxTop > 0, room(right), theme);
   }
