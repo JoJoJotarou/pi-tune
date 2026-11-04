@@ -15,10 +15,10 @@ for (const tune of [true, false]) {
     const pi = await startPi({ scenario, tune });
     try {
       pi.type("跑一下\r");
-      await pi.waitFor("完成，共输出");
+      // The bold `**12**` streams in pieces, so wait for the whole rendered line, not its prefix.
+      await pi.waitFor("完成，共输出 12 行。");
       const screen = pi.screen().join("\n");
       assert.ok(screen.includes("seq 1 12"), screen);
-      assert.ok(screen.includes("完成，共输出 12 行。"), screen);
       await pi.shot(tune ? "harness-after" : "harness-before");
     } finally {
       await pi.close();

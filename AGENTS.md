@@ -5,11 +5,16 @@ input box and footer. Extensions only. Built and tested against Pi 1.4.0.
 
 ## Layout
 
-- `extensions/<area>.ts`: one Pi extension per screen area (`tools`, `thinking`, `navigation`, `viewer`,
-  `markdown`, `status`, `editor`, `chrome`, `btw`). Wiring only: register renderers, events, shortcuts, and commands,
-  then call into `src/<area>/`. An area must keep working when any other area is disabled in `pi config`.
+- `extensions/<area>.ts`: one Pi extension per screen area (`tools`, `thinking`, `navigation`, `status`, `editor`,
+  `chrome`, `btw`; `viewer` and `markdown` are on `feat/sticky-prompt-viewer` and not in the trunk). Wiring only:
+  register renderers, events, shortcuts, and commands, then call into `src/<area>/`. An area must keep working when
+  any other area is disabled in `pi config`.
 - `src/<area>/`: the logic. Prefer pure functions (`(input, width, theme) => string[]`) so they can be unit
   tested. Tests sit next to the code: `diff.ts` and `diff.test.ts`.
+- `src/<area>/session.ts`: what an extension's event handlers do. `create<Area>Session(host)` takes the Pi
+  surface it reads as a narrow injected interface, keeps the per-session state in a closure, and exposes one
+  method per event, plus `start(ctx)` and `shutdown()`, which share their reset. Unit test it with a fake host and
+  a fake `ExtensionContext` slice; no real clock, timer or TUI.
 - `src/shared/`: helpers used by two or more areas. Put a helper here only once a second area needs it.
 - `src/internals/`: the only place that may touch Pi internals the API does not declare (private fields, class
   names, runtime-only methods). Each function checks at runtime that the shape it relies on is there. If the

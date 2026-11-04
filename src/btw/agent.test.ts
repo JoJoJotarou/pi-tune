@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { createBashToolDefinition, createReadToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type SideToolOptions, sideTool } from "./child.ts";
+import { type SideToolOptions, sideTool } from "./agent.ts";
 import { DEFAULT_RULES } from "./rules.ts";
 import { detectSandbox } from "./sandbox.ts";
 

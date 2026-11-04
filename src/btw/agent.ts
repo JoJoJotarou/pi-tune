@@ -2,10 +2,10 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { Api, Message, Model } from "@earendil-works/pi-ai";
 import type {
   AgentSession,
-  ExtensionAPI,
   ExtensionContext,
   ResourceLoader,
   ToolDefinition,
+  ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
@@ -35,7 +35,6 @@ export interface SideToolOptions {
   onUnsandboxed: (problem: Error) => void;
 }
 
-type ToolInfo = ReturnType<ExtensionAPI["getAllTools"]>[number];
 // biome-ignore lint/suspicious/noExplicitAny: the built-in definitions differ only in their parameter schemas.
 type AnyToolDefinition = ToolDefinition<any, any, any>;
 
@@ -112,7 +111,7 @@ export function sideTool(info: ToolInfo, cwd: string, options: SideToolOptions):
 }
 
 /** The system prompt and tool declarations the parent sends, unchanged, with no append segments. */
-function inheritedResources(ctx: ExtensionContext): ResourceLoader {
+function inheritedResources(ctx: SideParentContext): ResourceLoader {
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills: [], diagnostics: [] }),
@@ -132,7 +131,7 @@ function inheritedResources(ctx: ExtensionContext): ResourceLoader {
  * The provider registration the parent holds: extension-registered providers and `--api-key`
  * overrides only exist on the parent's runtime, so the child needs its own copy of them.
  */
-async function sideRuntimeOptions(ctx: ExtensionContext, model: Model<Api>) {
+async function sideRuntimeOptions(ctx: SideParentContext, model: Model<Api>) {
   const registry = ctx.modelRegistry;
   const provider = model.provider;
   const nativeProvider = registry.getRegisteredNativeProvider(provider);
@@ -157,14 +156,33 @@ async function sideRuntimeOptions(ctx: ExtensionContext, model: Model<Api>) {
   return { modelRuntime };
 }
 
+/** The parent session's tool declarations the side session inherits. */
+export interface SideParent {
+  /** Names of the parent's active tools, from `pi.getActiveTools()`. */
+  activeToolNames: readonly string[];
+  /** Declarations from `pi.getAllTools()`; only the active ones are used. */
+  tools: readonly ToolInfo[];
+}
+
+/** The part of the parent's `ExtensionContext` the side session inherits. */
+export interface SideParentContext {
+  cwd: string;
+  model: Model<Api> | undefined;
+  /** Passed through to the side session; optional, like Pi's context. */
+  thinkingLevel?: ExtensionContext["thinkingLevel"];
+  /** Model registry to clone the provider registrations from. */
+  modelRegistry: ExtensionContext["modelRegistry"];
+  getSystemPrompt(): string;
+}
+
 /**
  * A throwaway session whose first request repeats the parent's prefix exactly: same system prompt,
  * same tool declarations, same history up to the anchor. Only the prompt cache depends on this being
  * byte-identical, so nothing here may normalize, filter, or re-render the parent's messages.
  */
 export async function openSideSession(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  parent: SideParent,
+  ctx: SideParentContext,
   seeded: readonly (AgentMessage | Message)[],
   tools: SideToolOptions,
 ): Promise<AgentSession> {
@@ -178,8 +196,8 @@ export async function openSideSession(
   const model = ctx.model;
   if (!model) throw new Error("No active model to answer the side question.");
 
-  const active = new Set(pi.getActiveTools());
-  const declared = pi.getAllTools().filter((info) => active.has(info.name));
+  const active = new Set(parent.activeToolNames);
+  const declared = parent.tools.filter((info) => active.has(info.name));
 
   const runtimeOptions = await sideRuntimeOptions(ctx, model);
 
