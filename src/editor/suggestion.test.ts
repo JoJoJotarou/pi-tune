@@ -365,3 +365,49 @@ test("turning suggestions off discards the ghost and aborts the request", async 
   await suggestion.turnEnd(assistantTurn("done again"), 0);
   assert.equal(editor.getSuggestion(), undefined, "a disabled suggestion still requested");
 });
+
+function counting() {
+  let requests = 0;
+  const made = makeSuggestion({
+    complete: async () => {
+      requests++;
+      return "run the tests";
+    },
+  });
+  start(made.suggestion);
+  return { ...made, requests: () => requests };
+}
+
+async function run(suggestion: Suggestion, stopReason = "stop"): Promise<void> {
+  suggestion.agentStart();
+  await suggestion.turnEnd({ role: "assistant", stopReason, content: [{ type: "text", text: "done" }] }, 0);
+  await suggestion.agentSettled(false);
+}
+
+test("a run that ends in an error asks for nothing, the next good run does", async () => {
+  const { suggestion, warnings, requests } = counting();
+  await run(suggestion, "error");
+  assert.equal(requests(), 0);
+  assert.deepEqual(warnings, []);
+  await run(suggestion);
+  assert.equal(requests(), 1);
+});
+
+test("a run cut off at the length limit still asks", async () => {
+  const { suggestion, requests } = counting();
+  await run(suggestion, "length");
+  assert.equal(requests(), 1);
+});
+
+test("after ten unused suggestions only every third run asks, and one tab acceptance resets that", async () => {
+  const { suggestion, requests } = counting();
+  for (let i = 0; i < 10; i++) await run(suggestion);
+  assert.equal(requests(), 10);
+  for (let i = 0; i < 3; i++) await run(suggestion);
+  assert.equal(requests(), 11, "three runs after ten unused suggestions ask once");
+  for (let i = 0; i < 3; i++) await run(suggestion);
+  assert.equal(requests(), 12);
+  suggestion.accepted();
+  for (let i = 0; i < 3; i++) await run(suggestion);
+  assert.equal(requests(), 15, "an accepted suggestion brings back one request per run");
+});

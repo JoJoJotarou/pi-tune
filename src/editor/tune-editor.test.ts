@@ -337,3 +337,14 @@ test("a new line or an empty enter keeps the suggestion", () => {
   assert.equal(discarded, 0);
   assert.equal(editor.getText(), "draft\n");
 });
+
+test("tab acceptance tells the owner, typing over the suggestion does not", () => {
+  let accepted = 0;
+  const editor = makeEditor({ onAcceptSuggestion: () => accepted++ });
+  editor.setSuggestion("run the tests");
+  editor.handleInput("x");
+  editor.setText("");
+  editor.handleInput("\t");
+  assert.equal(accepted, 1);
+  assert.equal(editor.getText(), "run the tests");
+});

@@ -268,6 +268,7 @@ export default function (pi: ExtensionAPI) {
           });
         },
         onBeforeSubmit: () => suggestion?.discard(),
+        onAcceptSuggestion: () => suggestion?.accepted(),
       });
       editor = instance;
       pi.events.emit("pi-tune:editor-ready", undefined);

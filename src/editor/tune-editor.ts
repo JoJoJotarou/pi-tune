@@ -32,6 +32,8 @@ export interface TuneEditorOptions {
   now?: () => number;
   /** Runs before every submit, including commands that start no agent run. */
   onBeforeSubmit?: () => void;
+  /** Runs when tab fills the editor with the suggestion. */
+  onAcceptSuggestion?: () => void;
 }
 
 interface Stash {
@@ -97,6 +99,7 @@ export class TuneEditor extends CustomEditor {
   private readonly now: () => number;
   private readonly onPreview?: (id: number) => void;
   private readonly onBeforeSubmit?: () => void;
+  private readonly onAcceptSuggestion?: () => void;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
@@ -116,6 +119,7 @@ export class TuneEditor extends CustomEditor {
     this.now = options.now ?? (() => Date.now());
     this.onPreview = options.onPreview;
     this.onBeforeSubmit = options.onBeforeSubmit;
+    this.onAcceptSuggestion = options.onAcceptSuggestion;
   }
 
   setStatus(model: string, thinking: string): void {
@@ -169,6 +173,7 @@ export class TuneEditor extends CustomEditor {
       const text = this.ghost;
       this.ghost = undefined;
       if (text !== undefined) this.setText(text);
+      this.onAcceptSuggestion?.();
       this.tui.requestRender();
       return;
     }

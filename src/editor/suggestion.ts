@@ -156,6 +156,9 @@ export interface SuggestionOptions {
 }
 
 const SUGGEST_CHARS = 80;
+/** After this many shown suggestions in a row go unused, only every `BACKOFF_EVERY`-th run asks. */
+const BACKOFF_AFTER = 10;
+const BACKOFF_EVERY = 3;
 
 /** One suggestion request per run, aborted by the next run or session change. */
 export class Suggestion {
@@ -168,6 +171,10 @@ export class Suggestion {
   private failed = false;
   private runActive = false;
   private requestedThisRun = false;
+  private lastStopReason: string | undefined;
+  private shown = false;
+  private unusedStreak = 0;
+  private skippedRuns = 0;
   private abort: AbortController | undefined;
 
   constructor(options: SuggestionOptions) {
@@ -217,10 +224,19 @@ export class Suggestion {
   agentStart(): void {
     this.discard();
     this.requestedThisRun = false;
+    this.lastStopReason = undefined;
     this.runActive = true;
   }
 
+  /** The user took the suggestion with tab. */
+  accepted(): void {
+    this.shown = false;
+    this.unusedStreak = 0;
+    this.skippedRuns = 0;
+  }
+
   async turnEnd(message: SuggestionTurn, toolResultCount: number): Promise<void> {
+    if (message.role === "assistant") this.lastStopReason = message.stopReason;
     if (message.role !== "assistant" || message.stopReason !== "stop" || toolResultCount > 0) return;
     if (this.requestedThisRun || !this.runActive) return;
     const reply = (message.content ?? [])
@@ -233,11 +249,16 @@ export class Suggestion {
   }
 
   async agentSettled(aborted: boolean): Promise<void> {
-    if (!aborted && this.runActive && !this.requestedThisRun) await this.request();
+    // After an error the same provider would most likely fail again; a length cut still gets "continue".
+    if (!aborted && this.runActive && !this.requestedThisRun && this.lastStopReason !== "error") await this.request();
     this.runActive = false;
   }
 
   discard(): void {
+    if (this.shown) {
+      this.shown = false;
+      this.unusedStreak++;
+    }
     this.abort?.abort();
     this.abort = undefined;
     const editor = this.options.editor();
@@ -249,6 +270,11 @@ export class Suggestion {
     if (!this.enabled || this.invalidModel || this.failed || editor === undefined) return;
     const model = this.overrideModel ?? this.sessionModelValue;
     if (model === undefined) return;
+    if (this.unusedStreak >= BACKOFF_AFTER) {
+      this.requestedThisRun = true;
+      if (++this.skippedRuns < BACKOFF_EVERY) return;
+      this.skippedRuns = 0;
+    }
     const turns = this.options.collectTurns();
     const reply = concludingReply?.trim() ?? "";
     if (reply !== "") {
@@ -272,7 +298,10 @@ export class Suggestion {
       if (controller.signal.aborted) return;
       const suggestion = cleanSuggestion(text, this.options.maxChars ?? SUGGEST_CHARS);
       // Keep the reply even when the editor has text: the editor hides it until the text is cleared.
-      if (suggestion !== "") editor.setSuggestion(suggestion);
+      if (suggestion !== "") {
+        editor.setSuggestion(suggestion);
+        this.shown = true;
+      }
     } catch (error) {
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
       this.failed = true;
