@@ -62,20 +62,33 @@ describe("sideTool", () => {
     assert.match(text(result), /hello from notes/);
   });
 
-  it("refuses a call the rules do not allow, naming the rule file", async () => {
+  it("refuses a call the rules do not allow, saying what is allowed and which rule would allow it", async () => {
     const { value, denied } = options();
-    await assert.rejects(
-      run(sideTool(bash, dir, value), { command: "echo hi" }),
-      /bash\(echo hi\) is not in "btw\.allow" for btw threads\. The user can allow it in "btw\.allow" of \/agent\/pi-tune\.json/,
-    );
-    assert.deepEqual(denied, ["bash(echo hi)"]);
+    await assert.rejects(run(sideTool(bash, dir, value), { command: "echo hi" }), (error: Error) => {
+      assert.equal(
+        error.message,
+        'bash(echo *) is not allowed in btw threads. Allowed in btw threads: read, grep, find, ls. Adding "bash(echo *)" to "btw.allow" in /agent/pi-tune.json would allow it.',
+      );
+      return true;
+    });
+    assert.deepEqual(denied, ["bash(echo *)"]);
+  });
+
+  it("explains a command it cannot check instead of suggesting a rule", async () => {
+    const { value } = options({ rules: { allow: ["bash(echo *)"], deny: [] } });
+    await assert.rejects(run(sideTool(bash, dir, value), { command: "echo $(date)" }), /uses command substitution/);
   });
 
   it("refuses an extension tool even when allowed, because only the main session can run it", async () => {
-    const { value, denied } = options({ rules: { allow: ["mcp__*"], deny: [] } });
-    const mcp = info({ name: "mcp__docs__search", description: "search", parameters: { type: "object" } });
-    await assert.rejects(run(sideTool(mcp, dir, value), {}), /runs only in the main session/);
-    assert.deepEqual(denied, ["mcp__docs__search (main session only)"]);
+    for (const allow of [["mcp__*"], []]) {
+      const { value, denied } = options({ rules: { allow, deny: [] } });
+      const mcp = info({ name: "mcp__docs__search", description: "search", parameters: { type: "object" } });
+      await assert.rejects(
+        run(sideTool(mcp, dir, value), {}),
+        /mcp__docs__search runs only in the main session\. A btw thread can run Pi's built-in tools: read, grep, find, ls, bash, edit, write\./,
+      );
+      assert.deepEqual(denied, ["mcp__docs__search (main session only)"], "never suggests a rule that cannot help");
+    }
   });
 
   it("runs an allowed bash command unsandboxed when there is no sandbox, and says so", async () => {

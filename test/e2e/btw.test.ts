@@ -166,7 +166,7 @@ test("side threads run allowed tools, refuse the rest and show only the exchange
   try {
     pi.type("/btw what is in the readme?\r");
     await pi.waitFor("side answer after tools");
-    await pi.waitFor(/2 tools · denied: bash\(echo from bash\)/);
+    await pi.waitFor(/2 tools · denied: bash\(echo \*\)/);
     const screen = pi.screen().join("\n");
     assert.ok(!screen.includes("from bash\n") && !/^\s*\$ echo/m.test(screen), "no tool blocks are drawn");
     await pi.shot("btw-denied");

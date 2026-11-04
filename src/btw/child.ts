@@ -21,7 +21,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { stripDynamicSystemPromptFooter } from "./prompt.ts";
-import { type BtwRules, judge } from "./rules.ts";
+import { type BtwRules, judge, type Verdict } from "./rules.ts";
 import { type SandboxKind, sandboxCommand } from "./sandbox.ts";
 
 export interface SideToolOptions {
@@ -38,6 +38,20 @@ export interface SideToolOptions {
 type ToolInfo = ReturnType<ExtensionAPI["getAllTools"]>[number];
 // biome-ignore lint/suspicious/noExplicitAny: the built-in definitions differ only in their parameter schemas.
 type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+const BUILT_IN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+
+/** What the model reads for a refused call: why, what is allowed, and the rule that would allow it. */
+function refusalMessage(verdict: Extract<Verdict, { allowed: false }>, options: SideToolOptions): string {
+  const allowed = `Allowed in btw threads: ${options.rules.allow.join(", ") || "nothing"}.`;
+  if (verdict.refusal === "denied") {
+    return `${verdict.label} matches "btw.deny" in ${options.rulesPath}, so btw threads never run it. ${allowed}`;
+  }
+  if (verdict.refusal === "unchecked") {
+    return `This bash command uses ${verdict.detail}, which btw threads cannot check against their rules. Run plain commands, joined with |, && or ; if needed. ${allowed}`;
+  }
+  return `${verdict.label} is not allowed in btw threads. ${allowed} Adding "${verdict.rule}" to "btw.allow" in ${options.rulesPath} would allow it.`;
+}
 
 /** Pi's own implementation of a built-in tool; extension tools only run in the session that registered them. */
 function builtInTool(name: string, cwd: string, options: SideToolOptions): AnyToolDefinition | undefined {
@@ -82,17 +96,17 @@ export function sideTool(info: ToolInfo, cwd: string, options: SideToolOptions):
     parameters: info.parameters,
     ...(info.promptGuidelines ? { promptGuidelines: info.promptGuidelines } : {}),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const verdict = judge(info.name, params, options.rules);
-      if (!verdict.allowed) {
-        options.onDenied(verdict.label);
-        throw new Error(
-          `${verdict.label} ${verdict.reason} for btw threads. The user can allow it in "btw.allow" of ${options.rulesPath}.`,
-        );
-      }
       const tool = builtInTool(info.name, cwd, options);
       if (!tool) {
         options.onDenied(`${info.name} (main session only)`);
-        throw new Error(`${info.name} runs only in the main session; a btw thread can run Pi's built-in tools.`);
+        throw new Error(
+          `${info.name} runs only in the main session. A btw thread can run Pi's built-in tools: ${BUILT_IN_TOOLS.join(", ")}.`,
+        );
+      }
+      const verdict = judge(info.name, params, options.rules);
+      if (!verdict.allowed) {
+        options.onDenied(verdict.label);
+        throw new Error(refusalMessage(verdict, options));
       }
       return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },

@@ -156,44 +156,73 @@ export function splitCommand(command: string): { segments: string[] } | { proble
   return { segments };
 }
 
-export type Verdict = { allowed: true } | { allowed: false; label: string; reason: string };
+/** Why a call was refused: no allow rule names it, a deny rule names it, or the command cannot be checked. */
+export type Refusal = "not-allowed" | "denied" | "unchecked";
 
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+export type Verdict =
+  | { allowed: true }
+  | {
+      allowed: false;
+      refusal: Refusal;
+      /** The rule that names the call, ready to copy into the settings: `codemode`, `bash(date *)`. */
+      rule: string;
+      /** What the usage row shows. */
+      label: string;
+      /** For `unchecked`: the construct that cannot be checked. */
+      detail?: string;
+    };
+
+const UNCHECKED_MARK: Record<string, string> = {
+  "command substitution": "$(…)",
+  "process substitution": "<(…)",
+  "a here-document": "<<",
+  "a redirection that writes a file": ">",
+};
+
+/** `bash(date *)` for `date +%F`: the rule that allows the command's program. */
+function commandRule(segment: string): string {
+  return `bash(${segment.trim().split(/\s+/)[0] ?? ""} *)`;
 }
 
-/** Whether a btw thread runs this call. The label names the call the way a rule would. */
+/** Whether a btw thread runs this call. */
 export function judge(tool: string, args: unknown, rules: BtwRules): Verdict {
   const allow = rules.allow.map(parseRule);
   const deny = rules.deny.map(parseRule);
   const byName = (list: typeof allow) =>
     list.some((rule) => rule.command === undefined && globMatches(rule.name, tool));
+  const refuse = (refusal: Refusal, rule: string, label = rule, detail?: string): Verdict => ({
+    allowed: false,
+    refusal,
+    rule,
+    label,
+    ...(detail === undefined ? {} : { detail }),
+  });
 
   if (tool !== "bash") {
-    if (byName(deny)) return { allowed: false, label: tool, reason: 'matches "btw.deny"' };
-    if (!byName(allow)) return { allowed: false, label: tool, reason: 'is not in "btw.allow"' };
+    if (byName(deny)) return refuse("denied", tool);
+    if (!byName(allow)) return refuse("not-allowed", tool);
     return { allowed: true };
   }
 
   const command =
     typeof (args as { command?: unknown })?.command === "string" ? (args as { command: string }).command : "";
-  const label = `bash(${oneLine(command)})`;
   const patterns = (list: typeof allow) =>
     list.flatMap((rule) => (rule.name === "bash" && rule.command !== undefined ? [rule.command] : []));
-  if (byName(deny)) return { allowed: false, label, reason: 'matches "btw.deny"' };
+  if (byName(deny)) return refuse("denied", "bash");
   const wholesale = byName(allow);
   const denied = patterns(deny);
   if (wholesale && denied.length === 0) return { allowed: true };
 
   const split = splitCommand(command);
-  if ("problem" in split) return { allowed: false, label, reason: `uses ${split.problem}, which btw cannot check` };
+  if ("problem" in split) {
+    const rule = commandRule(command);
+    return refuse("unchecked", rule, `${rule.slice(0, -3)} ${UNCHECKED_MARK[split.problem] ?? "…"})`, split.problem);
+  }
   const allowed = patterns(allow);
   for (const segment of split.segments) {
-    if (denied.some((pattern) => globMatches(pattern, segment))) {
-      return { allowed: false, label, reason: 'matches "btw.deny"' };
-    }
+    if (denied.some((pattern) => globMatches(pattern, segment))) return refuse("denied", commandRule(segment));
     if (!wholesale && !allowed.some((pattern) => globMatches(pattern, segment))) {
-      return { allowed: false, label, reason: 'is not in "btw.allow"' };
+      return refuse("not-allowed", commandRule(segment));
     }
   }
   return { allowed: true };

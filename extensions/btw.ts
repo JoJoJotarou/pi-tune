@@ -214,7 +214,9 @@ export default function btwExtension(pi: ExtensionAPI) {
           sandbox ??= detectSandbox();
           return sandbox;
         },
-        onDenied: (label) => current.denied.push(label),
+        onDenied: (label) => {
+          if (!current.denied.includes(label)) current.denied.push(label);
+        },
         onUnsandboxed: (problem) => {
           if (warnedUnsandboxed) return;
           warnedUnsandboxed = true;

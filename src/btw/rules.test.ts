@@ -96,14 +96,26 @@ describe("judge", () => {
     assert.equal(judge("bash", { command: "ls" }, rules(["bash"], ["bash"])).allowed, false);
   });
 
-  it("labels a denied call the way a rule would name it, with the reason", () => {
-    const write = judge("write", { path: "a" }, DEFAULT_RULES);
-    assert.deepEqual(write, { allowed: false, label: "write", reason: 'is not in "btw.allow"' });
-    const bash = judge("bash", { command: "rm -rf\nbuild" }, rules(["bash(ls *)"]));
-    assert.deepEqual(bash, { allowed: false, label: "bash(rm -rf build)", reason: 'is not in "btw.allow"' });
+  it("names a refused call by the rule that would allow it", () => {
+    assert.deepEqual(judge("write", { path: "a" }, DEFAULT_RULES), {
+      allowed: false,
+      refusal: "not-allowed",
+      rule: "write",
+      label: "write",
+    });
+    const date = judge("bash", { command: 'date "+%Y-%m-%d %A"' }, DEFAULT_RULES);
+    assert.deepEqual(date, { allowed: false, refusal: "not-allowed", rule: "bash(date *)", label: "bash(date *)" });
+    const second = judge("bash", { command: "ls -la | wc -l" }, rules(["bash(ls *)"]));
+    assert.equal(second.allowed === false && second.rule, "bash(wc *)", "the segment that failed names the rule");
     const denied = judge("bash", { command: "rm x" }, rules(["bash"], ["bash(rm *)"]));
-    assert.equal(denied.allowed === false && denied.reason, 'matches "btw.deny"');
+    assert.equal(denied.allowed === false && denied.refusal, "denied");
     const unchecked = judge("bash", { command: "ls $(x)" }, rules(["bash(ls *)"]));
-    assert.equal(unchecked.allowed === false && unchecked.reason, "uses command substitution, which btw cannot check");
+    assert.deepEqual(unchecked, {
+      allowed: false,
+      refusal: "unchecked",
+      rule: "bash(ls *)",
+      label: "bash(ls $(…))",
+      detail: "command substitution",
+    });
   });
 });
