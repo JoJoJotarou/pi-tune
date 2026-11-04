@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { isRecord, readJsonObject } from "../shared/config.ts";
 
 /**
  * Which tool calls a btw thread runs, from `btw.allow` and `btw.deny` in `pi-tune.json`. A rule is a tool name
@@ -20,12 +20,13 @@ export interface BtwRulesLoad {
 }
 
 export function loadBtwRules(path: string): BtwRulesLoad {
-  if (!existsSync(path)) return { rules: DEFAULT_RULES };
-  return parseBtwRules(readFileSync(path, "utf8"), path);
+  const read = readJsonObject(path);
+  if (!read.ok) return broken(path, read.problem);
+  return parseBtwRules(read.value ?? {}, path);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function broken(path: string, detail: string): BtwRulesLoad {
+  return { rules: DEFAULT_RULES, problem: `btw tools use the defaults: ${path} ${detail}.` };
 }
 
 const RULE = /^([^()\s]+)(?:\((.*)\))?$/s;
@@ -39,32 +40,22 @@ function ruleProblem(rule: string): string | undefined {
   return undefined;
 }
 
-export function parseBtwRules(raw: string, path: string): BtwRulesLoad {
-  const broken = (detail: string): BtwRulesLoad => ({
-    rules: DEFAULT_RULES,
-    problem: `btw tools use the defaults: ${path} ${detail}.`,
-  });
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    return broken(`is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
-  }
-  if (!isRecord(value)) return broken("must contain a JSON object");
-  if (!("btw" in value)) return { rules: DEFAULT_RULES };
-  const btw = value.btw;
-  if (!isRecord(btw)) return broken('has a "btw" value that is not an object');
+/** The rules in a parsed `pi-tune.json`; `path` only names the file in the problem. */
+export function parseBtwRules(config: Record<string, unknown>, path: string): BtwRulesLoad {
+  if (!("btw" in config)) return { rules: DEFAULT_RULES };
+  const btw = config.btw;
+  if (!isRecord(btw)) return broken(path, 'has a "btw" value that is not an object');
 
   const lists: Partial<Record<keyof BtwRules, string[]>> = {};
   for (const key of ["allow", "deny"] as const) {
     if (!(key in btw)) continue;
     const list = btw[key];
     if (!Array.isArray(list) || list.some((rule) => typeof rule !== "string")) {
-      return broken(`has a "btw.${key}" value that is not a list of strings`);
+      return broken(path, `has a "btw.${key}" value that is not a list of strings`);
     }
     for (const [index, rule] of (list as string[]).entries()) {
       const problem = ruleProblem(rule);
-      if (problem) return broken(`has "btw.${key}[${index}]" ${rule}: ${problem}`);
+      if (problem) return broken(path, `has "btw.${key}[${index}]" ${rule}: ${problem}`);
     }
     lists[key] = list as string[];
   }

@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { configuredServers, connectedServers, isMcpConfig, mergeServers, serverNameFromTool } from "./mcp.ts";
+import {
+  configuredServers,
+  connectedServers,
+  isMcpConfig,
+  mergeServers,
+  readMcpFile,
+  serverNameFromTool,
+} from "./mcp.ts";
 
 test("tool names yield the server between the first mcp__ and the next __", () => {
   assert.equal(serverNameFromTool("mcp__filesystem__read_file"), "filesystem");
@@ -81,4 +91,30 @@ test("invalid config documents count nothing", () => {
   }
   assert.equal(isMcpConfig({}), true);
   assert.equal(isMcpConfig({ mcpServers: { docs: { command: "x" } } }), true);
+});
+
+test("an unusable mcp.json warns once and counts as absent; a missing one is silent", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-tune-mcp-"));
+  try {
+    const path = join(dir, "mcp.json");
+    const warnings: string[] = [];
+    const notify = (message: string) => warnings.push(message);
+
+    assert.equal(readMcpFile(path, notify), undefined);
+    assert.deepEqual(warnings, []);
+
+    writeFileSync(path, '{"mcpServers":[]}');
+    assert.equal(readMcpFile(path, notify), undefined);
+    writeFileSync(path, "{");
+    assert.equal(readMcpFile(path, notify), undefined);
+    assert.equal(warnings.length, 2);
+    assert.match(warnings[0], /mcp\.json has an "mcpServers" value that is not an object$/);
+    assert.match(warnings[1], /mcp\.json is not valid JSON/);
+
+    writeFileSync(path, '{"mcpServers":{"docs":{"command":"x"}}}');
+    assert.deepEqual(readMcpFile(path, notify), { mcpServers: { docs: { command: "x" } } });
+    assert.equal(warnings.length, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

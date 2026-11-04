@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
+import { isRecord, readJsonObject } from "../shared/config.ts";
 
 /** `careful` (the default) suggests only an obvious next line; `eager` whenever a natural one exists. */
 export const SUGGEST_STYLES = ["careful", "eager"] as const;
@@ -16,23 +17,10 @@ export type SuggestSettingsLoad = { ok: true; settings: SuggestSettings } | { ok
 
 /** Read the settings from `path`; a missing file or a missing `suggest` key means off. */
 export function loadSuggestSettings(path: string): SuggestSettingsLoad {
-  if (!existsSync(path)) return { ok: true, settings: { enabled: false } };
-  return parseSuggestSettings(readFileSync(path, "utf8"), path);
-}
-
-export function parseSuggestSettings(raw: string, path: string): SuggestSettingsLoad {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, problem: `Next-step suggestions off: ${path} is not valid JSON (${detail}).` };
-  }
-  if (!isRecord(value)) {
-    return { ok: false, problem: `Next-step suggestions off: ${path} must contain a JSON object.` };
-  }
-  if (!("suggest" in value)) return { ok: true, settings: { enabled: false } };
-  const suggest = value.suggest;
+  const read = readJsonObject(path);
+  if (!read.ok) return { ok: false, problem: `Next-step suggestions off: ${path} ${read.problem}.` };
+  if (read.value === undefined || !("suggest" in read.value)) return { ok: true, settings: { enabled: false } };
+  const suggest = read.value.suggest;
   if (!isRecord(suggest)) {
     return { ok: false, problem: `Next-step suggestions off: ${path} has a "suggest" value that is not an object.` };
   }
@@ -62,23 +50,12 @@ export function parseSuggestSettings(raw: string, path: string): SuggestSettings
 
 /** Write `settings` back, keeping every other top-level key of the file. */
 export function saveSuggestSettings(path: string, settings: SuggestSettings): void {
-  let existing: Record<string, unknown> = {};
-  if (existsSync(path)) {
-    const raw = readFileSync(path, "utf8");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`${path} is not valid JSON (${detail})`);
-    }
-    if (!isRecord(parsed)) throw new Error(`${path} must contain a JSON object`);
-    existing = parsed;
-  }
+  const read = readJsonObject(path);
+  if (!read.ok) throw new Error(`${path} ${read.problem}`);
   const suggest: Record<string, unknown> = { enabled: settings.enabled };
   if (settings.model !== undefined) suggest.model = settings.model;
   if (settings.style !== undefined) suggest.style = settings.style;
-  writeFileSync(path, `${JSON.stringify({ ...existing, suggest }, null, 2)}\n`);
+  writeFileSync(path, `${JSON.stringify({ ...read.value, suggest }, null, 2)}\n`);
 }
 
 /** `provider/id` split at the first slash; undefined when either side is empty. */
@@ -116,8 +93,4 @@ export function suggestCommand(
 
 function isStyle(value: unknown): value is SuggestStyle {
   return SUGGEST_STYLES.includes(value as SuggestStyle);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

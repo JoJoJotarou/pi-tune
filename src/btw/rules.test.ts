@@ -10,20 +10,18 @@ function rules(allow: string[], deny: string[] = []) {
 
 describe("parseBtwRules", () => {
   it("uses the default allow list when the file has no btw rules", () => {
-    assert.deepEqual(parseBtwRules("{}", PATH), { rules: DEFAULT_RULES });
-    assert.deepEqual(parseBtwRules('{"suggest":{"enabled":true}}', PATH), { rules: DEFAULT_RULES });
+    assert.deepEqual(parseBtwRules({}, PATH), { rules: DEFAULT_RULES });
+    assert.deepEqual(parseBtwRules({ suggest: { enabled: true } }, PATH), { rules: DEFAULT_RULES });
     assert.deepEqual(DEFAULT_RULES, { allow: ["read", "grep", "find", "ls"], deny: [] });
   });
 
   it("takes a configured allow list as it is, without the defaults", () => {
-    const load = parseBtwRules('{"btw":{"allow":["grep","bash(tinyfish *)"],"deny":["bash(rm *)"]}}', PATH);
+    const load = parseBtwRules({ btw: { allow: ["grep", "bash(tinyfish *)"], deny: ["bash(rm *)"] } }, PATH);
     assert.deepEqual(load, { rules: { allow: ["grep", "bash(tinyfish *)"], deny: ["bash(rm *)"] } });
   });
 
   it("names the file and the field of a broken setting, and falls back to the defaults", () => {
     const cases: [string, RegExp][] = [
-      ["{", /pi-tune\.json is not valid JSON/],
-      ["[]", /must contain a JSON object/],
       ['{"btw":1}', /"btw" value that is not an object/],
       ['{"btw":{"allow":"read"}}', /"btw\.allow" value that is not a list of strings/],
       ['{"btw":{"deny":["ok",2]}}', /"btw\.deny" value that is not a list of strings/],
@@ -31,7 +29,7 @@ describe("parseBtwRules", () => {
       ['{"btw":{"deny":["bash()"]}}', /"btw\.deny\[0\]" bash\(\)/],
     ];
     for (const [raw, problem] of cases) {
-      const load = parseBtwRules(raw, PATH);
+      const load = parseBtwRules(JSON.parse(raw), PATH);
       assert.deepEqual(load.rules, DEFAULT_RULES, raw);
       assert.match(load.problem ?? "", problem, raw);
       assert.ok(load.problem?.includes(PATH), raw);

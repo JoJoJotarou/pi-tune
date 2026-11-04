@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -18,9 +18,10 @@ interface Harness {
   ctx: EditorContext;
 }
 
-function harness(config: string | undefined): Harness {
+function harness(config: string | undefined, setup?: (dir: string) => void): Harness {
   const dir = mkdtempSync(join(tmpdir(), "pi-tune-editor-"));
   if (config !== undefined) writeFileSync(join(dir, "pi-tune.json"), config);
+  setup?.(dir);
   const notified: Notice[] = [];
   const models = [{ provider: "anthropic", id: "claude" }];
   const ctx = {
@@ -58,6 +59,13 @@ test("start reports a broken settings file once", () => {
   assert.equal(h.notified.length, 1);
   assert.equal(h.notified[0].level, "warning");
   assert.match(h.notified[0].message, /is not valid JSON/);
+});
+
+test("start reports an unreadable settings file once instead of throwing", () => {
+  const h = harness(undefined, (dir) => mkdirSync(join(dir, "pi-tune.json")));
+  assert.equal(h.notified.length, 1);
+  assert.equal(h.notified[0].level, "warning");
+  assert.match(h.notified[0].message, /pi-tune\.json could not be read/);
 });
 
 test("/suggest on and off save the file and report the state", async () => {
