@@ -55,8 +55,6 @@ export interface PiSession {
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
   screen(): string[];
-  /** Raw xterm buffer for tests that need cell attributes, not just text. */
-  buffer(): import("@xterm/headless").Terminal["buffer"]["active"];
   shot(name: string): Promise<void>;
   close(): Promise<void>;
 }
@@ -200,7 +198,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
       PI_CODING_AGENT_DIR: agentDir,
       PI_TUNE_SCENARIO: scenarioPath,
       // The ghost suggestion's own model request would consume a scripted faux response.
-      PI_TUNE_EDITOR_SUGGEST: options.env?.PI_TUNE_EDITOR_SUGGEST ?? "off",
+      PI_TUNE_EDITOR_SUGGEST: "off",
       ...options.env,
     },
   });
@@ -307,7 +305,6 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
       return waitFor(text, timeoutMs, true);
     },
     screen: readScreen,
-    buffer: () => term.buffer.active,
     async shot(name) {
       const dir = process.env.PI_TUNE_SHOTS;
       if (!dir) return;

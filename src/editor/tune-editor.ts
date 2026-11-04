@@ -1,6 +1,7 @@
 import { CustomEditor, type KeybindingsManager, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   type EditorTheme,
+  getKeybindings,
   matchesKey,
   sliceByColumn,
   stripTerminalSequences,
@@ -29,6 +30,8 @@ export interface TuneEditorOptions {
   onPreview?: (id: number) => void;
   /** Injected clock so tests can run the stash confirmation window without waiting. */
   now?: () => number;
+  /** Runs before every submit, including commands that start no agent run. */
+  onBeforeSubmit?: () => void;
 }
 
 interface Stash {
@@ -93,6 +96,7 @@ export class TuneEditor extends CustomEditor {
   private readonly themeOf: () => Theme;
   private readonly now: () => number;
   private readonly onPreview?: (id: number) => void;
+  private readonly onBeforeSubmit?: () => void;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
@@ -111,6 +115,7 @@ export class TuneEditor extends CustomEditor {
     this.themeOf = options.theme;
     this.now = options.now ?? (() => Date.now());
     this.onPreview = options.onPreview;
+    this.onBeforeSubmit = options.onBeforeSubmit;
   }
 
   setStatus(model: string, thinking: string): void {
@@ -149,6 +154,16 @@ export class TuneEditor extends CustomEditor {
         this.onPreview?.(marker.id);
         return;
       }
+    }
+    // `\n` (ctrl+j) matches both bindings; the editor inserts a new line for it.
+    const keys = getKeybindings();
+    if (
+      keys.matches(data, "tui.input.submit") &&
+      !keys.matches(data, "tui.input.newLine") &&
+      this.getText().trim() !== "" &&
+      !this.isShowingAutocomplete()
+    ) {
+      this.onBeforeSubmit?.();
     }
     if (data === "\t" && this.ghostVisible() && !this.isShowingAutocomplete()) {
       const text = this.ghost;

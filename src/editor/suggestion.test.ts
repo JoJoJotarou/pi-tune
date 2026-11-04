@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   buildSuggestionUserMessage,
   buildTranscript,
   cleanSuggestion,
+  collectSessionTurns,
   SUGGEST_SYSTEM_PROMPT,
+  Suggestion,
   type TranscriptTurn,
   withGhostSuggestion,
 } from "./suggestion.ts";
@@ -113,4 +116,159 @@ test("the suggestion prompt carries cwd, transcript and the reply-only instructi
   assert.ok(message.includes("Reply with ONLY the suggestion text."));
   assert.ok(SUGGEST_SYSTEM_PROMPT.includes("A wrong line is worse than NONE."));
   assert.ok(SUGGEST_SYSTEM_PROMPT.includes("2-12 words in their style."));
+});
+
+function fakeEditor() {
+  const state = { text: "", ghost: undefined as string | undefined };
+  return {
+    state,
+    getText: () => state.text,
+    getSuggestion: () => state.ghost,
+    setSuggestion: (text: string | undefined) => {
+      state.ghost = text;
+    },
+  };
+}
+
+function assistantTurn(text: string) {
+  return { role: "assistant", stopReason: "stop", content: [{ type: "text", text }] };
+}
+
+function makeSuggestion(overrides: Partial<ConstructorParameters<typeof Suggestion>[0]> = {}) {
+  const warnings: string[] = [];
+  const editor = fakeEditor();
+  const suggestion = new Suggestion({
+    enabled: true,
+    complete: async () => "run the tests",
+    findModel: () => undefined,
+    sessionModel: () => ({ id: "session" }),
+    collectTurns: () => [{ role: "assistant", text: "done" }],
+    cwd: () => "/tmp",
+    editor: () => editor,
+    notify: (message) => warnings.push(message),
+    ...overrides,
+  });
+  return { suggestion, editor, warnings };
+}
+
+const asMessage = (value: unknown) => value as Parameters<SessionManager["appendMessage"]>[0];
+
+test("the transcript follows the current branch, not abandoned entries", () => {
+  const session = SessionManager.inMemory("/tmp");
+  session.appendMessage(asMessage({ role: "user", content: "q0", timestamp: 1 }));
+  const r0 = session.appendMessage(
+    asMessage({ role: "assistant", content: [{ type: "text", text: "r0" }], timestamp: 2 }),
+  );
+  session.appendMessage(
+    asMessage({ role: "assistant", content: [{ type: "text", text: "ABANDONED 1" }], timestamp: 3 }),
+  );
+  session.appendMessage(
+    asMessage({ role: "assistant", content: [{ type: "text", text: "ABANDONED 2" }], timestamp: 4 }),
+  );
+  session.branch(r0);
+  session.appendMessage(asMessage({ role: "user", content: "q1", timestamp: 5 }));
+  session.appendMessage(asMessage({ role: "assistant", content: [{ type: "text", text: "r1" }], timestamp: 6 }));
+
+  assert.ok(JSON.stringify(session.getEntries()).includes("ABANDONED 1"), "the abandoned branch stays in the file");
+  assert.deepEqual(collectSessionTurns(session), [
+    { role: "user", text: "q0" },
+    { role: "assistant", text: "r0" },
+    { role: "user", text: "q1" },
+    { role: "assistant", text: "r1" },
+  ]);
+});
+
+test("the suggestion model setting overrides the session model", async () => {
+  const seen: unknown[] = [];
+  const override = { id: "override" };
+  const session = { id: "session" };
+  const { suggestion } = makeSuggestion({
+    modelSetting: "provider/model",
+    findModel: (provider, id) => (provider === "provider" && id === "model" ? override : undefined),
+    sessionModel: () => session,
+    complete: async ({ model }) => {
+      seen.push(model);
+      return "next";
+    },
+  });
+  suggestion.startSession();
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done"), 0);
+  assert.deepEqual(seen, [override]);
+});
+
+test("a reply that lands while the user is typing is kept and shown when the editor empties", async () => {
+  let reply!: (text: string) => void;
+  const { suggestion, editor } = makeSuggestion({
+    complete: () => new Promise<string>((resolve) => (reply = resolve)),
+  });
+  suggestion.startSession();
+  suggestion.agentStart();
+  const pending = suggestion.turnEnd(assistantTurn("done"), 0);
+  editor.state.text = "hello";
+  reply("run the tests");
+  await pending;
+  assert.equal(editor.getSuggestion(), "run the tests", "the reply was dropped while the editor had text");
+  editor.state.text = "";
+  assert.equal(editor.getSuggestion(), "run the tests");
+});
+
+test("a new run aborts the request and leaves no suggestion", async () => {
+  let reply!: (text: string) => void;
+  let signal: AbortSignal | undefined;
+  const { suggestion, editor } = makeSuggestion({
+    complete: ({ signal: requestSignal }) => {
+      signal = requestSignal;
+      return new Promise<string>((resolve) => (reply = resolve));
+    },
+  });
+  suggestion.startSession();
+  suggestion.agentStart();
+  const pending = suggestion.turnEnd(assistantTurn("done"), 0);
+  suggestion.agentStart();
+  reply("late suggestion");
+  await pending;
+  assert.equal(signal?.aborted, true);
+  assert.equal(editor.getSuggestion(), undefined);
+});
+
+test("a failed request warns once and stops asking for the session", async () => {
+  let requests = 0;
+  const { suggestion, warnings } = makeSuggestion({
+    complete: async () => {
+      requests++;
+      throw new Error("provider exploded");
+    },
+  });
+  suggestion.startSession();
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done"), 0);
+  assert.equal(requests, 1);
+  assert.deepEqual(warnings, ["Next-step suggestion failed: provider exploded"]);
+
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done again"), 0);
+  suggestion.agentStart();
+  await suggestion.agentSettled(false);
+  assert.equal(requests, 1, "a failed request was retried in the same session");
+  assert.equal(warnings.length, 1);
+});
+
+test("an unknown suggestion model warns at session start and disables suggestions", async () => {
+  for (const modelSetting of ["not-a-provider-model", "missing/model"]) {
+    let requests = 0;
+    const { suggestion, warnings } = makeSuggestion({
+      modelSetting,
+      findModel: () => undefined,
+      complete: async () => {
+        requests++;
+        return "next";
+      },
+    });
+    suggestion.startSession();
+    suggestion.agentStart();
+    await suggestion.turnEnd(assistantTurn("done"), 0);
+    assert.equal(requests, 0);
+    assert.deepEqual(warnings, [`Next-step suggestion model "${modelSetting}" is not a known provider/model.`]);
+  }
 });

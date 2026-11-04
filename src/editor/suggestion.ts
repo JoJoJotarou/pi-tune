@@ -1,8 +1,7 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-/** Pi's editor content rows carry fragment-cache sentinels around the cursor cell. */
-const GHOST_CLEAR = "\x1b_pi:fc\x07";
-const GHOST_RESTORE = "\x1b_pi:/fc\x07";
+/** pi-tui's fake cursor marker (`FAKE_CURSOR_END` in its tui.d.ts, not a runtime export). */
+const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
 
 /**
  * Compact transcript sent to the suggestion model, newest message last. Grok Build's
@@ -86,7 +85,7 @@ export function cleanSuggestion(raw: string, maxChars: number): string {
 }
 
 /** Overlay the ghost suggestion onto an empty editor content row. The cursor cell between Pi's
- * fragment-cache markers stays a single cell (the TUI inverts it as the block cursor), so the
+ * fake cursor markers stays a single cell (the TUI inverts it as the block cursor), so the
  * suggestion goes after it and the row keeps its visible width. Rows without the marker pair
  * (non-empty editors, other layouts) come back untouched.
  */
@@ -96,9 +95,186 @@ export function withGhostSuggestion(
   style: (text: string) => string,
   width: number,
 ): string {
-  const restore = row.indexOf(GHOST_RESTORE);
+  const restore = row.indexOf(FAKE_CURSOR_END);
   if (suggestion === "" || restore < 0) return row;
   const text = truncateToWidth(suggestion, Math.max(0, width - 1), "").trimEnd();
   const padding = " ".repeat(Math.max(0, width - 1 - visibleWidth(text)));
-  return row.slice(0, restore + GHOST_RESTORE.length) + style(text) + padding;
+  return row.slice(0, restore + FAKE_CURSOR_END.length) + style(text) + padding;
+}
+
+export interface SuggestionEditor {
+  getText(): string;
+  getSuggestion(): string | undefined;
+  setSuggestion(text: string | undefined): void;
+}
+
+export interface SuggestionTurn {
+  role?: string;
+  stopReason?: string;
+  content?: Array<{ type?: string; text?: string }>;
+}
+
+export interface SuggestionRequest {
+  model: unknown;
+  systemPrompt: string;
+  userMessage: string;
+  signal: AbortSignal;
+}
+
+export type SuggestionComplete = (request: SuggestionRequest) => Promise<string>;
+
+export interface SuggestionOptions {
+  enabled: boolean;
+  /** `PI_TUNE_SUGGEST_MODEL`; validated at session start, never a silent fallback. */
+  modelSetting?: string;
+  complete: SuggestionComplete;
+  findModel(provider: string, id: string): unknown | undefined;
+  sessionModel(): unknown | undefined;
+  collectTurns(): TranscriptTurn[];
+  cwd(): string;
+  editor(): SuggestionEditor | undefined;
+  notify(message: string, level: "warning"): void;
+  maxChars?: number;
+}
+
+const SUGGEST_CHARS = 80;
+
+/** One suggestion request per run, aborted by the next run or session change. */
+export class Suggestion {
+  private readonly options: SuggestionOptions;
+  private overrideModel: unknown;
+  private sessionModelValue: unknown;
+  private invalidModel = false;
+  private failed = false;
+  private runActive = false;
+  private requestedThisRun = false;
+  private abort: AbortController | undefined;
+
+  constructor(options: SuggestionOptions) {
+    this.options = options;
+  }
+
+  startSession(): void {
+    this.discard();
+    this.overrideModel = undefined;
+    this.sessionModelValue = this.options.sessionModel();
+    this.invalidModel = false;
+    this.failed = false;
+    this.runActive = false;
+    this.requestedThisRun = false;
+    if (!this.options.enabled) return;
+    const setting = this.options.modelSetting;
+    if (setting === undefined || setting === "") return;
+    const slash = setting.indexOf("/");
+    const model = slash > 0 ? this.options.findModel(setting.slice(0, slash), setting.slice(slash + 1)) : undefined;
+    if (model === undefined) {
+      this.invalidModel = true;
+      this.options.notify(`Next-step suggestion model "${setting}" is not a known provider/model.`, "warning");
+      return;
+    }
+    this.overrideModel = model;
+  }
+
+  setSessionModel(model: unknown): void {
+    this.sessionModelValue = model;
+  }
+
+  agentStart(): void {
+    this.discard();
+    this.requestedThisRun = false;
+    this.runActive = true;
+  }
+
+  async turnEnd(message: SuggestionTurn, toolResultCount: number): Promise<void> {
+    if (message.role !== "assistant" || message.stopReason !== "stop" || toolResultCount > 0) return;
+    if (this.requestedThisRun || !this.runActive) return;
+    const reply = (message.content ?? [])
+      .filter(
+        (block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string",
+      )
+      .map((block) => block.text)
+      .join("\n");
+    await this.request(reply);
+  }
+
+  async agentSettled(aborted: boolean): Promise<void> {
+    if (!aborted && this.runActive && !this.requestedThisRun) await this.request();
+    this.runActive = false;
+  }
+
+  discard(): void {
+    this.abort?.abort();
+    this.abort = undefined;
+    const editor = this.options.editor();
+    if (editor?.getSuggestion() !== undefined) editor.setSuggestion(undefined);
+  }
+
+  private async request(concludingReply?: string): Promise<void> {
+    const editor = this.options.editor();
+    if (!this.options.enabled || this.invalidModel || this.failed || editor === undefined) return;
+    const model = this.overrideModel ?? this.sessionModelValue;
+    if (model === undefined) return;
+    const turns = this.options.collectTurns();
+    const reply = concludingReply?.trim() ?? "";
+    if (reply !== "") {
+      const last = turns[turns.length - 1];
+      if (last?.role !== "assistant" || last.text.trim() !== reply) {
+        turns.push({ role: "assistant", text: reply });
+      }
+    }
+    const transcript = buildTranscript(turns);
+    if (transcript === undefined) return;
+    this.requestedThisRun = true;
+    const controller = new AbortController();
+    this.abort = controller;
+    try {
+      const text = await this.options.complete({
+        model,
+        systemPrompt: SUGGEST_SYSTEM_PROMPT,
+        userMessage: buildSuggestionUserMessage(this.options.cwd(), transcript),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      const suggestion = cleanSuggestion(text, this.options.maxChars ?? SUGGEST_CHARS);
+      // Keep the reply even when the editor has text: the editor hides it until the text is cleared.
+      if (suggestion !== "") editor.setSuggestion(suggestion);
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      this.failed = true;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.options.notify(`Next-step suggestion failed: ${reason}`, "warning");
+    } finally {
+      if (this.abort === controller) this.abort = undefined;
+    }
+  }
+}
+
+interface SessionEntryLike {
+  message?: { role?: string; content?: string | Array<{ type?: string; text?: string }> };
+}
+
+/** Turns from the session's current branch; abandoned branches stay out of the model request. */
+export function collectSessionTurns(session: { getBranch(): readonly unknown[] }): TranscriptTurn[] {
+  return collectTranscriptTurns(session.getBranch());
+}
+
+/** User and assistant text from the current branch, oldest first; everything else is skipped. */
+export function collectTranscriptTurns(entries: readonly unknown[]): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = [];
+  for (const entry of entries) {
+    const message = (entry as SessionEntryLike).message;
+    if (!message) continue;
+    const role = message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    const content = message.content ?? [];
+    const text =
+      typeof content === "string"
+        ? content
+        : content
+            .filter((block): block is { type: "text"; text: string } => block.type === "text")
+            .map((block) => block.text)
+            .join("\n");
+    if (text.trim() !== "") turns.push({ role, text });
+  }
+  return turns;
 }

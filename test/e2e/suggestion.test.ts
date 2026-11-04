@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
-// The ghost suggestion's own request consumes the next scripted response, so the scenario queues
+// The ghost suggestion's own request consumes the next scripted response, so the scenarios queue
 // a stub turn for it.
+const GHOST = "Run the test suite and report failures";
 const scenario: Scenario = {
-  turns: [[{ text: "First answer." }], [{ text: "Run the test suite and report failures" }]],
+  turns: [[{ text: "First answer." }], [{ text: GHOST }]],
   tokensPerSecond: 2000,
 };
 
@@ -27,27 +28,73 @@ test("the ghost suggestion fills on tab and hides while typing", { timeout: 120_
     pi.type("go\r");
     await pi.waitFor("First answer.");
     // The suggestion request fires after the run settles; it consumes the queued stub turn.
-    await pi.waitFor("Run the test suite and report failures");
+    await pi.waitFor(GHOST);
     await pi.shot("suggestion-visible");
 
     // Tab fills the editor without submitting it.
     pi.press("tab");
-    await pi.waitFor(/│Run the test suite and report failures +│/);
+    await pi.waitFor(new RegExp(`│${GHOST} +│`));
     await pi.shot("suggestion-filled");
-    await new Promise((done) => setTimeout(done, 500));
     pi.type("x");
-    await new Promise((done) => setTimeout(done, 300));
-    assert.ok(pi.screen().some((row) => row.includes("Run the test suite and report failuresx")));
+    await pi.waitFor(`${GHOST}x`);
   });
 });
 
-test("PI_TUNE_EDITOR_SUGGEST=off never shows a suggestion", { timeout: 120_000 }, async () => {
-  const pi = await startPi({ scenario, tune: true });
+test("PI_TUNE_EDITOR_SUGGEST=off never requests a suggestion", { timeout: 120_000 }, async () => {
+  const pi = await startPi({
+    scenario: {
+      turns: [[{ text: "First answer." }], [{ text: GHOST }], [{ text: "Second answer." }]],
+      tokensPerSecond: 2000,
+    },
+    tune: true,
+  });
   await closeAfter(pi, async () => {
     pi.type("go\r");
     await pi.waitFor("First answer.");
-    await new Promise((done) => setTimeout(done, 1000));
-    const lines = pi.screen().map((row) => row.trim());
-    assert.ok(!lines.some((line) => line.includes("Run the test suite and report failures")));
+    // With the request off, the second prompt consumes the turn the suggestion would have taken.
+    pi.type("next\r");
+    await pi.waitFor(GHOST);
+    assert.ok(!pi.screen().some((row) => row.includes("Second answer.")));
+  });
+});
+
+test("the ghost is discarded by a bash command that starts no run", { timeout: 120_000 }, async () => {
+  const pi = await startPi({
+    scenario,
+    tune: true,
+    env: { PI_TUNE_EDITOR_SUGGEST: "on" },
+  });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.waitFor(GHOST);
+    pi.type("!echo $((40+2))\r");
+    await pi.waitFor("42");
+    await pi.waitForGone(GHOST);
+  });
+});
+
+test("the ghost is discarded once a new prompt is submitted", { timeout: 120_000 }, async () => {
+  const pi = await startPi({
+    scenario: {
+      turns: [
+        [{ text: "First answer." }],
+        [{ text: GHOST }],
+        [{ text: `Second answer. ${"x".repeat(200)}` }],
+        [{ text: "Next suggestion" }],
+      ],
+      tokensPerSecond: 100,
+    },
+    tune: true,
+    env: { PI_TUNE_EDITOR_SUGGEST: "on" },
+  });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.waitFor(GHOST);
+    pi.type("next\r");
+    // The second answer is still streaming, so no new suggestion can have replaced the old one yet.
+    await pi.waitFor("Second answer.");
+    await pi.waitForGone(GHOST);
   });
 });

@@ -1,18 +1,11 @@
-import type { AnyModel, Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { PastePreview, type PastePreviewAction } from "../src/editor/paste-preview.ts";
-import {
-  buildSuggestionUserMessage,
-  buildTranscript,
-  cleanSuggestion,
-  SUGGEST_SYSTEM_PROMPT,
-  type TranscriptTurn,
-} from "../src/editor/suggestion.ts";
+import { collectSessionTurns, Suggestion, type SuggestionComplete } from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
-const SUGGEST_CHARS = 80;
 const SUGGEST_MAX_TOKENS = 1024;
 
 const SUGGEST_ENABLED = process.env.PI_TUNE_EDITOR_SUGGEST !== "off";
@@ -31,84 +24,51 @@ export default function (pi: ExtensionAPI) {
   let openPreviewModal: ((id: number, content: string) => Promise<PastePreviewAction | undefined>) | undefined;
 
   // --- ghost suggestion state ---
-  let chatModel: AnyModel | undefined;
-  let modelRegistry: Registry | undefined;
-  let cwd = "";
-  let collectTurns: (() => TranscriptTurn[]) | undefined;
-  let runActive = false;
-  let requestedThisRun = false;
-  let suggestAbort: AbortController | undefined;
+  let chatModel: Model<Api> | undefined;
+  let registry: Registry | undefined;
+  let suggestion: Suggestion | undefined;
 
   const sync = () => {
     editor?.setStatus(model, thinking);
     tui?.requestRender();
   };
 
-  const discardSuggestion = () => {
-    suggestAbort?.abort();
-    suggestAbort = undefined;
-    if (editor !== undefined && editor.getSuggestion() !== undefined) editor.setSuggestion(undefined);
-  };
-
-  const requestSuggestion = async (concludingReply?: string): Promise<void> => {
-    if (!SUGGEST_ENABLED || !editor || !modelRegistry || !collectTurns) return;
-    const model = resolveSuggestModel(modelRegistry, chatModel) as Model<Api> | undefined;
-    if (!model) return;
-    // The settled message may not be in the session entries yet; append it when it is missing.
-    const turns = collectTurns();
-    const reply = concludingReply?.trim() ?? "";
-    if (reply !== "") {
-      const last = turns[turns.length - 1];
-      if (!last || last.role !== "assistant" || last.text.trim() !== reply) {
-        turns.push({ role: "assistant", text: reply });
-      }
-    }
-    const transcript = buildTranscript(turns);
-    if (transcript === undefined) return;
-    requestedThisRun = true;
-    const controller = new AbortController();
-    suggestAbort = controller;
-    try {
-      const auth = await modelRegistry.getApiKeyAndHeaders(model);
-      // No credentials: this never self-heals, and the working-indicator summary request exits the same way.
-      if (!auth.ok || controller.signal.aborted) return;
-      const response = await modelRegistry.complete(
-        model,
-        {
-          systemPrompt: SUGGEST_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: [{ type: "text", text: buildSuggestionUserMessage(cwd, transcript) }],
-              timestamp: Date.now(),
-            },
-          ],
-        },
-        {
-          apiKey: auth.apiKey,
-          headers: auth.headers,
-          signal: controller.signal,
-          maxTokens: SUGGEST_MAX_TOKENS,
-          temperature: 0.2,
-        },
-      );
-      if (controller.signal.aborted) return;
-      const text = response.content
-        .filter((block): block is { type: "text"; text: string } => block.type === "text")
-        .map((block) => block.text)
-        .join("\n");
-      const suggestion = cleanSuggestion(text, SUGGEST_CHARS);
-      if (suggestion !== "" && editor.getText().length === 0) editor.setSuggestion(suggestion);
-    } catch {
-      // Request-level failures (abort, network, provider) just leave the editor empty.
-    } finally {
-      if (suggestAbort === controller) suggestAbort = undefined;
-    }
+  const completeSuggestion: SuggestionComplete = async ({ model: target, systemPrompt, userMessage, signal }) => {
+    if (!registry) throw new Error("model registry unavailable");
+    const chat = target as Model<Api>;
+    const auth = await registry.getApiKeyAndHeaders(chat);
+    if (!auth.ok) throw new Error(auth.error);
+    const response = await registry.complete(
+      chat,
+      {
+        systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: userMessage }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        apiKey: auth.apiKey,
+        headers: auth.headers,
+        signal,
+        maxTokens: SUGGEST_MAX_TOKENS,
+        temperature: 0.2,
+      },
+    );
+    if (response.stopReason === "error") throw new Error(response.errorMessage ?? "provider error");
+    return response.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
   };
 
   pi.on("model_select", (event) => {
     model = event.model.id;
     chatModel = event.model;
+    suggestion?.setSessionModel(event.model);
     sync();
   });
 
@@ -118,31 +78,18 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_start", () => {
-    // A new run invalidates both the old suggestion and this run's request budget.
-    discardSuggestion();
-    requestedThisRun = false;
-    runActive = true;
+    suggestion?.agentStart();
   });
 
   pi.on("turn_end", (event) => {
-    const message = event.message as AssistantMessage;
-    // Only a concluded reply (no pending tool loop) seeds the suggestion.
-    if (message.role !== "assistant" || message.stopReason !== "stop" || event.toolResults.length > 0) return;
-    if (requestedThisRun || !runActive) return;
-    const text = message.content
-      .filter((block): block is Extract<AssistantMessage["content"][number], { type: "text" }> => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-    void requestSuggestion(text);
+    void suggestion?.turnEnd(event.message as AssistantMessage, event.toolResults.length);
   });
 
   pi.on("agent_settled", (event) => {
-    // Backstop for endings turn_end's concluding gate misses (length cut, terminate).
-    if (!event.aborted && runActive && !requestedThisRun) void requestSuggestion();
-    runActive = false;
+    void suggestion?.agentSettled(event.aborted);
   });
 
-  pi.on("session_compact", () => discardSuggestion());
+  pi.on("session_compact", () => suggestion?.discard());
 
   async function preview(target: TuneEditor, id: number): Promise<void> {
     const content = target.readPaste(id);
@@ -156,17 +103,25 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", (_event, ctx) => {
-    discardSuggestion();
-    requestedThisRun = false;
-    runActive = false;
+    suggestion?.discard();
     if (ctx.mode !== "tui") return;
     model = ctx.model?.id ?? "no model";
     chatModel = ctx.model;
-    modelRegistry = ctx.modelRegistry;
-    cwd = ctx.cwd;
-    collectTurns = () => collectTranscriptTurns(ctx.sessionManager.getEntries());
+    registry = ctx.modelRegistry;
     thinking = pi.getThinkingLevel();
     notify = (message, level) => ctx.ui.notify(message, level);
+    suggestion = new Suggestion({
+      enabled: SUGGEST_ENABLED,
+      modelSetting: SUGGEST_MODEL,
+      complete: completeSuggestion,
+      findModel: (provider, id) => ctx.modelRegistry.find(provider, id),
+      sessionModel: () => chatModel,
+      collectTurns: () => collectSessionTurns(ctx.sessionManager),
+      cwd: () => ctx.cwd,
+      editor: () => editor,
+      notify: (message, level) => ctx.ui.notify(message, level),
+    });
+    suggestion.startSession();
     currentTheme = () => ctx.ui.theme;
     openPreviewModal = (id, content) =>
       ctx.ui.custom<PastePreviewAction | undefined>(
@@ -190,6 +145,7 @@ export default function (pi: ExtensionAPI) {
             notify?.(`pi-tune paste preview failed: ${String(error)}`, "error");
           });
         },
+        onBeforeSubmit: () => suggestion?.discard(),
       });
       editor = instance;
       pi.events.emit("pi-tune:editor-ready", undefined);
@@ -198,42 +154,13 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
-    discardSuggestion();
+    suggestion?.discard();
+    suggestion = undefined;
     notify = undefined;
     currentTheme = undefined;
     openPreviewModal = undefined;
     editor = undefined;
     tui = undefined;
-    modelRegistry = undefined;
-    collectTurns = undefined;
+    registry = undefined;
   });
-}
-
-function resolveSuggestModel(registry: Registry, fallback: AnyModel | undefined): AnyModel | undefined {
-  if (!SUGGEST_MODEL) return fallback;
-  const slash = SUGGEST_MODEL.indexOf("/");
-  if (slash <= 0) return fallback;
-  return registry.find(SUGGEST_MODEL.slice(0, slash), SUGGEST_MODEL.slice(slash + 1)) ?? fallback;
-}
-
-interface SessionEntryLike {
-  type?: string;
-  message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
-}
-
-/** User and assistant text from the session entries, oldest first; everything else is skipped. */
-function collectTranscriptTurns(entries: readonly unknown[]): TranscriptTurn[] {
-  const turns: TranscriptTurn[] = [];
-  for (const entry of entries) {
-    const message = (entry as SessionEntryLike).message;
-    if (!message) continue;
-    const role = message.role;
-    if (role !== "user" && role !== "assistant") continue;
-    const text = (message.content ?? [])
-      .filter((block): block is { type: "text"; text: string } => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-    if (text.trim() !== "") turns.push({ role, text });
-  }
-  return turns;
 }

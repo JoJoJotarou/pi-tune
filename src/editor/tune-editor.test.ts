@@ -265,7 +265,7 @@ test("the ghost suggestion overlays the empty editor's content row", () => {
   const editor = makeEditor();
   editor.setSuggestion("run the tests");
   const lines = editor.render(40).map(plain);
-  assert.equal(lines.length, 3, "the box keeps its size:\n" + lines.join("\n"));
+  assert.equal(lines.length, 3, `the box keeps its size:\n${lines.join("\n")}`);
   assert.match(lines[1] ?? "", /run the tests/);
 });
 
@@ -312,4 +312,28 @@ test("the ghost line never exceeds the width it was given", () => {
   for (const width of [40, 60, 80]) {
     for (const line of editor.render(width)) assert.equal(visibleWidth(line), width);
   }
+});
+
+test("any submit discards the suggestion before Pi handles it", () => {
+  const calls: string[] = [];
+  const editor = makeEditor({ onBeforeSubmit: () => calls.push("discard") });
+  editor.onSubmit = (text) => calls.push(`submit:${text}`);
+  for (const text of ["!echo hi", "/name x", "plain prompt"]) {
+    calls.length = 0;
+    editor.setSuggestion("run the tests");
+    editor.setText(text);
+    editor.handleInput("\r");
+    assert.deepEqual(calls, ["discard", `submit:${text}`], text);
+  }
+});
+
+test("a new line or an empty enter keeps the suggestion", () => {
+  let discarded = 0;
+  const editor = makeEditor({ onBeforeSubmit: () => discarded++ });
+  editor.setSuggestion("run the tests");
+  editor.handleInput("\r");
+  editor.setText("draft");
+  editor.handleInput("\n");
+  assert.equal(discarded, 0);
+  assert.equal(editor.getText(), "draft\n");
 });
