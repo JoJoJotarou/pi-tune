@@ -36,6 +36,8 @@ export interface StartOptions {
   agentFiles?: Record<string, string>;
   /** Leave `--no-skills` out, so Pi loads the skills under the agent dir. */
   skills?: boolean;
+  /** Leave `--no-session` out, so Pi saves the session under `<agent dir>/sessions`. */
+  session?: boolean;
 }
 
 export interface PiSession {
@@ -163,7 +165,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
   const args = [
     piCli,
     "--offline",
-    "--no-session",
+    ...(options.session ? [] : ["--no-session"]),
     "--no-extensions",
     ...(options.skills ? [] : ["--no-skills"]),
     "--no-context-files",
