@@ -23,11 +23,7 @@ export interface StatusHost {
 export interface StatusContext {
   mode: ExtensionContext["mode"];
   cwd: string;
-  ui: {
-    readonly theme: Theme;
-    setWorkingMessage(message?: string): void;
-    setTitle(title: string): void;
-  };
+  ui: Pick<ExtensionContext["ui"], "theme" | "setWorkingMessage" | "setTitle">;
 }
 
 export interface StatusSession {

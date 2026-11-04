@@ -47,7 +47,7 @@ export interface EditorContext {
   model: ExtensionContext["model"];
   modelRegistry: ExtensionContext["modelRegistry"];
   cwd: string;
-  sessionManager: { getBranch(): readonly unknown[] };
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getBranch">;
   ui: Pick<ExtensionContext["ui"], "notify" | "custom" | "setEditorComponent" | "theme">;
 }
 

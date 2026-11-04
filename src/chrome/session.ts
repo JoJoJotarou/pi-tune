@@ -2,14 +2,12 @@ import { basename, join } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import {
   type ContextUsage,
+  type ExtensionContext,
   type MessageEndEvent,
   type MessageUpdateEvent,
-  type ReadonlyFooterDataProvider,
-  type SessionEntry,
-  type Theme,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine, streamRate } from "./footer.ts";
 import { headerLine } from "./header.ts";
 import { formatHints, type HintState, hintFor } from "./hints.ts";
@@ -37,20 +35,11 @@ export interface ChromeHost {
 /** The part of Pi's `ExtensionContext` the chrome session uses. */
 export interface ChromeContext {
   cwd: string;
+  model: ExtensionContext["model"];
   isProjectTrusted(): boolean;
-  ui: {
-    notify(message: string, type?: "info" | "warning" | "error"): void;
-    getEditorText(): string;
-    setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
-    setFooter(
-      factory:
-        | ((tui: TUI, theme: Theme, footerData: ReadonlyFooterDataProvider) => Component & { dispose?(): void })
-        | undefined,
-    ): void;
-  };
-  sessionManager: { getEntries(): SessionEntry[] };
   getContextUsage(): ContextUsage | undefined;
-  model?: { contextWindow: number } | undefined;
+  ui: Pick<ExtensionContext["ui"], "notify" | "getEditorText" | "setHeader" | "setFooter">;
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries">;
 }
 
 export interface ChromeSession {

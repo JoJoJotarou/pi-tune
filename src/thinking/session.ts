@@ -3,7 +3,6 @@ import type {
   MarkdownTransformContext,
   MessageEndEvent,
   MessageUpdateEvent,
-  SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { buildThoughtSummary } from "./summary.ts";
@@ -34,8 +33,8 @@ export interface ThinkingHost {
 /** The part of Pi's `ExtensionContext` the thinking session uses. */
 export interface ThinkingContext {
   mode: ExtensionContext["mode"];
-  ui: { setHiddenThinkingLabel(label: string): void };
-  sessionManager: { getEntries(): SessionEntry[] };
+  ui: Pick<ExtensionContext["ui"], "setHiddenThinkingLabel">;
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries">;
 }
 
 export interface ThinkingSession {

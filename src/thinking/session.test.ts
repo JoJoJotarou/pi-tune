@@ -23,7 +23,7 @@ function harness(): Harness {
   let nowMs = 1_000;
   const ctx: ThinkingContext = {
     mode: "tui",
-    ui: { setHiddenThinkingLabel: (label) => labels.push(label) },
+    ui: { setHiddenThinkingLabel: (label) => labels.push(label ?? "") },
     sessionManager: { getEntries: () => entries },
   };
   const host: ThinkingHost = { now: () => nowMs, colorEnabled: () => false };
