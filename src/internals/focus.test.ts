@@ -17,5 +17,5 @@ test("tells whether Pi's editor has keyboard focus", () => {
 test("returns an Error on a screen that does not report focus", () => {
   const result = editorHasFocus({} as TUI);
   assert.ok(result instanceof Error);
-  assert.match(result.message, /esc and shift\+↑↓/);
+  assert.match(result.message, /does not report focus/);
 });

@@ -322,7 +322,7 @@ export default function btwExtension(pi: ExtensionAPI) {
       if (!open || !tui) return undefined;
       const focused = editorHasFocus(tui);
       if (focused instanceof Error) {
-        if (!warned) ctx.ui.notify(focused.message, "warning");
+        if (!warned) ctx.ui.notify(`pi-tune btw: ${focused.message}; esc and shift+↑↓ stay with Pi.`, "warning");
         warned = true;
         return undefined;
       }

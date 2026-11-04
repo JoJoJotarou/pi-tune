@@ -1,4 +1,10 @@
-import { CustomEditor, type KeybindingsManager, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import {
+  CustomEditor,
+  type KeybindingsManager,
+  keyText,
+  type Theme,
+  type ThemeColor,
+} from "@earendil-works/pi-coding-agent";
 import {
   type EditorTheme,
   getKeybindings,
@@ -18,6 +24,8 @@ import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker }
 import { withGhostSuggestion } from "./suggestion.ts";
 
 const STASH_CONFIRM_MS = 3000;
+/** Pi exits when `app.clear` arrives twice within 500 ms of each other; the label lives exactly that long. */
+const CTRL_C_WINDOW_MS = 500;
 /** Zero-width APC: Pi pads every content line, so the bottom border needs its own tag to stay findable. */
 const BOTTOM_MARK = "\u001b_pi:tune-bottom\u0007";
 
@@ -37,6 +45,8 @@ export interface TuneEditorOptions {
   onAcceptSuggestion?: () => void;
   /** Runs when esc on the empty editor dismisses the suggestion. */
   onDismissSuggestion?: () => void;
+  /** Runs when a stash is taken (`true`) or restored (`false`), so the footer can name the next `ctrl+s`. */
+  onStashChange?: (held: boolean) => void;
 }
 
 interface Stash {
@@ -99,14 +109,20 @@ export class TuneEditor extends CustomEditor {
   private model: string;
   private thinking: string;
   private readonly themeOf: () => Theme;
+  /** Pi resolves app actions through this manager; the parent keeps its copy private. */
+  private readonly keybindingsOf: KeybindingsManager;
   private readonly now: () => number;
   private readonly onPreview?: (id: number) => void;
   private readonly onBeforeSubmit?: () => void;
   private readonly onAcceptSuggestion?: () => void;
   private readonly onDismissSuggestion?: () => void;
+  private readonly onStashChange?: (held: boolean) => void;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
+  /** End of Pi's double `app.clear` window, while the border names that second press. */
+  private ctrlCUntil?: number;
+  private ctrlCTimer?: ReturnType<typeof setTimeout>;
   private framed = false;
   private ghost?: string;
   /** Enter sends to a btw side thread: the frame takes the drawer's color and the suggestion stays hidden. */
@@ -122,11 +138,13 @@ export class TuneEditor extends CustomEditor {
     this.model = options.model;
     this.thinking = options.thinking;
     this.themeOf = options.theme;
+    this.keybindingsOf = keybindings;
     this.now = options.now ?? (() => Date.now());
     this.onPreview = options.onPreview;
     this.onBeforeSubmit = options.onBeforeSubmit;
     this.onAcceptSuggestion = options.onAcceptSuggestion;
     this.onDismissSuggestion = options.onDismissSuggestion;
+    this.onStashChange = options.onStashChange;
   }
 
   setStatus(model: string, thinking: string): void {
@@ -164,6 +182,7 @@ export class TuneEditor extends CustomEditor {
       return;
     }
     this.clearStashConfirm();
+    this.noteCtrlC(data);
     if (data === "\r" || data === "\n" || matchesKey(data, "enter")) {
       const marker = this.markerAtCursor();
       if (marker) {
@@ -266,6 +285,7 @@ export class TuneEditor extends CustomEditor {
 
   private leftLabel(): string | undefined {
     if (this.stashConfirming()) return this.themeOf().fg("warning", "ctrl+s again to replace stash");
+    if (this.ctrlCConfirming()) return this.themeOf().fg("warning", `${keyText("app.clear")} again to exit`);
     if (this.stash) return this.frameColor("stashed");
     return undefined;
   }
@@ -281,6 +301,26 @@ export class TuneEditor extends CustomEditor {
     if (this.confirmTimer !== undefined) clearTimeout(this.confirmTimer);
     this.confirmTimer = undefined;
     this.stashConfirmUntil = undefined;
+  }
+
+  /** Marks the window in which Pi exits on a second `app.clear`, so the border can say so. */
+  private noteCtrlC(data: string): void {
+    // The editor consumes `app.clear` while its autocomplete is open; Pi never sees that key.
+    if (this.isShowingAutocomplete() || !this.keybindingsOf.matches(data, "app.clear")) return;
+    if (this.ctrlCTimer !== undefined) clearTimeout(this.ctrlCTimer);
+    this.ctrlCUntil = this.now() + CTRL_C_WINDOW_MS;
+    this.ctrlCTimer = setTimeout(() => {
+      this.ctrlCUntil = undefined;
+      this.ctrlCTimer = undefined;
+      this.tui.requestRender();
+    }, CTRL_C_WINDOW_MS);
+  }
+
+  private ctrlCConfirming(): boolean {
+    if (this.ctrlCUntil === undefined) return false;
+    if (this.now() < this.ctrlCUntil) return true;
+    this.ctrlCUntil = undefined;
+    return false;
   }
 
   /** ctrl+s: stash, restore, or — with a stash already held — ask once before replacing it. */
@@ -303,6 +343,7 @@ export class TuneEditor extends CustomEditor {
     const { line, col } = this.getCursor();
     this.stash = { text: this.getExpandedText(), line, col };
     this.setText("");
+    this.onStashChange?.(true);
     this.tui.requestRender();
   }
 
@@ -310,6 +351,7 @@ export class TuneEditor extends CustomEditor {
     const stash = this.stash;
     if (!stash) return;
     this.stash = undefined;
+    this.onStashChange?.(false);
     this.setText(stash.text);
     this.restoreCursor(stash.line, stash.col);
     this.tui.requestRender();

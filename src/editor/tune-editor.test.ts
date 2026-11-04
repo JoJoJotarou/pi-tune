@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import { type KeybindingsManager, keyText } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { CURSOR_MARKER, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
@@ -11,10 +11,13 @@ const plain = (line: string) => stripTerminalSequences(line);
 
 type Options = Partial<TuneEditorOptions> & { paddingX?: number };
 
-function makeEditor(options: Options = {}): TuneEditor {
+/** `matches` answers the app keybindings; the default claims none, like a terminal that never sends them. */
+function makeEditor(options: Options = {}, matches: (binding: string) => boolean = () => false): TuneEditor {
   const tui = { requestRender() {}, terminal: { rows: 30, cols: 100 } } as unknown as TUI;
   const editorTheme = { borderColor: (text: string) => text, selectList: {} } as EditorTheme;
-  const keybindings = { matches: () => false } as unknown as KeybindingsManager;
+  const keybindings = {
+    matches: (_data: string, binding: string) => matches(binding),
+  } as unknown as KeybindingsManager;
   return new TuneEditor(tui, editorTheme, keybindings, {
     model: "scripted",
     thinking: "high",
@@ -181,6 +184,28 @@ test("the replace prompt expires after three seconds", () => {
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "second");
   assert.match(plain(lastLine(editor)), /replace stash/);
+});
+
+test("the stash reports when it is held, so the footer can name the next ctrl+s", () => {
+  const held: boolean[] = [];
+  const editor = makeEditor({ onStashChange: (value) => held.push(value) });
+  editor.setText("draft");
+  editor.handleInput("\x13");
+  editor.handleInput("\x13");
+  assert.deepEqual(held, [true, false]);
+});
+
+test("ctrl+c names the second press that exits, for Pi's half-second window", () => {
+  let now = 1000;
+  const editor = makeEditor({ now: () => now }, (binding) => binding === "app.clear");
+  const border = () => plain(lastLine(editor));
+  assert.doesNotMatch(border(), /again to exit/);
+
+  editor.handleInput("\x03");
+  assert.ok(border().includes(`${keyText("app.clear")} again to exit`), border());
+
+  now += 501;
+  assert.doesNotMatch(border(), /again to exit/);
 });
 
 test("stashing keeps expanded paste content", () => {
