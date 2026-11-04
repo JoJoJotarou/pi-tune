@@ -11,7 +11,7 @@ import { Editor, type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/p
  */
 export function editorHasFocus(tui: TUI): boolean | Error {
   if (!(tui instanceof TuiAltScreen) && !(tui instanceof TuiMainScreen)) {
-    return new Error("pi-tune btw: this Pi screen does not report focus; esc and shift+↑↓ stay with Pi.");
+    return new Error("this Pi screen does not report focus");
   }
   return tui.getFocusedComponent() instanceof Editor;
 }

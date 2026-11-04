@@ -286,6 +286,7 @@ export default function (pi: ExtensionAPI) {
         onBeforeSubmit: () => suggestion?.discard(),
         onAcceptSuggestion: () => suggestion?.accepted(),
         onDismissSuggestion: () => suggestion?.discard(),
+        onStashChange: (held) => pi.events.emit("pi-tune:editor-stash", held),
       });
       instance.setBtwMode(btwMode);
       editor = instance;

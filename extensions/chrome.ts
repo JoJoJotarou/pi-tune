@@ -11,8 +11,10 @@ import {
 import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine, streamRate } from "../src/chrome/footer.ts";
 import { headerLine } from "../src/chrome/header.ts";
-import { formatHints, hintFor } from "../src/chrome/hints.ts";
+import { formatHints, type HintState, hintFor } from "../src/chrome/hints.ts";
 import { configuredServers, connectedServers, isMcpConfig } from "../src/chrome/mcp.ts";
+import { editorHasFocus } from "../src/internals/focus.ts";
+import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
 
 interface UsageTotals {
   input: number;
@@ -78,6 +80,12 @@ export default function (pi: ExtensionAPI) {
   let current: ExtensionContext | undefined;
   let running = false;
   let stashReady = false;
+  /** A draft sits in the editor's stash, so `ctrl+s` restores instead of stashing. */
+  let stashHeld = false;
+  /** A btw side thread holds the drawer and takes the input, so `/` and `!` do nothing. */
+  let btwOpen = false;
+  /** The focus check warned once; a second warning would repeat on every frame. */
+  let focusWarned = false;
   let tui: TUI | undefined;
   /** First text or thinking token of the streaming message, cleared when it ends. */
   let streamStartedAt: number | undefined;
@@ -115,6 +123,16 @@ export default function (pi: ExtensionAPI) {
 
   pi.events.on("pi-tune:editor-ready", () => {
     stashReady = true;
+    tui?.requestRender();
+  });
+
+  pi.events.on("pi-tune:editor-stash", (held) => {
+    stashHeld = held === true;
+    tui?.requestRender();
+  });
+
+  pi.events.on(BTW_MODE_CHANNEL, (open) => {
+    btwOpen = open === true;
     tui?.requestRender();
   });
 
@@ -162,6 +180,9 @@ export default function (pi: ExtensionAPI) {
     current = ctx;
     running = false;
     stashReady = false;
+    stashHeld = false;
+    btwOpen = false;
+    focusWarned = false;
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     rate = undefined;
@@ -219,8 +240,20 @@ export default function (pi: ExtensionAPI) {
                 : streamRate(streamOutputTokens, streamStartedAt, Date.now())) ?? rate,
             ttftMs: ttft,
           };
-          const state = running ? (session.ui.getEditorText().trim() ? "busy-typing" : "busy-empty") : "idle";
-          const hints = formatHints(hintFor(state, { stash: stashReady }), theme);
+          const state: HintState = {
+            draft: session.ui.getEditorText().trim() ? "text" : "empty",
+            running,
+            editor: stashReady,
+            stash: stashHeld ? "held" : "none",
+            btw: btwOpen,
+          };
+          // Every hint names a key the focused editor answers: with a dialog focused, all of them are wrong.
+          const focused = editorHasFocus(footerTui);
+          if (focused instanceof Error && !focusWarned) {
+            focusWarned = true;
+            session.ui.notify(`pi-tune chrome: ${focused.message} Key hints stay visible.`, "warning");
+          }
+          const hints = focused === false ? "" : formatHints(hintFor(state), theme);
           const parts: FooterParts = {
             project: basename(session.cwd),
             branch: footerData.getGitBranch() ?? undefined,
@@ -240,6 +273,9 @@ export default function (pi: ExtensionAPI) {
     current = undefined;
     running = false;
     stashReady = false;
+    stashHeld = false;
+    btwOpen = false;
+    focusWarned = false;
     streamStartedAt = undefined;
     streamOutputTokens = 0;
     rate = undefined;

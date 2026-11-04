@@ -19,7 +19,7 @@ test("idle chrome shows a one-row header and a native footer", { timeout: 180_00
   try {
     await pi.waitFor("π pi 1.4.0");
     await pi.waitFor("/ commands");
-    await pi.waitFor("ctrl+s stash");
+    assert.equal(pi.screen().join("\n").includes("ctrl+s"), false, "nothing to stash and no stash held");
     const screen = pi.screen();
     const headerRows = screen.filter((line) => line.includes("π pi"));
     assert.equal(headerRows.length, 1, screen.join("\n"));
@@ -38,6 +38,45 @@ test("idle chrome shows a one-row header and a native footer", { timeout: 180_00
     assert.ok(!footer.includes("full/path"), footer);
     await pi.shot("footer-idle");
     await pi.shot("header");
+  } finally {
+    await pi.close();
+  }
+});
+
+test("key hints follow the draft, the stash and the focused dialog", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: scenario(), cols: 100, rows: 30 });
+  try {
+    await pi.waitFor("@ files");
+
+    // A draft turns off the prefixes that need the start of the message.
+    pi.type("a draft");
+    await pi.waitFor("ctrl+s stash");
+    const drafted = pi.screen().find((line) => line.includes("ctrl+s stash")) ?? "";
+    assert.equal(drafted.includes("/ commands"), false, drafted);
+    assert.equal(drafted.includes("! shell"), false, drafted);
+    assert.ok(drafted.includes("@ files"), drafted);
+    await pi.shot("footer-hints-draft");
+
+    // ctrl+s takes the draft; with an empty editor and a stash held the hint names the restore.
+    pi.press("ctrl+s");
+    await pi.waitFor("ctrl+s restore");
+    await pi.waitForGone("a draft");
+
+    pi.press("ctrl+s");
+    await pi.waitFor("a draft");
+    await pi.waitForGone("ctrl+s restore");
+
+    // A dialog takes the keyboard, so the hints step aside and come back when it closes.
+    pi.press("ctrl+u");
+    await pi.waitForGone("a draft");
+    pi.press("ctrl+l");
+    await pi.waitFor("Only showing models from configured providers.");
+    const during = pi.screen().find((row) => row.includes("%/")) ?? "";
+    assert.ok(during, pi.screen().join("\n"));
+    assert.equal(during.includes("@ files"), false, during);
+    await pi.shot("footer-hints-dialog");
+    pi.press("escape");
+    await pi.waitFor("@ files");
   } finally {
     await pi.close();
   }
