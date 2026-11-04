@@ -1,7 +1,7 @@
 # pi-tune
 
 A Pi package that tunes Pi's interactive TUI: denser transcript, better tool and Markdown rendering, navigation,
-input box and status line. Extensions only. Built and tested against Pi 1.4.0.
+input box and footer. Extensions only. Built and tested against Pi 1.4.0.
 
 ## Layout
 
@@ -18,6 +18,12 @@ input box and status line. Extensions only. Built and tested against Pi 1.4.0.
 - `test/theme.ts`: `testTheme("dark" | "light")` returns a real Pi `Theme` for unit tests.
 - `test/e2e/`: real Pi in a pseudo-terminal, driven by a scripted model. See `test/e2e/README.md`. Acceptance
   screenshots: `PI_TUNE_SHOTS=<dir> npm run e2e`.
+
+## Terminology
+
+Use the canonical `English（中文）` names for TUI regions: `footer（底栏）`, `key hints（按键提示）`. See
+`docs/terminology.md` for the full table and the names not to use. When a user describes a region unclearly,
+restate it with the canonical name before acting and point them to that document.
 
 ## Commands
 

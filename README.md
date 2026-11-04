@@ -1,7 +1,7 @@
 # pi-tune
 
 Tune Pi Agent's interactive TUI: a denser transcript, clearer tool rendering, navigation for long
-sessions, and a better input box and status line. Built for Pi 1.4.
+sessions, and a better input box and footer. Built for Pi 1.4.
 
 Each screen area is its own extension under `extensions/`, so you can turn any of them off with `pi config`.
 
