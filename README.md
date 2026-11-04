@@ -5,21 +5,14 @@ sessions, and a better input box and footer. Built for Pi 1.4.
 
 Each screen area is its own extension under `extensions/`, so you can turn any of them off with `pi config`.
 
-## Try it
-
-Run Pi once with the package loaded, without installing it:
+## Install
 
 ```sh
-git clone https://github.com/JoJoJotarou/pi-tune.git
-cd pi-tune && npm ci
-pi -e /path/to/pi-tune
+pi install npm:pi-tune@0.1.0   # every session
+pi -e npm:pi-tune              # one run, without installing
 ```
 
-Or install it for every session:
-
-```sh
-pi install /path/to/pi-tune
-```
+From a checkout, `npm ci && pi -e .` runs the working tree and `pi install .` installs it.
 
 ## What each extension does
 
@@ -62,3 +55,9 @@ misbehaving.
 ## Develop
 
 See `AGENTS.md` for the layout, commands and rules, and `test/e2e/README.md` for the end-to-end harness.
+
+## Release
+
+`npm version <patch|minor|major> -m "chore(release): %s"` commits the bump and creates the annotated `vX.Y.Z`
+tag. Pushing that tag makes `.github/workflows/release.yml` rerun `npm run ci`, publish to npm with provenance
+and create the GitHub Release; it needs the `NPM_TOKEN` repository secret.
