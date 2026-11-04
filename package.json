@@ -4,9 +4,25 @@
   "description": "Tune Pi Agent's interactive TUI",
   "type": "module",
   "license": "MIT",
+  "author": "JoJoJotarou",
+  "homepage": "https://github.com/JoJoJotarou/pi-tune#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoJoJotarou/pi-tune.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JoJoJotarou/pi-tune/issues"
+  },
   "keywords": [
     "pi-package",
     "pi"
+  ],
+  "files": [
+    "extensions",
+    "src",
+    "!src/**/*.test.ts",
+    "README.md",
+    "LICENSE"
   ],
   "pi": {
     "extensions": [
@@ -24,7 +40,11 @@
     "smoke": "node scripts/smoke.mjs",
     "e2e": "node --test --test-concurrency=4 \"test/e2e/**/*.test.ts\"",
     "bench": "node scripts/bench.mjs",
-    "ci": "npm run lint && npm run typecheck && npm test && npm run smoke"
+    "ci": "npm run lint && npm run typecheck && npm test && npm run smoke",
+    "prepublishOnly": "npm run ci"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
