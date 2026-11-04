@@ -9,7 +9,7 @@ import {
 import { matchesKey, type TUI } from "@earendil-works/pi-tui";
 import { openSideSession } from "../src/btw/child.ts";
 import { Drawer, type DrawerView, SPINNER_INTERVAL_MS } from "../src/btw/drawer.ts";
-import { activityLabel } from "../src/btw/render.ts";
+import { activityLabel, streamPhase } from "../src/btw/render.ts";
 import { allowedCalls, type BtwRules, DEFAULT_RULES, loadBtwRules } from "../src/btw/rules.ts";
 import { detectSandbox, type SandboxKind } from "../src/btw/sandbox.ts";
 import {
@@ -38,8 +38,10 @@ interface Pending {
   threadId: string;
   question: string;
   answer: string;
-  /** The tool call running right now. */
-  activity?: string;
+  /** `Working`, `Thinking`, `Responding`, or the tool call that runs. */
+  phase: string;
+  /** The phase names a call the rules just refused. */
+  blocked: boolean;
   denied: string[];
   startedAt: number;
   stopped: boolean;
@@ -82,7 +84,8 @@ export default function btwExtension(pi: ExtensionAPI) {
             pending: {
               question: running.question,
               answer: running.answer,
-              ...(running.activity === undefined ? {} : { activity: running.activity }),
+              phase: running.phase,
+              blocked: running.blocked,
               startedAt: running.startedAt,
             },
           }
@@ -187,6 +190,8 @@ export default function btwExtension(pi: ExtensionAPI) {
       threadId: thread.id,
       question,
       answer: "",
+      phase: "Working",
+      blocked: false,
       denied: [],
       startedAt: Date.now(),
       stopped: false,
@@ -208,6 +213,9 @@ export default function btwExtension(pi: ExtensionAPI) {
         },
         onDenied: (label) => {
           if (!current.denied.includes(label)) current.denied.push(label);
+          current.phase = label;
+          current.blocked = true;
+          changed();
         },
         onUnsandboxed: (problem) => {
           if (warnedUnsandboxed) return;
@@ -221,10 +229,17 @@ export default function btwExtension(pi: ExtensionAPI) {
       unsubscribe = streaming.subscribe((event) => {
         if (event.type === "message_update" && event.message.role === "assistant") {
           current.answer = messageText(event.message);
+          const phase = streamPhase(event.assistantMessageEvent.type);
+          if (phase) {
+            current.phase = phase;
+            current.blocked = false;
+          }
         } else if (event.type === "tool_execution_start") {
-          current.activity = activityLabel(event.toolName, event.args);
+          current.phase = activityLabel(event.toolName, event.args);
+          current.blocked = false;
         } else if (event.type === "tool_execution_end") {
-          current.activity = undefined;
+          // A refused call stays on screen until the model's next phase replaces it.
+          if (!current.blocked) current.phase = "Working";
         } else {
           return;
         }

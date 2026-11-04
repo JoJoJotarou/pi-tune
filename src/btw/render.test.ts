@@ -4,7 +4,7 @@ import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai"
 import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { activityLabel, type DrawerInput, drawerMaxHeight, renderBtw } from "./render.ts";
+import { activityLabel, type DrawerInput, drawerMaxHeight, renderBtw, streamPhase } from "./render.ts";
 import type { BtwThread, BtwTurn } from "./thread.ts";
 
 initTheme("dark");
@@ -89,7 +89,10 @@ describe("renderBtw", () => {
     for (const width of [100, 40, 30]) {
       for (const maxHeight of [6, 10, 16]) {
         for (const turns of [0, 1, 3, 40]) {
-          for (const pending of [undefined, { question: long, answer: long, elapsedMs: 1200, spinner: "⠋" }]) {
+          for (const pending of [
+            undefined,
+            { question: long, answer: long, phase: "Responding", elapsedMs: 1200, spinner: "⠋" },
+          ]) {
             const shown = thread(turns);
             if (turns > 0) shown.turns[0].denied = denied;
             const { lines } = draw({ thread: shown, width, maxHeight, pending });
@@ -152,7 +155,7 @@ describe("renderBtw", () => {
     assert.match(bottom, /↑ \d+ · 4\.2s · 98% cached · \$0\.004 ─╯$/);
     const free = plain(draw({ width: 100 }).lines).at(-2) ?? "";
     assert.match(free, /3\.2s · 98% cached ─╯$/, "no cost when the model has no price");
-    const pending = { question: "q", answer: "", elapsedMs: 0, spinner: "⠋" };
+    const pending = { question: "q", answer: "", phase: "Working", elapsedMs: 0, spinner: "⠋" };
     const running = plain(draw({ width: 100, pending }).lines).at(-2) ?? "";
     assert.match(running, /3\.2s · 98% cached ─╯$/, "the previous answer's usage stays while the next one runs");
     const first = plain(draw({ thread: null, width: 100, pending }).lines).at(-2) ?? "";
@@ -180,21 +183,26 @@ describe("renderBtw", () => {
     const long = plain(draw({ thread: thread(12), maxHeight: 8, width: 140 }).lines).at(-2) ?? "";
     assert.ok(long.includes("shift+↑↓ scroll"), long);
     const running =
-      plain(draw({ pending: { question: "q", answer: "", elapsedMs: 0, spinner: "⠋" } }).lines).at(-2) ?? "";
+      plain(draw({ pending: { question: "q", answer: "", phase: "Working", elapsedMs: 0, spinner: "⠋" } }).lines).at(
+        -2,
+      ) ?? "";
     assert.ok(running.includes("esc stop") && !running.includes("enter ask"), running);
   });
 
-  it("shows a running question at once, then the answer as it streams, then the tool that runs", () => {
-    const waiting = body(draw({ pending: { question: "why?", answer: "", elapsedMs: 1200, spinner: "⠙" } }).lines);
-    assert.ok(waiting.includes("why?") && waiting.includes("⠙ answering · 1.2s"), waiting.join("\n"));
-    const streaming = body(
-      draw({ pending: { question: "why?", answer: "because it", elapsedMs: 2500, spinner: "⠹" } }).lines,
-    );
-    assert.ok(streaming.includes("because it") && streaming.includes("⠹ 2.5s"), streaming.join("\n"));
-    const tool = body(
-      draw({ pending: { question: "q", answer: "", elapsedMs: 1500, spinner: "⠋", activity: "read src/x.ts" } }).lines,
-    );
-    assert.ok(tool.includes("⠋ read src/x.ts · 1.5s"), tool.join("\n"));
+  it("says what the side thread is doing: the phase, the tool that runs, or the call just refused", () => {
+    const pending = { question: "why?", answer: "", phase: "Working", elapsedMs: 1200, spinner: "⠙" };
+    const waiting = body(draw({ pending }).lines);
+    assert.ok(waiting.includes("why?") && waiting.includes("⠙ Working · 1.2s"), waiting.join("\n"));
+    assert.ok(body(draw({ pending: { ...pending, phase: "Thinking" } }).lines).includes("⠙ Thinking · 1.2s"));
+    const streaming = body(draw({ pending: { ...pending, answer: "because it", phase: "Responding" } }).lines);
+    assert.ok(streaming.includes("because it") && streaming.includes("⠙ Responding · 1.2s"), streaming.join("\n"));
+    const tool = body(draw({ pending: { ...pending, phase: "read src/x.ts" } }).lines);
+    assert.ok(tool.includes("⠙ read src/x.ts · 1.2s"), tool.join("\n"));
+
+    const refused = draw({ pending: { ...pending, phase: "bash(date *)", blocked: true } }).lines;
+    assert.ok(body(refused).includes("⠙ ⚠ bash(date *) blocked · 1.2s"), body(refused).join("\n"));
+    const row = refused.find((line) => stripTerminalSequences(line).includes("blocked")) ?? "";
+    assert.ok(row.includes(theme.getFgAnsi("warning")), "a refused call shows in warning color");
   });
 
   it("explains a new thread before its first question", () => {
@@ -238,5 +246,15 @@ describe("activityLabel", () => {
     assert.equal(activityLabel("grep", { pattern: "TODO", path: "src" }), "grep TODO");
     assert.equal(activityLabel("read", { path: "src/x.ts" }), "read src/x.ts");
     assert.equal(activityLabel("mcp__docs__search", { query: "x" }), "mcp__docs__search");
+  });
+});
+
+describe("streamPhase", () => {
+  it("names the model's phase from the stream event", () => {
+    assert.equal(streamPhase("start"), "Working");
+    assert.equal(streamPhase("thinking_delta"), "Thinking");
+    assert.equal(streamPhase("text_start"), "Responding");
+    assert.equal(streamPhase("toolcall_delta"), "Working");
+    assert.equal(streamPhase("done"), undefined);
   });
 });

@@ -82,7 +82,7 @@ test("btw mode: ask, follow up, close with esc, reopen a thread from the list", 
 
 test("a running side question shows at once, streams, and esc stops it", { timeout: 180_000 }, async () => {
   const scenario: Scenario = {
-    turns: [[{ text: `${"slow ".repeat(200)}END` }]],
+    turns: [[{ thinking: "hmm ".repeat(30) }, { text: `${"slow ".repeat(200)}END` }]],
     tokensPerSecond: 20,
   };
   const pi = await startPi({ scenario });
@@ -90,8 +90,9 @@ test("a running side question shows at once, streams, and esc stops it", { timeo
     pi.type("/btw why is it slow?\r");
     await pi.waitFor("why is it slow?");
     await pi.waitFor(/esc stop/);
+    await pi.waitFor(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Thinking · \d+\.\ds/);
     await pi.waitFor(/│ {2}slow slow/);
-    await pi.waitFor(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/);
+    await pi.waitFor(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Responding · \d+\.\ds/);
     await pi.shot("btw-running");
 
     // Enter while the answer runs keeps the draft for later.

@@ -110,6 +110,13 @@ describe("Drawer", () => {
     assert.match(rows.at(-2) ?? "", /↓ 2/);
   });
 
+  it("draws the running question with its phase", () => {
+    const { view, text } = setup(1);
+    view.pending = { question: "next?", answer: "", phase: "read src/x.ts", startedAt: 0 };
+    view.revision++;
+    assert.ok(text().includes("read src/x.ts · 0.0s"), text());
+  });
+
   it("leaves other mouse events to Pi", () => {
     const { drawer } = setup(3);
     assert.equal(drawer.handleMouse({ ...wheel(0), type: "click" }), undefined);

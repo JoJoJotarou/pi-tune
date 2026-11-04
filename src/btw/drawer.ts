@@ -12,7 +12,7 @@ export interface DrawerView {
   thread: BtwThread | null;
   number: number;
   mainTurns: number;
-  pending?: { question: string; answer: string; startedAt: number };
+  pending?: { question: string; answer: string; phase: string; blocked?: boolean; startedAt: number };
   /** Bumped by the owner on every change to the fields above. */
   revision: number;
 }
@@ -52,7 +52,16 @@ export class Drawer implements Component {
       number: view.number,
       mainTurns: view.mainTurns,
       ...(view.pending
-        ? { pending: { question: view.pending.question, answer: view.pending.answer, elapsedMs, spinner } }
+        ? {
+            pending: {
+              question: view.pending.question,
+              answer: view.pending.answer,
+              phase: view.pending.phase,
+              ...(view.pending.blocked ? { blocked: true } : {}),
+              elapsedMs,
+              spinner,
+            },
+          }
         : {}),
       ...(this.top === undefined ? {} : { top: this.top }),
       maxHeight,

@@ -10,10 +10,23 @@ import { type BtwThread, type BtwTurn, messageText, turnReply } from "./thread.t
 export interface PendingExchange {
   question: string;
   answer: string;
-  /** The tool call running right now, e.g. `read src/x.ts`. */
-  activity?: string;
+  /** What the side thread is doing: `Working`, `Thinking`, `Responding`, or the tool call that runs. */
+  phase: string;
+  /** The phase is a call the rules just refused, shown in warning color until the next phase starts. */
+  blocked?: boolean;
   elapsedMs: number;
   spinner: string;
+}
+
+/**
+ * The model's phase from a stream event, in the words of the main session's status line. Writing a tool call reads
+ * as `Working` until the call runs and names itself.
+ */
+export function streamPhase(type: string): string | undefined {
+  if (type.startsWith("thinking_")) return "Thinking";
+  if (type.startsWith("text_")) return "Responding";
+  if (type === "start" || type.startsWith("toolcall_")) return "Working";
+  return undefined;
 }
 
 /** A tool call on one line: the tool and its command, pattern or path. */
@@ -107,16 +120,16 @@ function turnRows(turn: BtwTurn, width: number, theme: Theme, markdown: Markdown
 
 function pendingRows(pending: PendingExchange, width: number, theme: Theme, markdown: MarkdownTheme): string[] {
   const elapsed = formatDuration(pending.elapsedMs);
-  const status = (what: string | undefined) =>
-    truncateToWidth(
-      `${theme.fg("accent", pending.spinner)} ${theme.fg("dim", what === undefined ? elapsed : `${what} · ${elapsed}`)}`,
-      width,
-      "",
-      true,
-    );
+  const phase = pending.blocked ? theme.fg("warning", `⚠ ${pending.phase} blocked`) : theme.fg("dim", pending.phase);
+  const status = truncateToWidth(
+    `${theme.fg("accent", pending.spinner)} ${phase}${theme.fg("dim", ` · ${elapsed}`)}`,
+    width,
+    "",
+    true,
+  );
   const rows = [...questionRows(pending.question, width, theme), ""];
-  if (pending.answer.trim() === "") return [...rows, status(pending.activity ?? "answering")];
-  return [...rows, ...answerRows(pending.answer, width, markdown), status(pending.activity)];
+  if (pending.answer.trim() === "") return [...rows, status];
+  return [...rows, ...answerRows(pending.answer, width, markdown), status];
 }
 
 /** `4.2s · 98% cached · $0.004` over every request the turn made; the cost only when the model has a price. */
