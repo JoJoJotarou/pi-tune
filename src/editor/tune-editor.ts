@@ -32,8 +32,10 @@ export interface TuneEditorOptions {
   now?: () => number;
   /** Runs before every submit, including commands that start no agent run. */
   onBeforeSubmit?: () => void;
-  /** Runs when tab fills the editor with the suggestion. */
+  /** Runs when tab or right arrow fills the editor with the suggestion. */
   onAcceptSuggestion?: () => void;
+  /** Runs when esc on the empty editor dismisses the suggestion. */
+  onDismissSuggestion?: () => void;
 }
 
 interface Stash {
@@ -100,6 +102,7 @@ export class TuneEditor extends CustomEditor {
   private readonly onPreview?: (id: number) => void;
   private readonly onBeforeSubmit?: () => void;
   private readonly onAcceptSuggestion?: () => void;
+  private readonly onDismissSuggestion?: () => void;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
@@ -120,6 +123,7 @@ export class TuneEditor extends CustomEditor {
     this.onPreview = options.onPreview;
     this.onBeforeSubmit = options.onBeforeSubmit;
     this.onAcceptSuggestion = options.onAcceptSuggestion;
+    this.onDismissSuggestion = options.onDismissSuggestion;
   }
 
   setStatus(model: string, thinking: string): void {
@@ -169,13 +173,19 @@ export class TuneEditor extends CustomEditor {
     ) {
       this.onBeforeSubmit?.();
     }
-    if (data === "\t" && this.ghostVisible() && !this.isShowingAutocomplete()) {
+    if ((data === "\t" || matchesKey(data, "right")) && this.ghostRest() !== undefined) {
       const text = this.ghost;
       this.ghost = undefined;
       if (text !== undefined) this.setText(text);
       this.onAcceptSuggestion?.();
       this.tui.requestRender();
       return;
+    }
+    if (matchesKey(data, "escape") && this.ghostRest() !== undefined && this.getText() === "") {
+      // Pi still gets the key, so a double esc keeps opening the session tree.
+      this.ghost = undefined;
+      this.onDismissSuggestion?.();
+      this.tui.requestRender();
     }
     super.handleInput(data);
   }
@@ -210,9 +220,10 @@ export class TuneEditor extends CustomEditor {
     const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
     if (!this.framed || bottom < 0) return lines;
     const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
-    if (this.ghostVisible() && bottom === 2) {
-      // The empty editor has exactly one content row between the borders; overlay the ghost text there.
-      plain[1] = withGhostSuggestion(plain[1], this.ghost ?? "", (text) => this.themeOf().fg("dim", text), width - 2);
+    const rest = this.ghostRest();
+    if (rest !== undefined && bottom === 2) {
+      // A one-line draft has exactly one content row between the borders; the rest goes after its cursor.
+      plain[1] = withGhostSuggestion(plain[1], rest, (text) => this.themeOf().fg("dim", text), width - 2);
     }
     // The working status takes the border color, like the model label on the bottom border.
     const status = topBorderLabel(plain[0] ?? "");
@@ -227,8 +238,15 @@ export class TuneEditor extends CustomEditor {
     return BOTTOM_MARK + super.renderBottomBorder(width, hiddenLineCount);
   }
 
-  private ghostVisible(): boolean {
-    return this.ghost !== undefined && this.ghost !== "" && this.getText().length === 0;
+  /** The part of the suggestion still to type: shown while the draft is its start and the cursor ends it. */
+  private ghostRest(): string | undefined {
+    const ghost = this.ghost;
+    if (ghost === undefined || this.isShowingAutocomplete()) return undefined;
+    const text = this.getText();
+    if (text.includes("\n") || text.length >= ghost.length || !ghost.startsWith(text)) return undefined;
+    const cursor = this.getCursor();
+    if (cursor.line !== 0 || cursor.col !== text.length) return undefined;
+    return ghost.slice(text.length);
   }
 
   private leftLabel(): string | undefined {
