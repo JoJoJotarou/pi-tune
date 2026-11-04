@@ -108,3 +108,14 @@ test("every row fits width 40", () => {
     }
   }
 });
+
+test("the model picker brings its own frame, so the panel's border steps aside while it is open", () => {
+  const border = (lines: string[]) => lines.filter((line) => line.includes("─")).length;
+  const { instance } = panel({ enabled: true });
+  assert.equal(border(instance.render(40)), 2);
+  instance.handleInput("\x1b[B");
+  instance.handleInput("\r");
+  assert.deepEqual(instance.render(40), ["picker"]);
+  instance.handleInput("\r");
+  assert.equal(border(instance.render(40)), 2);
+});

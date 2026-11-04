@@ -22,8 +22,9 @@ export interface SuggestPanelOptions {
  */
 export class SuggestPanel implements Component {
   private readonly options: SuggestPanelOptions;
-  /** Same frame as Pi's own selectors, including the model selector this panel opens. */
+  /** Same frame as Pi's `/settings`. The model selector brings its own, so it is left out while that is open. */
   private readonly border = new DynamicBorder();
+  private pickerOpen = false;
   private settings: SuggestSettings;
   private list: SettingsList;
 
@@ -34,6 +35,7 @@ export class SuggestPanel implements Component {
   }
 
   render(width: number): string[] {
+    if (this.pickerOpen) return this.list.render(width);
     const border = this.border.render(width);
     return [...border, ...this.list.render(width), ...border];
   }
@@ -79,7 +81,13 @@ export class SuggestPanel implements Component {
             id: "model",
             label: "Model",
             currentValue: value,
-            submenu: (_current, done) => picker((modelId) => done(modelId)),
+            submenu: (_current, done) => {
+              this.pickerOpen = true;
+              return picker((modelId) => {
+                this.pickerOpen = false;
+                done(modelId);
+              });
+            },
           },
     );
     return items;
