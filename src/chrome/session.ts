@@ -10,7 +10,6 @@ import {
   VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { editorHasFocus } from "../internals/focus.ts";
 import { type FooterParts, type FooterStats, footerLine, streamRate } from "./footer.ts";
 import { headerLine } from "./header.ts";
 import { formatHints, type HintState, hintFor } from "./hints.ts";
@@ -31,6 +30,8 @@ export interface ChromeHost {
   agentDir(): string;
   /** The clock; `Date.now` in the extension. */
   now(): number;
+  /** Whether Pi's editor has focus; `editorHasFocus` in the extension (a Pi-internals probe). */
+  editorFocused(tui: TUI): boolean | Error;
 }
 
 /** The part of Pi's `ExtensionContext` the chrome session uses. */
@@ -238,7 +239,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               btw: btwOpen,
             };
             // Every hint names a key the focused editor answers: with a dialog focused, all of them are wrong.
-            const focused = editorHasFocus(footerTui);
+            const focused = host.editorFocused(footerTui);
             if (focused instanceof Error && !focusWarned) {
               focusWarned = true;
               session.ui.notify(`pi-tune chrome: ${focused.message} Key hints stay visible.`, "warning");

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createChromeSession } from "../src/chrome/session.ts";
+import { editorHasFocus } from "../src/internals/focus.ts";
 import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -11,6 +12,7 @@ export default function (pi: ExtensionAPI) {
     settings: () => pi.getSettings(),
     agentDir: () => getAgentDir(),
     now: () => Date.now(),
+    editorFocused: (tui) => editorHasFocus(tui),
   });
 
   pi.events.on("pi-tune:editor-ready", () => session.editorReady());

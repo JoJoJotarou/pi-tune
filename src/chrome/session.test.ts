@@ -38,6 +38,7 @@ interface Harness {
   notified: string[];
   entries: SessionEntry[];
   setEditorText(text: string): void;
+  setFocus(focus: boolean | Error): void;
   now(ms: number): void;
   restart(): void;
   header(width?: number): string[];
@@ -56,6 +57,7 @@ function harness(): Harness {
   const notified: string[] = [];
   const entries: SessionEntry[] = [];
   let editorText = "";
+  let focus: boolean | Error = true;
   let nowMs = 10_000;
   let headerFactory: Parameters<ChromeContext["ui"]["setHeader"]>[0];
   let footerFactory: Parameters<ChromeContext["ui"]["setFooter"]>[0];
@@ -84,6 +86,7 @@ function harness(): Harness {
     settings: () => ({}),
     agentDir: () => "/tmp/pi-tune-session-test-no-such-dir",
     now: () => nowMs,
+    editorFocused: () => focus,
   };
 
   const session = createChromeSession(host);
@@ -111,6 +114,9 @@ function harness(): Harness {
     entries,
     setEditorText: (text) => {
       editorText = text;
+    },
+    setFocus: (value) => {
+      focus = value;
     },
     now: (ms) => {
       nowMs = ms;
@@ -146,11 +152,23 @@ test("start renders the header counts and the footer line", () => {
 
 test("the focus check warns once per session, then keeps the hints", () => {
   const h = harness();
+  h.setFocus(new Error("this Pi screen does not report focus"));
   h.footer();
   h.footer();
   assert.equal(h.notified.length, 1);
   assert.match(h.notified[0], /^pi-tune chrome: /);
   assert.match(plain(h.footer())[0], /commands/);
+});
+
+test("a focused dialog hides the key hints", () => {
+  const h = harness();
+  assert.match(plain(h.footer())[0], /commands/);
+
+  h.setFocus(false);
+  const line = plain(h.footer())[0];
+  assert.doesNotMatch(line, /commands/);
+  assert.match(line, /myproj \(feat\/x\)/);
+  assert.deepEqual(h.notified, []);
 });
 
 test("a typed draft during a run shows the steer hints", () => {
