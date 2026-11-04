@@ -43,6 +43,35 @@ test("the ghost suggestion fills on tab and hides while typing", { timeout: 120_
   });
 });
 
+test("typing the start of the suggestion keeps the rest and right arrow completes it", {
+  timeout: 120_000,
+}, async () => {
+  const pi = await startPi({ scenario, tune: true, agentFiles: suggestOn });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor(GHOST);
+    pi.type("Run the");
+    // The fake cursor sits between the typed start and the rest.
+    await pi.waitFor(/│Run the {2}test suite and report failures +│/);
+    pi.press("right");
+    await pi.waitFor(new RegExp(`│${GHOST} +│`));
+  });
+});
+
+test("clearing a typed start brings the whole suggestion back and esc dismisses it", { timeout: 120_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true, agentFiles: suggestOn });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor(GHOST);
+    pi.type("Run x");
+    await pi.waitForGone(GHOST);
+    for (let i = 0; i < "Run x".length; i++) pi.press("backspace");
+    await pi.waitFor(GHOST);
+    pi.press("escape");
+    await pi.waitForGone(GHOST);
+  });
+});
+
 test("suggestions are off by default", { timeout: 120_000 }, async () => {
   const pi = await startPi({
     scenario: {

@@ -10,6 +10,7 @@ import {
   collectSessionTurns,
   SUGGEST_PROMPTS,
   Suggestion,
+  suggestReasoning,
   type TranscriptTurn,
   withGhostSuggestion,
 } from "./suggestion.ts";
@@ -410,4 +411,48 @@ test("after ten unused suggestions only every third run asks, and one tab accept
   suggestion.accepted();
   for (let i = 0; i < 3; i++) await run(suggestion);
   assert.equal(requests(), 15, "an accepted suggestion brings back one request per run");
+});
+
+test("reasoning models ask for their lowest thinking level, others for none", () => {
+  const lowOnly = {
+    reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, medium: null, low: "low", high: "high" },
+  };
+  assert.equal(suggestReasoning(lowOnly as never), "low");
+  assert.equal(suggestReasoning({ reasoning: true } as never), "minimal");
+  assert.equal(suggestReasoning({ reasoning: false } as never), undefined);
+});
+
+test("a request that runs past the timeout warns once and stops asking", async () => {
+  // Rejecting on abort, and resolving with no text the way an aborted stream ends, are both a timeout.
+  const endings = [
+    (_resolve: (text: string) => void, reject: (error: Error) => void) => reject(new Error("aborted")),
+    (resolve: (text: string) => void) => resolve(""),
+  ];
+  for (const end of endings) {
+    let requests = 0;
+    const { suggestion, warnings } = makeSuggestion({
+      timeoutMs: 20,
+      complete: ({ signal }) => {
+        requests++;
+        return new Promise((resolve, reject) => signal.addEventListener("abort", () => end(resolve, reject)));
+      },
+    });
+    start(suggestion);
+    await run(suggestion);
+    assert.deepEqual(warnings, ["Next-step suggestion failed: timed out after 0.02 s"]);
+    await run(suggestion);
+    assert.equal(requests, 1);
+  }
+});
+
+test("text before the cursor narrows the room for the rest of the suggestion", () => {
+  const row = withGhostSuggestion(
+    `运行${GHOST_CLEAR} ${GHOST_RESTORE}${" ".repeat(20)}`,
+    "测试并提交".repeat(5),
+    (t) => t,
+    24,
+  );
+  assert.equal(visibleWidth(row), 24);
+  assert.ok(row.startsWith(`运行${GHOST_CLEAR} ${GHOST_RESTORE}测试`));
 });

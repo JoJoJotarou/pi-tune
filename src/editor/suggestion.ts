@@ -1,3 +1,4 @@
+import { type Api, clampThinkingLevel, type Model, type ThinkingLevel } from "@earendil-works/pi-ai";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { parseModelId, type SuggestSettings, type SuggestStyle } from "./suggest-settings.ts";
 
@@ -118,9 +119,10 @@ export function withGhostSuggestion(
 ): string {
   const restore = row.indexOf(FAKE_CURSOR_END);
   if (suggestion === "" || restore < 0) return row;
-  const text = truncateToWidth(suggestion, Math.max(0, width - 1), "").trimEnd();
-  const padding = " ".repeat(Math.max(0, width - 1 - visibleWidth(text)));
-  return row.slice(0, restore + FAKE_CURSOR_END.length) + style(text) + padding;
+  const head = row.slice(0, restore + FAKE_CURSOR_END.length);
+  const room = Math.max(0, width - visibleWidth(head));
+  const text = truncateToWidth(suggestion, room, "").trimEnd();
+  return head + style(text) + " ".repeat(Math.max(0, room - visibleWidth(text)));
 }
 
 export interface SuggestionEditor {
@@ -153,9 +155,19 @@ export interface SuggestionOptions {
   editor(): SuggestionEditor | undefined;
   notify(message: string, level: "warning"): void;
   maxChars?: number;
+  timeoutMs?: number;
 }
 
 const SUGGEST_CHARS = 80;
+/** Reasoning models can take tens of seconds even at their lowest level; past this the request counts as failed. */
+const SUGGEST_TIMEOUT_MS = 45_000;
+
+/** The lowest thinking level the model offers; providers default reasoning models to more (OpenAI: medium). */
+export function suggestReasoning(model: Model<Api>): ThinkingLevel | undefined {
+  if (!model.reasoning) return undefined;
+  const level = clampThinkingLevel(model, "minimal");
+  return level === "off" ? undefined : level;
+}
 /** After this many shown suggestions in a row go unused, only every `BACKOFF_EVERY`-th run asks. */
 const BACKOFF_AFTER = 10;
 const BACKOFF_EVERY = 3;
@@ -288,6 +300,12 @@ export class Suggestion {
     this.requestedThisRun = true;
     const controller = new AbortController();
     this.abort = controller;
+    const timeoutMs = this.options.timeoutMs ?? SUGGEST_TIMEOUT_MS;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
     try {
       const text = await this.options.complete({
         model,
@@ -295,6 +313,7 @@ export class Suggestion {
         userMessage: buildSuggestionUserMessage(this.options.cwd(), transcript),
         signal: controller.signal,
       });
+      if (timedOut) throw new Error("timed out");
       if (controller.signal.aborted) return;
       const suggestion = cleanSuggestion(text, this.options.maxChars ?? SUGGEST_CHARS);
       // Keep the reply even when the editor has text: the editor hides it until the text is cleared.
@@ -303,11 +322,16 @@ export class Suggestion {
         this.shown = true;
       }
     } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
+      if (!timedOut && (controller.signal.aborted || (error instanceof Error && error.name === "AbortError"))) return;
       this.failed = true;
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = timedOut
+        ? `timed out after ${timeoutMs / 1000} s`
+        : error instanceof Error
+          ? error.message
+          : String(error);
       this.options.notify(`Next-step suggestion failed: ${reason}`, "warning");
     } finally {
+      clearTimeout(timer);
       if (this.abort === controller) this.abort = undefined;
     }
   }

@@ -19,7 +19,12 @@ import {
   saveSuggestSettings,
   suggestCommand,
 } from "../src/editor/suggest-settings.ts";
-import { collectSessionTurns, Suggestion, type SuggestionComplete } from "../src/editor/suggestion.ts";
+import {
+  collectSessionTurns,
+  Suggestion,
+  type SuggestionComplete,
+  suggestReasoning,
+} from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
 import { modelRuntimeOf } from "../src/internals/model-runtime.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
@@ -56,26 +61,29 @@ export default function (pi: ExtensionAPI) {
     const chat = target as Model<Api>;
     const auth = await registry.getApiKeyAndHeaders(chat);
     if (!auth.ok) throw new Error(auth.error);
-    const response = await registry.complete(
-      chat,
-      {
-        systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: userMessage }],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      {
-        apiKey: auth.apiKey,
-        headers: auth.headers,
-        signal,
-        maxTokens: SUGGEST_MAX_TOKENS,
-        temperature: 0.2,
-      },
-    );
+    const response = await registry
+      .streamSimple(
+        chat,
+        {
+          systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: userMessage }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        {
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          signal,
+          maxTokens: SUGGEST_MAX_TOKENS,
+          temperature: 0.2,
+          reasoning: suggestReasoning(chat),
+        },
+      )
+      .result();
     if (response.stopReason === "error") throw new Error(response.errorMessage ?? "provider error");
     return response.content
       .filter((block): block is { type: "text"; text: string } => block.type === "text")
@@ -269,6 +277,7 @@ export default function (pi: ExtensionAPI) {
         },
         onBeforeSubmit: () => suggestion?.discard(),
         onAcceptSuggestion: () => suggestion?.accepted(),
+        onDismissSuggestion: () => suggestion?.discard(),
       });
       editor = instance;
       pi.events.emit("pi-tune:editor-ready", undefined);

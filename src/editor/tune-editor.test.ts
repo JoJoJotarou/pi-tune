@@ -348,3 +348,74 @@ test("tab acceptance tells the owner, typing over the suggestion does not", () =
   assert.equal(accepted, 1);
   assert.equal(editor.getText(), "run the tests");
 });
+
+const RIGHT = "\x1b[C";
+const LEFT = "\x1b[D";
+
+test("typing the start of the suggestion shows the rest after the cursor", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("运行测试并提交");
+  editor.setText("运行");
+  const row = plain(editor.render(40)[1] ?? "");
+  assert.match(row, /^│运行 测试并提交 +│$/);
+});
+
+test("tab or right arrow completes a typed start into the whole suggestion", () => {
+  for (const key of ["\t", RIGHT]) {
+    let accepted = 0;
+    const editor = makeEditor({ onAcceptSuggestion: () => accepted++ });
+    editor.setSuggestion("运行测试并提交");
+    editor.setText("运行");
+    editor.handleInput(key);
+    assert.equal(editor.getText(), "运行测试并提交", JSON.stringify(key));
+    assert.equal(accepted, 1, JSON.stringify(key));
+  }
+});
+
+test("a draft that diverges hides the suggestion, clearing it brings the whole line back", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("运行测试并提交");
+  editor.setText("部署");
+  assert.ok(!plain(editor.render(40)[1] ?? "").includes("提交"));
+  editor.setText("");
+  assert.match(plain(editor.render(40)[1] ?? ""), /运行测试并提交/);
+});
+
+test("the rest stays hidden while the cursor is not at the end or the draft has several lines", () => {
+  const editor = makeEditor();
+  editor.setSuggestion("运行测试并提交");
+  editor.setText("运行");
+  editor.handleInput(LEFT);
+  assert.ok(!editor.render(40).map(plain).join("\n").includes("提交"));
+  editor.handleInput(RIGHT);
+  assert.equal(editor.getText(), "运行", "right arrow only moved the cursor");
+  editor.setText("运行\n");
+  assert.ok(!editor.render(40).map(plain).join("\n").includes("提交"));
+});
+
+test("the rest of a typed suggestion never exceeds the width", () => {
+  for (const paddingX of [0, 1, 3]) {
+    const editor = makeEditor({ paddingX });
+    editor.setSuggestion(`运行${"测试并提交".repeat(10)}`);
+    editor.setText("运行");
+    for (const width of [40, 60, 80]) {
+      for (const line of editor.render(width))
+        assert.equal(visibleWidth(line), width, `paddingX ${paddingX} width ${width}`);
+    }
+  }
+});
+
+test("esc on the empty editor dismisses a shown suggestion and tells the owner", () => {
+  let dismissed = 0;
+  const editor = makeEditor({ onDismissSuggestion: () => dismissed++ });
+  editor.handleInput("\x1b");
+  assert.equal(dismissed, 0, "no suggestion, esc is Pi's");
+  editor.setSuggestion("run the tests");
+  editor.handleInput("\x1b");
+  assert.equal(dismissed, 1);
+  assert.equal(editor.getSuggestion(), undefined);
+  editor.setSuggestion("run the tests");
+  editor.setText("draft");
+  editor.handleInput("\x1b");
+  assert.equal(dismissed, 1, "with a draft, esc is Pi's");
+});
