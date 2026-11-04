@@ -107,3 +107,51 @@ export function producedMessages(messages: readonly { role: string }[]): (Assist
 export function countUserTurns(messages: readonly { role: string }[]): number {
   return messages.filter((message) => message.role === "user").length;
 }
+
+/**
+ * One saved turn: the turn and the thread it belongs to, without the thread's other turns. Saving each turn once
+ * keeps the session file growing by what a turn adds, instead of by every thread again on every answer.
+ */
+export interface StoredTurn {
+  thread: Pick<BtwThread, "id" | "anchorEntryId" | "anchorTurns">;
+  turn: BtwTurn;
+}
+
+export function storedTurn(thread: BtwThread, turn: BtwTurn): StoredTurn {
+  return { thread: { id: thread.id, anchorEntryId: thread.anchorEntryId, anchorTurns: thread.anchorTurns }, turn };
+}
+
+function isStoredTurn(value: unknown): value is StoredTurn {
+  const stored = value as Partial<StoredTurn> | null | undefined;
+  const turn = stored?.turn as Partial<BtwTurn> | undefined;
+  return (
+    typeof stored?.thread?.id === "string" &&
+    typeof stored.thread.anchorEntryId === "string" &&
+    typeof stored.thread.anchorTurns === "number" &&
+    typeof turn?.text === "string" &&
+    typeof turn.question === "string" &&
+    Array.isArray(turn.messages) &&
+    Array.isArray(turn.denied) &&
+    typeof turn.askedAt === "number" &&
+    typeof turn.durationMs === "number"
+  );
+}
+
+/** The threads saved turn by turn, in the order their first turns were saved; entries in another shape are skipped. */
+export function foldThreads(entries: readonly unknown[]): { threads: BtwThread[]; skipped: number } {
+  const threads: BtwThread[] = [];
+  let skipped = 0;
+  for (const entry of entries) {
+    if (!isStoredTurn(entry)) {
+      skipped++;
+      continue;
+    }
+    let thread = threads.find((known) => known.id === entry.thread.id);
+    if (!thread) {
+      thread = { ...entry.thread, turns: [] };
+      threads.push(thread);
+    }
+    thread.turns.push(entry.turn);
+  }
+  return { threads, skipped };
+}

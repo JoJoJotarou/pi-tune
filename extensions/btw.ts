@@ -18,10 +18,12 @@ import {
   type BtwTurn,
   composeTurnText,
   countUserTurns,
+  foldThreads,
   messageText,
   producedMessages,
   SIDE_THREAD_ADDENDUM,
   staleNotice,
+  storedTurn,
   threadMessages,
 } from "../src/btw/thread.ts";
 import { NEW_THREAD, ThreadList, threadItems } from "../src/btw/thread-list.ts";
@@ -29,10 +31,6 @@ import { editorHasFocus } from "../src/internals/focus.ts";
 import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
 
 const WIDGET_KEY = "pi-tune-btw";
-
-interface StoredThreads {
-  threads: BtwThread[];
-}
 
 /** The question being answered: shown in the drawer as it streams, stopped by esc. */
 interface Pending {
@@ -45,22 +43,6 @@ interface Pending {
   startedAt: number;
   stopped: boolean;
   session?: AgentSession;
-}
-
-/** A stored thread in the shape this build writes; sessions from earlier builds may hold others. */
-function isStoredThread(value: unknown): value is BtwThread {
-  const thread = value as Partial<BtwThread> | undefined;
-  return (
-    typeof thread?.id === "string" &&
-    Array.isArray(thread.turns) &&
-    thread.turns.every(
-      (turn: Partial<BtwTurn>) =>
-        typeof turn?.text === "string" &&
-        Array.isArray(turn.messages) &&
-        Array.isArray(turn.denied) &&
-        typeof turn.durationMs === "number",
-    )
-  );
 }
 
 export default function btwExtension(pi: ExtensionAPI) {
@@ -134,28 +116,19 @@ export default function btwExtension(pi: ExtensionAPI) {
   }
 
   function restore(ctx: ExtensionContext): void {
-    let stored: unknown[] = [];
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE) {
-        const data = (entry as unknown as { data?: Partial<StoredThreads> }).data;
-        if (Array.isArray(data?.threads)) stored = data.threads;
-      }
-    }
-    threads = stored.filter(isStoredThread);
-    const skipped = stored.length - threads.length;
-    if (skipped > 0) {
+    const stored = ctx.sessionManager
+      .getBranch()
+      .filter((entry) => entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE)
+      .map((entry) => (entry as unknown as { data?: unknown }).data);
+    const folded = foldThreads(stored);
+    threads = folded.threads;
+    if (folded.skipped > 0) {
       ctx.ui.notify(
-        `Skipped ${skipped} btw thread${skipped === 1 ? "" : "s"} saved by an older pi-tune build.`,
+        `Skipped ${folded.skipped} btw ${folded.skipped === 1 ? "entry" : "entries"} saved by an older pi-tune build.`,
         "warning",
       );
     }
     mainTurns = countUserTurns(snapshot(ctx, null));
-  }
-
-  function persist(): void {
-    pi.appendEntry(BTW_ENTRY_TYPE, {
-      threads: threads.filter((thread) => thread.turns.length > 0),
-    } satisfies StoredThreads);
   }
 
   function startTicker(): void {
@@ -244,15 +217,16 @@ export default function btwExtension(pi: ExtensionAPI) {
       const reply = messages.at(-1);
       if (reply?.role !== "assistant") throw new Error("The side question finished without an answer.");
       if (reply.stopReason === "error") throw new Error(reply.errorMessage || "The side question failed.");
-      thread.turns.push({
+      const turn: BtwTurn = {
         text,
         question,
         messages,
         askedAt: current.startedAt,
         durationMs: Date.now() - current.startedAt,
         denied: current.denied,
-      });
-      persist();
+      };
+      thread.turns.push(turn);
+      pi.appendEntry(BTW_ENTRY_TYPE, storedTurn(thread, turn));
     } finally {
       unsubscribe();
       session?.dispose();

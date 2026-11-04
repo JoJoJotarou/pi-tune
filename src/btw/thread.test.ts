@@ -5,10 +5,12 @@ import {
   type BtwThread,
   composeTurnText,
   countUserTurns,
+  foldThreads,
   messageText,
   producedMessages,
   SIDE_THREAD_ADDENDUM,
   staleNotice,
+  storedTurn,
   threadMessages,
   turnReply,
   turnToolCalls,
@@ -177,5 +179,33 @@ describe("SIDE_THREAD_ADDENDUM", () => {
     assert.match(SIDE_THREAD_ADDENDUM, /may use tools to look things up/);
     assert.match(SIDE_THREAD_ADDENDUM, /not allowed comes back as an error/);
     assert.doesNotMatch(SIDE_THREAD_ADDENDUM, /Do not call tools/);
+  });
+});
+
+describe("storedTurn and foldThreads", () => {
+  it("stores one turn per entry and folds the entries back into threads", () => {
+    const first = thread();
+    const other: BtwThread = { id: "t2", anchorEntryId: "e20", anchorTurns: 5, turns: [] };
+    const answer = thread().turns[1];
+    const entries = [storedTurn(first, first.turns[0]), storedTurn(other, answer), storedTurn(first, first.turns[1])];
+    for (const entry of entries) assert.equal(Object.keys(entry).sort().join(), "thread,turn");
+    assert.deepEqual(entries[0].thread, { id: "t1", anchorEntryId: "e10", anchorTurns: 3 }, "no turns in the header");
+
+    const { threads, skipped } = foldThreads(JSON.parse(JSON.stringify(entries)));
+    assert.equal(skipped, 0);
+    assert.deepEqual(
+      threads.map((folded) => [folded.id, folded.anchorTurns, folded.turns.map((turn) => turn.question)]),
+      [
+        ["t1", 3, ["alpha?", "beta?"]],
+        ["t2", 5, ["beta?"]],
+      ],
+    );
+  });
+
+  it("skips entries in another shape and counts them", () => {
+    const valid = storedTurn(thread(), thread().turns[0]);
+    const { threads, skipped } = foldThreads([{ threads: [] }, { thread: { id: "x" }, turn: {} }, valid, null]);
+    assert.equal(skipped, 3);
+    assert.equal(threads.length, 1);
   });
 });
