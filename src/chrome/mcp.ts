@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 /** Server names that differ only in `-` and `_` are one server; tool names use `_` for both. */
 export function canonicalServerName(name: string): string {
   return name.replace(/-/g, "_");
@@ -87,4 +89,25 @@ export function connectedServers(toolNames: readonly string[]): string[] {
     if (server !== undefined) names.add(server);
   }
   return [...names];
+}
+
+/** Parsed `mcp.json`; `undefined` when the file is missing, with one warning when it exists but is unusable. */
+export function readMcpFile(path: string, notify: (message: string, level: "warning") => void): unknown {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      notify(`pi-tune MCP config unreadable: ${path} (${String(error)})`, "warning");
+    }
+    return undefined;
+  }
+  try {
+    const config: unknown = JSON.parse(text);
+    if (!isMcpConfig(config)) throw new Error("expected an object with mcpServers");
+    return config;
+  } catch (error) {
+    notify(`pi-tune MCP config skipped: ${path} (${String(error)})`, "warning");
+    return undefined;
+  }
 }
