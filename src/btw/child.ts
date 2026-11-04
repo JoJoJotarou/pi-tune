@@ -3,7 +3,7 @@ import type { Api, Message, Model } from "@earendil-works/pi-ai";
 import type {
   AgentSession,
   ExtensionAPI,
-  ExtensionCommandContext,
+  ExtensionContext,
   ResourceLoader,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
@@ -33,7 +33,7 @@ function stubTool(info: ReturnType<ExtensionAPI["getAllTools"]>[number]): ToolDe
 }
 
 /** The system prompt and tool declarations the parent sends, unchanged, with no append segments. */
-function inheritedResources(ctx: ExtensionCommandContext): ResourceLoader {
+function inheritedResources(ctx: ExtensionContext): ResourceLoader {
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills: [], diagnostics: [] }),
@@ -53,7 +53,7 @@ function inheritedResources(ctx: ExtensionCommandContext): ResourceLoader {
  * The provider registration the parent holds: extension-registered providers and `--api-key`
  * overrides only exist on the parent's runtime, so the child needs its own copy of them.
  */
-async function sideRuntimeOptions(ctx: ExtensionCommandContext, model: Model<Api>) {
+async function sideRuntimeOptions(ctx: ExtensionContext, model: Model<Api>) {
   const registry = ctx.modelRegistry;
   const provider = model.provider;
   const nativeProvider = registry.getRegisteredNativeProvider(provider);
@@ -85,7 +85,7 @@ async function sideRuntimeOptions(ctx: ExtensionCommandContext, model: Model<Api
  */
 export async function openSideSession(
   pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
   seeded: readonly (AgentMessage | Message)[],
 ): Promise<AgentSession> {
   const sessionManager = SessionManager.inMemory(ctx.cwd);
