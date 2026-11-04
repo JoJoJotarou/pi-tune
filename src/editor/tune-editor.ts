@@ -12,6 +12,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { readEditorPaste } from "../internals/editor-pastes.ts";
+import { BTW_BORDER } from "../shared/btw.ts";
 import { frameBottom, frameRow, frameTop } from "../shared/frame.ts";
 import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker } from "./paste.ts";
 import { withGhostSuggestion } from "./suggestion.ts";
@@ -108,6 +109,8 @@ export class TuneEditor extends CustomEditor {
   private confirmTimer?: ReturnType<typeof setTimeout>;
   private framed = false;
   private ghost?: string;
+  /** Enter sends to a btw side thread: the frame takes the drawer's color and the suggestion stays hidden. */
+  private btw = false;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: TuneEditorOptions) {
     // Same options Pi gives its default editor, so the working status stays in the top border.
@@ -141,6 +144,11 @@ export class TuneEditor extends CustomEditor {
     return this.ghost;
   }
 
+  setBtwMode(on: boolean): void {
+    this.btw = on;
+    this.tui.requestRender();
+  }
+
   /** Ctrl+V reaches this path; route large text through the bracketed paste so it collapses like Cmd+V. */
   insertTextAtCursor(text: string): void {
     if (isLargePaste(text)) {
@@ -166,6 +174,7 @@ export class TuneEditor extends CustomEditor {
     // `\n` (ctrl+j) matches both bindings; the editor inserts a new line for it.
     const keys = getKeybindings();
     if (
+      !this.btw &&
       keys.matches(data, "tui.input.submit") &&
       !keys.matches(data, "tui.input.newLine") &&
       this.getText().trim() !== "" &&
@@ -226,11 +235,13 @@ export class TuneEditor extends CustomEditor {
       plain[1] = withGhostSuggestion(plain[1], rest, (text) => this.themeOf().fg("dim", text), width - 2);
     }
     // The working status takes the border color, like the model label on the bottom border.
+    const border = (text: string) => this.frameColor(text);
     const status = topBorderLabel(plain[0] ?? "");
-    return frameEditor(plain, width, this.borderColor, bottom, {
-      top: status === undefined ? undefined : this.borderColor(stripTerminalSequences(status)),
+    const top = [...(this.btw ? ["btw"] : []), ...(status === undefined ? [] : [stripTerminalSequences(status)])];
+    return frameEditor(plain, width, border, bottom, {
+      top: top.length === 0 ? undefined : border(top.join(" · ")),
       left: this.leftLabel(),
-      right: this.borderColor(`${this.model} · ${this.thinking}`),
+      right: border(`${this.model} · ${this.thinking}`),
     });
   }
 
@@ -241,7 +252,7 @@ export class TuneEditor extends CustomEditor {
   /** The part of the suggestion still to type: shown while the draft is its start and the cursor ends it. */
   private ghostRest(): string | undefined {
     const ghost = this.ghost;
-    if (ghost === undefined || this.isShowingAutocomplete()) return undefined;
+    if (ghost === undefined || this.btw || this.isShowingAutocomplete()) return undefined;
     const text = this.getText();
     if (text.includes("\n") || text.length >= ghost.length || !ghost.startsWith(text)) return undefined;
     const cursor = this.getCursor();
@@ -249,9 +260,13 @@ export class TuneEditor extends CustomEditor {
     return ghost.slice(text.length);
   }
 
+  private frameColor(text: string): string {
+    return this.btw ? this.themeOf().fg(BTW_BORDER, text) : this.borderColor(text);
+  }
+
   private leftLabel(): string | undefined {
     if (this.stashConfirming()) return this.themeOf().fg("warning", "ctrl+s again to replace stash");
-    if (this.stash) return this.borderColor("stashed");
+    if (this.stash) return this.frameColor("stashed");
     return undefined;
   }
 

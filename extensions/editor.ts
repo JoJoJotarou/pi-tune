@@ -27,6 +27,7 @@ import {
 } from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
 import { modelRuntimeOf } from "../src/internals/model-runtime.ts";
+import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
 const SUGGEST_MAX_TOKENS = 1024;
@@ -50,6 +51,13 @@ export default function (pi: ExtensionAPI) {
   let suggestPath: string | undefined;
   let suggestSettings: SuggestSettings | undefined;
   let suggestProblem: string | undefined;
+
+  // Kept here too: the btw area may switch modes while no editor exists yet.
+  let btwMode = false;
+  pi.events.on(BTW_MODE_CHANNEL, (on) => {
+    btwMode = on === true;
+    editor?.setBtwMode(btwMode);
+  });
 
   const sync = () => {
     editor?.setStatus(model, thinking);
@@ -279,6 +287,7 @@ export default function (pi: ExtensionAPI) {
         onAcceptSuggestion: () => suggestion?.accepted(),
         onDismissSuggestion: () => suggestion?.discard(),
       });
+      instance.setBtwMode(btwMode);
       editor = instance;
       pi.events.emit("pi-tune:editor-ready", undefined);
       return instance;

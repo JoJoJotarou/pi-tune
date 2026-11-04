@@ -419,3 +419,40 @@ test("esc on the empty editor dismisses a shown suggestion and tells the owner",
   editor.handleInput("\x1b");
   assert.equal(dismissed, 1, "with a draft, esc is Pi's");
 });
+
+test("btw mode recolors the frame, labels the top border, and keeps the working status", () => {
+  const editor = makeEditor();
+  editor.setBtwMode(true);
+  const accent = theme.getFgAnsi("borderAccent");
+  const lines = editor.render(60);
+  assert.ok(lines[0]?.startsWith(`${accent}╭`), JSON.stringify(lines[0]));
+  assert.ok(plain(lines[0] ?? "").startsWith("╭─ btw ─"), plain(lines[0] ?? ""));
+  assert.ok(plain(lines[1] ?? "").startsWith("│"));
+
+  type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
+  editor.setWorkingStatusIndicator({
+    renderInBorder: () => "Working",
+    renderSpinnerInBorder: () => "",
+    dispose() {},
+  } as unknown as Indicator);
+  assert.ok(plain(editor.render(60)[0] ?? "").startsWith("╭─ btw · Working ─"));
+
+  editor.setBtwMode(false);
+  assert.ok(!plain(editor.render(60)[0] ?? "").includes("btw"));
+});
+
+test("btw mode hides the next-step suggestion and leaves it for the main session", () => {
+  const calls: string[] = [];
+  const editor = makeEditor({ onBeforeSubmit: () => calls.push("discard") });
+  editor.setSuggestion("run the tests");
+  editor.setBtwMode(true);
+  assert.ok(!editor.render(60).some((line) => plain(line).includes("run the tests")));
+  editor.handleInput("\t");
+  assert.equal(editor.getText(), "", "tab does not fill a main-session suggestion");
+  editor.setText("side question");
+  editor.handleInput("\r");
+  assert.deepEqual(calls, [], "a side question does not count against the suggestion");
+
+  editor.setBtwMode(false);
+  assert.ok(editor.render(60).some((line) => plain(line).includes("run the tests")));
+});
