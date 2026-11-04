@@ -1,6 +1,7 @@
 import { CustomEditor, type KeybindingsManager, type Theme, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   type EditorTheme,
+  getKeybindings,
   matchesKey,
   sliceByColumn,
   stripTerminalSequences,
@@ -13,6 +14,7 @@ import {
 import { readEditorPaste } from "../internals/editor-pastes.ts";
 import { frameBottom, frameRow, frameTop } from "../shared/frame.ts";
 import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker } from "./paste.ts";
+import { withGhostSuggestion } from "./suggestion.ts";
 
 const STASH_CONFIRM_MS = 3000;
 /** Zero-width APC: Pi pads every content line, so the bottom border needs its own tag to stay findable. */
@@ -28,6 +30,8 @@ export interface TuneEditorOptions {
   onPreview?: (id: number) => void;
   /** Injected clock so tests can run the stash confirmation window without waiting. */
   now?: () => number;
+  /** Runs before every submit, including commands that start no agent run. */
+  onBeforeSubmit?: () => void;
 }
 
 interface Stash {
@@ -92,10 +96,12 @@ export class TuneEditor extends CustomEditor {
   private readonly themeOf: () => Theme;
   private readonly now: () => number;
   private readonly onPreview?: (id: number) => void;
+  private readonly onBeforeSubmit?: () => void;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
   private framed = false;
+  private ghost?: string;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: TuneEditorOptions) {
     // Same options Pi gives its default editor, so the working status stays in the top border.
@@ -109,11 +115,22 @@ export class TuneEditor extends CustomEditor {
     this.themeOf = options.theme;
     this.now = options.now ?? (() => Date.now());
     this.onPreview = options.onPreview;
+    this.onBeforeSubmit = options.onBeforeSubmit;
   }
 
   setStatus(model: string, thinking: string): void {
     this.model = model;
     this.thinking = thinking;
+  }
+
+  /** Ghost suggestion shown on the empty editor's first content row; Tab fills it. */
+  setSuggestion(text: string | undefined): void {
+    this.ghost = text;
+    this.tui.requestRender();
+  }
+
+  getSuggestion(): string | undefined {
+    return this.ghost;
   }
 
   /** Ctrl+V reaches this path; route large text through the bracketed paste so it collapses like Cmd+V. */
@@ -137,6 +154,23 @@ export class TuneEditor extends CustomEditor {
         this.onPreview?.(marker.id);
         return;
       }
+    }
+    // `\n` (ctrl+j) matches both bindings; the editor inserts a new line for it.
+    const keys = getKeybindings();
+    if (
+      keys.matches(data, "tui.input.submit") &&
+      !keys.matches(data, "tui.input.newLine") &&
+      this.getText().trim() !== "" &&
+      !this.isShowingAutocomplete()
+    ) {
+      this.onBeforeSubmit?.();
+    }
+    if (data === "\t" && this.ghostVisible() && !this.isShowingAutocomplete()) {
+      const text = this.ghost;
+      this.ghost = undefined;
+      if (text !== undefined) this.setText(text);
+      this.tui.requestRender();
+      return;
     }
     super.handleInput(data);
   }
@@ -171,6 +205,10 @@ export class TuneEditor extends CustomEditor {
     const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
     if (!this.framed || bottom < 0) return lines;
     const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
+    if (this.ghostVisible() && bottom === 2) {
+      // The empty editor has exactly one content row between the borders; overlay the ghost text there.
+      plain[1] = withGhostSuggestion(plain[1], this.ghost ?? "", (text) => this.themeOf().fg("dim", text), width - 2);
+    }
     // The working status takes the border color, like the model label on the bottom border.
     const status = topBorderLabel(plain[0] ?? "");
     return frameEditor(plain, width, this.borderColor, bottom, {
@@ -182,6 +220,10 @@ export class TuneEditor extends CustomEditor {
 
   protected renderBottomBorder(width: number, hiddenLineCount: number): string {
     return BOTTOM_MARK + super.renderBottomBorder(width, hiddenLineCount);
+  }
+
+  private ghostVisible(): boolean {
+    return this.ghost !== undefined && this.ghost !== "" && this.getText().length === 0;
   }
 
   private leftLabel(): string | undefined {
