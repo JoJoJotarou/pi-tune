@@ -3,7 +3,8 @@
 //   npm run bench                       # builds a long session with the scripted model first
 //   npm run bench -- <session.jsonl>    # or scrolls an existing session (copied, never modified)
 //
-// Each sample is the time from a wheel event to the first byte of the frame Pi draws for it.
+// Each sample is the time from a wheel event to the first byte of the frame Pi draws for it. Pi alone and Pi with
+// pi-tune run side by side and take turns at each wheel step, so a change in machine load lands on both.
 import {
   chmodSync,
   existsSync,
@@ -22,6 +23,7 @@ import { spawn } from "node-pty";
 
 const ROUNDS = 30;
 const WHEELS = 80;
+const RUNS = 3;
 const COLS = 120;
 const ROWS = 40;
 
@@ -40,8 +42,7 @@ const work = mkdtempSync(join(tmpdir(), "pi-tune-bench-"));
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 function startPi({ tune, sessionArgs, scenario }) {
-  const agentDir = join(work, `agent-${Date.now()}`);
-  mkdirSync(agentDir, { recursive: true });
+  const agentDir = mkdtempSync(join(work, "agent-"));
   writeFileSync(
     join(agentDir, "settings.json"),
     JSON.stringify({
@@ -237,51 +238,64 @@ function copySession(source) {
   const header = JSON.parse(lines[0]);
   header.cwd = join(work, "project");
   lines[0] = JSON.stringify(header);
-  const copy = join(work, `session-${Date.now()}.jsonl`);
+  const copy = join(mkdtempSync(join(work, "session-")), "session.jsonl");
   writeFileSync(copy, lines.join("\n"));
   return copy;
 }
 
-async function measure(session, tune) {
-  const pi = startPi({ tune, sessionArgs: ["--session", copySession(session)] });
+async function wheelUp(pi) {
+  pi.firstData = 0;
+  const sent = performance.now();
+  pi.pty.write(`\x1b[<64;${Math.floor(COLS / 2)};${Math.floor(ROWS / 3)}M`);
+  while (pi.firstData === 0) {
+    if (performance.now() - sent > 5000) throw new Error("no frame within 5 s of a wheel event");
+    await sleep(1);
+  }
+  const latency = pi.firstData - sent;
+  await waitQuiet(pi, 40);
+  return latency;
+}
+
+/** Samples for Pi alone and for Pi with pi-tune, in that order. */
+async function measure(session) {
+  const pis = [false, true].map((tune) => startPi({ tune, sessionArgs: ["--session", copySession(session)] }));
   try {
-    await waitReady(pi);
-    const samples = [];
+    await Promise.all(pis.map(waitReady));
+    const samples = [[], []];
     for (let i = 0; i < WHEELS; i++) {
-      pi.firstData = 0;
-      const sent = performance.now();
-      pi.pty.write(`\x1b[<64;${Math.floor(COLS / 2)};${Math.floor(ROWS / 3)}M`);
-      while (pi.firstData === 0) {
-        if (performance.now() - sent > 5000) throw new Error(`no frame within 5 s of wheel event ${i}`);
-        await sleep(1);
-      }
-      samples.push(pi.firstData - sent);
-      await waitQuiet(pi, 40);
+      for (const [side, pi] of pis.entries()) samples[side].push(await wheelUp(pi));
     }
-    return samples.sort((a, b) => a - b);
+    return samples;
   } finally {
-    await quit(pi);
+    await Promise.all(pis.map(quit));
   }
 }
 
-const at = (samples, p) => `${samples[Math.min(samples.length - 1, Math.floor(samples.length * p))].toFixed(1)} ms`;
+const at = (samples, p) => samples[Math.min(samples.length - 1, Math.floor(samples.length * p))];
 
 try {
   mkdirSync(join(work, "project"), { recursive: true });
   const given = process.argv[2];
   const session = given ? resolve(given) : await buildSession();
-  const pi = await measure(session, false);
-  const tuned = await measure(session, true);
+  const pi = [];
+  const tuned = [];
+  for (let run = 0; run < RUNS; run++) {
+    const [alone, withTune] = await measure(session);
+    pi.push(...alone);
+    tuned.push(...withTune);
+  }
   console.log(`session: ${given ?? `${ROUNDS} scripted rounds`} (${(statSync(session).size / 1e6).toFixed(1)} MB)`);
   console.log(`${"".padEnd(12)}${"p50".padStart(10)}${"p90".padStart(10)}${"max".padStart(10)}`);
   for (const [label, samples] of [
     ["pi", pi],
     ["pi + tune", tuned],
   ]) {
+    samples.sort((a, b) => a - b);
     console.log(
-      `${label.padEnd(12)}${at(samples, 0.5).padStart(10)}${at(samples, 0.9).padStart(10)}${at(samples, 1).padStart(10)}`,
+      `${label.padEnd(12)}${[0.5, 0.9, 1].map((p) => `${at(samples, p).toFixed(1)} ms`.padStart(10)).join("")}`,
     );
   }
+  console.log(`pi + tune / pi at p50: ${(at(tuned, 0.5) / at(pi, 0.5)).toFixed(2)}x`);
 } catch (error) {
   console.error(`bench failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
