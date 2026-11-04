@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { detectSandbox } from "../../src/btw/sandbox.ts";
@@ -212,6 +212,54 @@ test("a broken btw setting warns with the file and field, and keeps the defaults
     await pi.waitFor("btw tools use the defaults:");
     const warning = pi.screen().join(" ").replace(/\s+/g, " ");
     assert.match(warning, /pi-tune\.json has a "btw\.allow" value that is not a list of strings/);
+  } finally {
+    await pi.close();
+  }
+});
+
+function sessionFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sessionFiles(path);
+    return entry.name.endsWith(".jsonl") ? [path] : [];
+  });
+}
+
+test("threads come back after /reload, saved one turn per entry", { timeout: 180_000 }, async () => {
+  const pi = await startPi({
+    scenario: {
+      turns: [[{ text: "main answer" }], [{ text: "first side answer" }], [{ text: "second side answer" }]],
+    },
+    session: true,
+  });
+  try {
+    // Pi writes the session file once the main session has an answer.
+    pi.type("main question\r");
+    await pi.waitFor("main answer");
+    pi.type("/btw first question\r");
+    await pi.waitFor("first side answer");
+    pi.type("second question\r");
+    await pi.waitFor("second side answer");
+    pi.press("escape");
+    await pi.waitForGone(DRAWER);
+
+    const files = sessionFiles(join(pi.projectDir, "..", "agent"));
+    const saved = files
+      .flatMap((file) => readFileSync(file, "utf8").split("\n").filter(Boolean))
+      .map((line) => JSON.parse(line) as { type?: string; customType?: string; data?: Record<string, unknown> })
+      .filter((entry) => entry.customType === "pi-tune-btw");
+    assert.equal(saved.length, 2, "one entry per answered turn");
+    for (const entry of saved) assert.deepEqual(Object.keys(entry.data ?? {}).sort(), ["thread", "turn"]);
+
+    pi.type("/reload\r");
+    await pi.waitForGone("/reload");
+    pi.type("/btw\r");
+    await pi.waitFor("#1 first question");
+    await pi.waitFor("2 turns");
+    pi.press("enter");
+    await pi.waitFor(DRAWER);
+    const screen = pi.screen().join("\n");
+    assert.ok(screen.includes("first side answer") && screen.includes("second side answer"), screen);
   } finally {
     await pi.close();
   }

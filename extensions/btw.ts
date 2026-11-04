@@ -258,7 +258,8 @@ export default function btwExtension(pi: ExtensionAPI) {
       (listTui, theme, _keybindings, done) =>
         new ThreadList({
           items: threadItems(threads, mainTurns),
-          selected: displayedId ?? NEW_THREAD,
+          // Opening the list is for continuing a thread; `/btw <question>` starts a new one.
+          selected: displayedId ?? threads.filter((thread) => thread.turns.length > 0).at(-1)?.id ?? NEW_THREAD,
           tui: listTui,
           theme,
           done,
