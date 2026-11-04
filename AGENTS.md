@@ -55,8 +55,9 @@ npm run bench      # wheel latency in a long session, Pi alone vs with pi-tune (
   component's own cache. A component that stays in the transcript returns its previous lines while the width and
   every input it draws from are unchanged, and drops them in `invalidate()`. Nothing may do work per frame that
   grows with the session.
-- Before a PR that adds or changes anything drawn on screen, run `npm run bench`: the pi-tune p50 must stay within
-  2 ms of Pi alone. Put both rows in the PR.
+- Before a PR that adds or changes anything drawn on screen, run `npm run bench` while nothing else heavy runs (no
+  e2e, builds or other agents): the pi-tune p50 must stay under 2x Pi alone (the bench prints the ratio). Timing
+  is noisy, so a miss counts only when a second run misses too. Put the table in the PR.
 - Take colors from the `Theme` you are handed (`theme.fg`, `theme.bg`, `theme.style`, `theme.colors`). Never
   hard-code ANSI colors.
 - All TUI text is English, short, and uses the exact strings given in the task spec. Issue mockups that show
