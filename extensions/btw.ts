@@ -62,6 +62,7 @@ export default function btwExtension(pi: ExtensionAPI) {
   let stopListening: (() => void) | undefined;
   let rules: BtwRules = DEFAULT_RULES;
   let rulesPath = "pi-tune.json";
+  let rulesProblem: string | undefined;
   /** Detected on the first allowed bash command, then kept for the process. */
   let sandbox: SandboxKind | Error | undefined;
   let warnedUnsandboxed = false;
@@ -141,6 +142,14 @@ export default function btwExtension(pi: ExtensionAPI) {
     ticker = undefined;
   }
 
+  /** Read on every question, so an edited `pi-tune.json` applies without `/reload`; a problem warns once until it changes. */
+  function loadRules(ctx: ExtensionContext): void {
+    const load = loadBtwRules(rulesPath);
+    rules = load.rules;
+    if (load.problem && load.problem !== rulesProblem) ctx.ui.notify(load.problem, "warning");
+    rulesProblem = load.problem;
+  }
+
   /** A question that did not get its answer goes back into the empty editor, ready to send again. */
   function restoreDraft(ctx: ExtensionContext, text: string): void {
     if (ctx.ui.getEditorText() === "") ctx.ui.setEditorText(text);
@@ -148,6 +157,7 @@ export default function btwExtension(pi: ExtensionAPI) {
 
   async function ask(ctx: ExtensionContext, question: string): Promise<void> {
     if (!ctx.model) throw new Error("No active model to answer the side question.");
+    loadRules(ctx);
     let thread = displayed();
     if (!thread) {
       thread = {
@@ -324,9 +334,8 @@ export default function btwExtension(pi: ExtensionAPI) {
     pending = undefined;
     pi.events.emit(BTW_MODE_CHANNEL, false);
     rulesPath = join(getAgentDir(), "pi-tune.json");
-    const load = loadBtwRules(rulesPath);
-    rules = load.rules;
-    if (load.problem) ctx.ui.notify(load.problem, "warning");
+    rulesProblem = undefined;
+    loadRules(ctx);
     restore(ctx);
     if (ctx.mode !== "tui") return;
     mountWidget(ctx);

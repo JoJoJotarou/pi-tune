@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { detectSandbox } from "../../src/btw/sandbox.ts";
@@ -266,6 +266,32 @@ test("threads come back after /reload, saved one turn per entry", { timeout: 180
     await pi.waitFor(DRAWER);
     const screen = pi.screen().join("\n");
     assert.ok(screen.includes("first side answer") && screen.includes("second side answer"), screen);
+  } finally {
+    await pi.close();
+  }
+});
+
+test("a rule added to pi-tune.json applies to the next question without /reload", { timeout: 180_000 }, async () => {
+  const scenario: Scenario = {
+    turns: [
+      [{ tool: "bash", args: { command: "date +%F" } }],
+      [{ text: "first try" }],
+      [{ tool: "bash", args: { command: "date +%F" } }],
+      [{ text: "second try" }],
+    ],
+  };
+  const pi = await startPi({ scenario });
+  try {
+    pi.type("/btw what day is it?\r");
+    await pi.waitFor("first try");
+    await pi.waitFor("⚠ blocked: bash(date *)");
+
+    const config = join(pi.projectDir, "..", "agent", "pi-tune.json");
+    writeFileSync(config, JSON.stringify({ btw: { allow: ["read", "bash(date *)"] } }));
+    pi.type("and now?\r");
+    await pi.waitFor("second try");
+    const blocked = pi.screen().filter((row) => row.includes("⚠ blocked"));
+    assert.equal(blocked.length, 1, "only the first answer was refused");
   } finally {
     await pi.close();
   }
