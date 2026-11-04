@@ -39,8 +39,8 @@ function harness(): Harness {
 }
 
 function thinkingEvent(
-  type: "thinking_start" | "thinking_delta" | "text_start",
-  fields: { contentIndex?: number; delta?: string } = {},
+  type: "thinking_start" | "thinking_delta" | "thinking_end" | "text_start",
+  fields: { contentIndex?: number; delta?: string; content?: string } = {},
 ): MessageUpdateEvent {
   return {
     type: "message_update",
@@ -122,4 +122,58 @@ test("message_end seeds joined groups with the response duration", () => {
     ),
   );
   assert.equal(transform(h.session, "first part\n\nsecond part"), "◆ Thought for 6.0s (6 tokens)");
+});
+
+test("message_end keeps a measured run instead of the whole reply's duration", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
+  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "plan the answer" }));
+  h.now(3_200);
+  h.session.messageUpdate(thinkingEvent("text_start", { contentIndex: 1 }));
+  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "text" }], 20_000));
+
+  assert.match(transform(h.session, "plan the answer"), /Thought for 2\.2s/);
+});
+
+test("message_end sums the measured runs of a joined group", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
+  h.now(2_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "first part" }));
+  h.now(2_500);
+  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 1 }));
+  h.now(4_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 1, content: "second part" }));
+  h.session.messageEnd(
+    assistantEnd(
+      [
+        { type: "thinking", thinking: "first part" },
+        { type: "thinking", thinking: "second part" },
+      ],
+      20_000,
+    ),
+  );
+
+  assert.match(transform(h.session, "first part\n\nsecond part"), /Thought for 2\.5s/);
+});
+
+test("a group with an unmeasured run falls back to the whole reply's duration", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
+  h.now(2_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "first part" }));
+  h.session.messageEnd(
+    assistantEnd(
+      [
+        { type: "thinking", thinking: "first part" },
+        { type: "thinking", thinking: "second part" },
+      ],
+      6_000,
+    ),
+  );
+
+  assert.match(transform(h.session, "first part\n\nsecond part"), /Thought for 6\.0s/);
 });
