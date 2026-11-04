@@ -36,7 +36,12 @@ function streamEnd(output: number): MessageEndEvent {
 interface Harness {
   session: ChromeSession;
   notified: string[];
-  entries: SessionEntry[];
+  /** Appends an entry and moves the leaf onto it, as Pi's session manager does. */
+  append(entry: SessionEntry): void;
+  /** Swaps in another session's entries, keeping the leaf id. */
+  replaceEntries(entries: SessionEntry[]): void;
+  /** How often the session read the whole entry list. */
+  entryReads(): number;
   setEditorText(text: string): void;
   setFocus(focus: boolean | Error): void;
   now(ms: number): void;
@@ -55,7 +60,9 @@ function required<T>(value: T | undefined, what: string): T {
 
 function harness(): Harness {
   const notified: string[] = [];
-  const entries: SessionEntry[] = [];
+  let entries: SessionEntry[] = [];
+  let leaf: string | null = null;
+  let reads = 0;
   let editorText = "";
   let focus: boolean | Error = true;
   let nowMs = 10_000;
@@ -75,7 +82,13 @@ function harness(): Harness {
         footerFactory = factory;
       },
     },
-    sessionManager: { getEntries: () => entries },
+    sessionManager: {
+      getEntries: () => {
+        reads += 1;
+        return entries;
+      },
+      getLeafId: () => leaf,
+    },
     getContextUsage: () => ({ tokens: 1_000, contextWindow: 200_000, percent: 0.5 }),
     model: undefined,
   };
@@ -111,7 +124,14 @@ function harness(): Harness {
   return {
     session,
     notified,
-    entries,
+    append: (entry) => {
+      entries.push(entry);
+      leaf = `entry-${entries.length}`;
+    },
+    replaceEntries: (next) => {
+      entries = next;
+    },
+    entryReads: () => reads,
     setEditorText: (text) => {
       editorText = text;
     },
@@ -136,7 +156,7 @@ function plain(lines: readonly string[]): string[] {
 
 test("start renders the header counts and the footer line", () => {
   const h = harness();
-  h.entries.push({ type: "usage", usage: usage(50) } as SessionEntry);
+  h.append({ type: "usage", usage: usage(50) } as SessionEntry);
 
   const header = plain(h.header())[0];
   assert.match(header, /2 skills/);
@@ -227,7 +247,7 @@ test("shutdown clears the session and a restart starts fresh", () => {
   assert.deepEqual(h.footer(), []);
   assert.deepEqual(h.header(), []);
 
-  h.entries.length = 0;
+  h.replaceEntries([]);
   h.setEditorText("");
   h.restart();
   const restarted = plain(h.footer())[0];
@@ -235,4 +255,28 @@ test("shutdown clears the session and a restart starts fresh", () => {
   assert.doesNotMatch(restarted, /tok\/s/);
   assert.doesNotMatch(restarted, /TTFT/);
   assert.doesNotMatch(restarted, /steer/);
+});
+
+test("the footer rereads the entries only after an append", () => {
+  const h = harness();
+  h.append({ type: "usage", usage: usage(50) } as SessionEntry);
+  assert.match(plain(h.footer())[0], /↑100 ↓50 /);
+  h.footer();
+  h.footer();
+  assert.equal(h.entryReads(), 1);
+
+  h.append({ type: "usage", usage: usage(30) } as SessionEntry);
+  assert.match(plain(h.footer())[0], /↑200 ↓80 /);
+  assert.equal(h.entryReads(), 2);
+});
+
+test("a restarted session does not reuse the previous session's totals", () => {
+  const h = harness();
+  h.append({ type: "usage", usage: usage(50) } as SessionEntry);
+  assert.match(plain(h.footer())[0], /↓50 /);
+
+  h.session.shutdown();
+  h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
+  h.restart();
+  assert.match(plain(h.footer())[0], /↓7 /);
 });

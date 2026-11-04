@@ -12,7 +12,7 @@ import { type FooterParts, type FooterStats, footerLine, streamRate } from "./fo
 import { headerLine } from "./header.ts";
 import { formatHints, type HintState, hintFor } from "./hints.ts";
 import { configuredServers, connectedServers, readMcpFile } from "./mcp.ts";
-import { sessionUsage } from "./usage.ts";
+import { sessionUsage, type UsageTotals } from "./usage.ts";
 
 /** What the chrome session reads from the running Pi instance; injected so tests can fake it. */
 export interface ChromeHost {
@@ -39,7 +39,7 @@ export interface ChromeContext {
   isProjectTrusted(): boolean;
   getContextUsage(): ContextUsage | undefined;
   ui: Pick<ExtensionContext["ui"], "notify" | "getEditorText" | "setHeader" | "setFooter">;
-  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries">;
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries" | "getLeafId">;
 }
 
 export interface ChromeSession {
@@ -100,6 +100,11 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
   let ttft: number | undefined;
   /** Enabled MCP servers from the config files, read once per session. */
   let mcpConfigured = 0;
+  /**
+   * Usage totals of the entries as of `leaf`. Entries are append-only and every append moves the leaf onto the new
+   * entry, so the footer rereads them only when the leaf moves, not on every frame.
+   */
+  let usageCache: { leaf: string | null; totals: UsageTotals } | undefined;
 
   function reset(): void {
     running = false;
@@ -112,6 +117,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
     rate = undefined;
     requestStartedAt = undefined;
     ttft = undefined;
+    usageCache = undefined;
   }
 
   function render(): void {
@@ -201,7 +207,11 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
           render(width: number): string[] {
             const session = current;
             if (!session) return [];
-            const usage = sessionUsage(session.sessionManager.getEntries());
+            const leaf = session.sessionManager.getLeafId();
+            if (usageCache === undefined || usageCache.leaf !== leaf) {
+              usageCache = { leaf, totals: sessionUsage(session.sessionManager.getEntries()) };
+            }
+            const usage = usageCache.totals;
             const context = session.getContextUsage();
             const settings = host.settings();
             const stats: FooterStats = {
