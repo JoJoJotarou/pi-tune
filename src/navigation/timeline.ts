@@ -275,13 +275,16 @@ export class TimelineRail implements Component {
   }
 
   private layout(): Layout | undefined {
-    const columns = this.tui.terminal.columns;
     const transcript = collectPrompts(this.tui);
     if (transcript instanceof Error) {
       this.disable(transcript);
       return undefined;
     }
-    const height = transcriptViewportHeight(this.tui, columns);
+    const height = transcriptViewportHeight(this.tui);
+    if (height instanceof Error) {
+      this.disable(height);
+      return undefined;
+    }
     const geometry = timelineGeometry({
       prompts: transcript.prompts,
       viewportTop: this.tui.viewportTop,

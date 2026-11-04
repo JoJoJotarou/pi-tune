@@ -190,9 +190,12 @@ function fakeTui(children: Component[] = [], viewportTop = 0) {
     render: () => [],
     addChild: () => {},
   };
+  const view = new ScrollView(document as never, { primary: true });
+  // Pi lays the view out every frame; the transcript fills the whole 30-row terminal here.
+  view.updateLayout(30, 30, () => {});
   const tui = {
     children: [document],
-    layoutRoot: new VStack([new ScrollView(document as never, { primary: true })]),
+    layoutRoot: new VStack([view]),
     terminal: { columns: 80, rows: 30 },
     viewportTop,
     scrollTop: viewportTop,

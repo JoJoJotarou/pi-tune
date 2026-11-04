@@ -279,3 +279,35 @@ test("timeline reports that it needs fullscreen mode outside fullscreen", { time
     await pi.close();
   }
 });
+
+test("the rail stays centered on the transcript while the editor grows", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true, settings });
+  try {
+    await runTurns(pi);
+    pi.type("draft");
+    await pi.waitFor("draft");
+    await sleep(300);
+    const before = railMarks(pi);
+    const draftRow = rowOf(pi, "draft");
+    assert.ok(before.up !== undefined, `no rail\n${pi.screen().join("\n")}`);
+
+    for (let line = 1; line <= 6; line++) {
+      pi.press("ctrl+j");
+      pi.type(`more ${line}`);
+    }
+    await pi.waitFor("more 6");
+    await sleep(300);
+    const grown = draftRow - rowOf(pi, "draft");
+    const after = railMarks(pi);
+    assert.ok(grown > 0, `the editor did not grow\n${pi.screen().join("\n")}`);
+    // The ticks are centered on the transcript rows, so they rise by half of what the editor took.
+    const shift = (before.up ?? 0) - (after.up ?? 0);
+    assert.ok(
+      shift === Math.floor(grown / 2) || shift === Math.ceil(grown / 2),
+      `editor grew ${grown} rows, rail rose ${shift}\n${pi.screen().join("\n")}`,
+    );
+    assert.equal(after.ticks.length, questions.length, pi.screen().join("\n"));
+  } finally {
+    await pi.close();
+  }
+});

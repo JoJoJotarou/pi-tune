@@ -23,6 +23,7 @@
     "test": "node --test \"src/**/*.test.ts\"",
     "smoke": "node scripts/smoke.mjs",
     "e2e": "node --test --test-concurrency=4 \"test/e2e/**/*.test.ts\"",
+    "bench": "node scripts/bench.mjs",
     "ci": "npm run lint && npm run typecheck && npm test && npm run smoke"
   },
   "peerDependencies": {
