@@ -259,7 +259,8 @@ test("threads come back after /reload, saved one turn per entry", { timeout: 180
     assert.doesNotMatch(texts[1], /btw_tools/, "not repeated while the rules stay the same");
 
     pi.type("/reload\r");
-    await pi.waitForGone("/reload");
+    // Keys typed before the reload finishes are lost.
+    await pi.waitFor("Reloaded keybindings");
     pi.type("/btw\r");
     await pi.waitFor("#1 first question");
     await pi.waitFor("2 turns");
