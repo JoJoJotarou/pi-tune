@@ -72,6 +72,18 @@ test("clearing a typed start brings the whole suggestion back and esc dismisses 
   });
 });
 
+test("a double esc over a suggestion still opens Pi's session tree", { timeout: 120_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true, agentFiles: suggestOn });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor(GHOST);
+    pi.press("escape");
+    await pi.waitForGone(GHOST);
+    pi.press("escape");
+    await pi.waitFor("Session Tree");
+  });
+});
+
 test("suggestions are off by default", { timeout: 120_000 }, async () => {
   const pi = await startPi({
     scenario: {

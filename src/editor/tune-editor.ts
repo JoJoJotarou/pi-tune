@@ -182,10 +182,10 @@ export class TuneEditor extends CustomEditor {
       return;
     }
     if (matchesKey(data, "escape") && this.ghostRest() !== undefined && this.getText() === "") {
+      // Pi still gets the key, so a double esc keeps opening the session tree.
       this.ghost = undefined;
       this.onDismissSuggestion?.();
       this.tui.requestRender();
-      return;
     }
     super.handleInput(data);
   }
