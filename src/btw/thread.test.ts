@@ -5,10 +5,10 @@ import {
   type BtwThread,
   composeTurnText,
   countUserTurns,
+  messageText,
   SIDE_THREAD_ADDENDUM,
   staleNotice,
   threadMessages,
-  turnAnswer,
 } from "./thread.ts";
 
 function assistant(text: string, timestamp = 1): AssistantMessage {
@@ -37,8 +37,14 @@ function thread(): BtwThread {
     anchorEntryId: "e10",
     anchorTurns: 3,
     turns: [
-      { text: "<addendum>\n\n[notice]\n\nalpha?", question: "alpha?", message: assistant("first", 2), askedAt: 2 },
-      { text: "beta?", question: "beta?", message: assistant("second", 4), askedAt: 4 },
+      {
+        text: "<addendum>\n\n[notice]\n\nalpha?",
+        question: "alpha?",
+        message: assistant("first", 2),
+        askedAt: 2,
+        durationMs: 1,
+      },
+      { text: "beta?", question: "beta?", message: assistant("second", 4), askedAt: 4, durationMs: 1 },
     ],
   };
 }
@@ -94,7 +100,7 @@ describe("threadMessages", () => {
   });
 });
 
-describe("turnAnswer", () => {
+describe("messageText", () => {
   it("joins the text blocks and skips thinking", () => {
     const message = assistant("a");
     message.content = [
@@ -102,7 +108,7 @@ describe("turnAnswer", () => {
       { type: "text", text: "a" },
       { type: "text", text: "b" },
     ];
-    assert.equal(turnAnswer({ ...thread().turns[0], message }), "ab");
+    assert.equal(messageText(message), "ab");
   });
 });
 

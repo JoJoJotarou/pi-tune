@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { drawerMaxHeight, renderBtw } from "./render.ts";
+import { type DrawerInput, drawerMaxHeight, renderBtw } from "./render.ts";
 import type { BtwThread } from "./thread.ts";
 
+initTheme("dark");
 const theme = testTheme();
+const markdown = getMarkdownTheme();
 
 function assistant(
   text: string,
-  usage = { input: 8000, output: 120, cacheRead: 7800, cacheWrite: 0, totalTokens: 8120 },
+  usage = { input: 200, output: 120, cacheRead: 7800, cacheWrite: 0, totalTokens: 8120 },
 ): AssistantMessage {
   return {
     role: "assistant",
@@ -37,8 +40,22 @@ function thread(turns: number, anchorTurns = 3): BtwThread {
       question: `question ${index + 1}`,
       message: assistant(`answer ${index + 1}`),
       askedAt: index,
+      durationMs: 3200,
     })),
   };
+}
+
+function draw(overrides: Partial<DrawerInput> = {}) {
+  return renderBtw({
+    thread: thread(1),
+    number: 1,
+    mainTurns: 3,
+    maxHeight: 16,
+    width: 80,
+    theme,
+    markdown,
+    ...overrides,
+  });
 }
 
 function plain(lines: string[]): string[] {
@@ -46,98 +63,124 @@ function plain(lines: string[]): string[] {
 }
 
 describe("drawerMaxHeight", () => {
-  it("keeps the collapsed drawer readable and the transcript visible", () => {
-    assert.equal(drawerMaxHeight(40, false), 12);
-    assert.equal(drawerMaxHeight(24, false), 10);
-    assert.equal(drawerMaxHeight(20, false), 8);
-    assert.equal(drawerMaxHeight(12, false), 6);
-  });
-
-  it("expands to everything but six rows", () => {
-    assert.equal(drawerMaxHeight(40, true), 34);
-    assert.equal(drawerMaxHeight(12, true), 8);
+  it("takes at most half the screen and 16 rows", () => {
+    assert.equal(drawerMaxHeight(60), 16);
+    assert.equal(drawerMaxHeight(24), 12);
+    assert.equal(drawerMaxHeight(20), 10);
+    assert.equal(drawerMaxHeight(8), 6);
   });
 });
 
 describe("renderBtw", () => {
-  const sizes = [
-    { width: 100, maxHeight: 12 },
-    { width: 40, maxHeight: 6 },
-    { width: 30, maxHeight: 8 },
-  ];
-
   it("never draws a line wider than the width it was given, and never more rows than allowed", () => {
-    for (const { width, maxHeight } of sizes) {
-      for (const turns of [0, 1, 3, 40]) {
-        const lines = renderBtw({ thread: thread(turns), mainTurns: 3, composing: false, maxHeight, width, theme });
-        assert.ok(lines.length <= maxHeight, `${width}x${maxHeight}: ${lines.length} rows`);
-        assert.ok(lines.length >= 4, `${width}x${maxHeight}: borders plus a row`);
-        for (const line of lines)
-          assert.ok(visibleWidth(line) <= width, `too wide at ${width}: ${stripTerminalSequences(line)}`);
+    const long = "word ".repeat(300);
+    for (const width of [100, 40, 30]) {
+      for (const maxHeight of [6, 10, 16]) {
+        for (const turns of [0, 1, 3, 40]) {
+          for (const pending of [undefined, { question: long, answer: long, elapsedMs: 1200, spinner: "⠋" }]) {
+            const { lines } = draw({ thread: thread(turns), width, maxHeight, pending });
+            assert.ok(lines.length <= maxHeight, `${width}x${maxHeight}: ${lines.length} rows`);
+            for (const line of lines)
+              assert.ok(visibleWidth(line) <= width, `too wide at ${width}: ${stripTerminalSequences(line)}`);
+          }
+        }
       }
     }
   });
 
   it("takes only the rows its content needs", () => {
-    const one = renderBtw({ thread: thread(1), mainTurns: 3, composing: false, maxHeight: 12, width: 80, theme });
-    const many = renderBtw({ thread: thread(6), mainTurns: 3, composing: false, maxHeight: 12, width: 80, theme });
-    assert.equal(one.length, 4, "one exchange plus two borders");
-    assert.equal(many.length, 12, "capped at maxHeight");
+    assert.equal(draw({ thread: thread(1) }).lines.length, 5, "question, answer, meta, two borders");
+    assert.equal(draw({ thread: thread(12), maxHeight: 16 }).lines.length, 16, "capped at maxHeight");
   });
 
-  it("shows the newest exchange when the thread does not fit", () => {
-    const lines = plain(
-      renderBtw({ thread: thread(12), mainTurns: 3, composing: false, maxHeight: 8, width: 60, theme }),
-    );
-    assert.ok(lines.join("\n").includes("question 12"), "newest question is visible");
-    assert.ok(!lines.join("\n").includes("question 1 "), "oldest question is cut");
+  it("follows the newest row, and shows older rows from an explicit top", () => {
+    const newest = draw({ thread: thread(12), maxHeight: 8 });
+    const text = plain(newest.lines).join("\n");
+    assert.ok(text.includes("answer 12"), "newest answer is visible");
+    assert.ok(!text.includes("question 1\n") && !text.includes("question 1 "), "oldest question is cut");
+    assert.equal(newest.top, newest.maxTop);
+    assert.equal(newest.pageRows, 6);
+
+    const oldest = plain(draw({ thread: thread(12), maxHeight: 8, top: 0 }).lines).join("\n");
+    assert.ok(oldest.includes("question 1"), "top 0 starts at the first question");
+    assert.ok(!oldest.includes("answer 12"));
+
+    assert.equal(draw({ thread: thread(12), maxHeight: 8, top: 999 }).top, newest.maxTop, "top is clamped");
   });
 
-  it("warns about main turns the thread cannot see", () => {
-    const behind = plain(
-      renderBtw({ thread: thread(1, 3), mainTurns: 8, composing: false, maxHeight: 10, width: 80, theme }),
-    );
-    assert.ok(behind.join("\n").includes("main turns 4-8 are not in this thread"));
-    const inSync = plain(
-      renderBtw({ thread: thread(1, 3), mainTurns: 3, composing: false, maxHeight: 10, width: 80, theme }),
-    );
-    assert.ok(!inSync.join("\n").includes("are not in this thread"));
+  it("counts the rows above and below on the bottom border", () => {
+    const newest = plain(draw({ thread: thread(12), maxHeight: 8 }).lines).at(-1) ?? "";
+    assert.match(newest, /↑ \d+/);
+    assert.doesNotMatch(newest, /↓ \d+/);
+    const oldest = plain(draw({ thread: thread(12), maxHeight: 8, top: 0 }).lines).at(-1) ?? "";
+    assert.match(oldest, /↓ \d+/);
+    assert.doesNotMatch(oldest, /↑ \d+/);
   });
 
-  it("names the anchor in the title and the hints in the footer", () => {
-    const idle = plain(
-      renderBtw({ thread: thread(1), mainTurns: 4, composing: false, maxHeight: 10, width: 100, theme }),
-    );
-    assert.ok(idle[0].includes("btw · btw-1"));
-    assert.ok(idle[0].includes("@turn 3 · main 4"));
-    assert.ok(idle[idle.length - 1].includes("ctrl+shift+b ask"));
-
-    const composing = plain(
-      renderBtw({ thread: thread(1), mainTurns: 4, composing: true, maxHeight: 10, width: 100, theme }),
-    );
-    assert.ok(composing[composing.length - 1].includes("enter send"));
+  it("puts the anchor on the top border and marks main turns the thread cannot see", () => {
+    const behind = plain(draw({ thread: thread(1, 3), mainTurns: 8 }).lines)[0];
+    assert.ok(behind.includes("btw #1"), behind);
+    assert.ok(behind.includes("@turn 3 · main 8 (+5)"), behind);
+    const inSync = plain(draw({ thread: thread(1, 3), mainTurns: 3 }).lines)[0];
+    assert.ok(inSync.includes("@turn 3 · main 3"), inSync);
+    assert.ok(!inSync.includes("(+"), inSync);
   });
 
-  it("explains itself when there is no thread and when the thread is empty", () => {
-    const none = plain(renderBtw({ thread: null, mainTurns: 0, composing: false, maxHeight: 8, width: 60, theme }));
-    assert.ok(none.join("\n").includes("/btw <question> starts a side thread."));
-
-    const empty = plain(
-      renderBtw({ thread: thread(0), mainTurns: 0, composing: false, maxHeight: 8, width: 60, theme }),
-    );
-    assert.ok(empty.join("\n").includes("No question asked in this thread yet."));
+  it("names the keys that work right now", () => {
+    const idle = plain(draw().lines).at(-1) ?? "";
+    assert.ok(idle.includes("enter ask") && idle.includes("esc close"), idle);
+    assert.ok(!idle.includes("scroll"), "no scroll hint while everything fits");
+    const long = plain(draw({ thread: thread(12), maxHeight: 8, width: 120 }).lines).at(-1) ?? "";
+    assert.ok(long.includes("shift+↑↓ scroll"), long);
+    const narrow = plain(draw({ thread: thread(12), maxHeight: 8, width: 40 }).lines).at(-1) ?? "";
+    assert.ok(narrow.includes("enter ask") && narrow.includes("↑ "), narrow);
+    assert.ok(!narrow.includes("…"), `hints are dropped whole: ${narrow}`);
+    const running =
+      plain(draw({ pending: { question: "q", answer: "", elapsedMs: 0, spinner: "⠋" } }).lines).at(-1) ?? "";
+    assert.ok(running.includes("esc stop"), running);
+    assert.ok(!running.includes("enter ask"), running);
   });
 
-  it("adds the usage row only when expanded", () => {
-    const collapsed = plain(
-      renderBtw({ thread: thread(1), mainTurns: 3, composing: false, maxHeight: 10, width: 100, theme }),
+  it("shows a running question at once, then the answer as it streams", () => {
+    const waiting = plain(draw({ pending: { question: "why?", answer: "", elapsedMs: 1200, spinner: "⠙" } }).lines);
+    assert.ok(waiting.some((row) => row.includes("you why?")));
+    assert.ok(
+      waiting.some((row) => row.includes("btw ⠙ answering · 1.2s")),
+      waiting.join("\n"),
     );
-    assert.ok(!collapsed.join("\n").includes("cache"));
 
-    const expanded = plain(
-      renderBtw({ thread: thread(1), mainTurns: 3, composing: false, maxHeight: 20, width: 100, theme }),
+    const streaming = plain(
+      draw({ pending: { question: "why?", answer: "because it", elapsedMs: 2500, spinner: "⠹" } }).lines,
     );
-    assert.ok(expanded.join("\n").includes("probe/probe-model"));
-    assert.ok(expanded.join("\n").includes("cache 7.8k"));
+    assert.ok(streaming.some((row) => row.includes("btw because it")));
+    assert.ok(
+      streaming.some((row) => row.includes("⠹ 2.5s")),
+      streaming.join("\n"),
+    );
+  });
+
+  it("explains a new thread before its first question", () => {
+    const fresh = plain(draw({ thread: null, number: 2, mainTurns: 4 }).lines);
+    assert.ok(fresh[0].includes("btw #2"), fresh[0]);
+    assert.ok(fresh.join("\n").includes("Ask a side question"), fresh.join("\n"));
+  });
+
+  it("renders the answer as Markdown with a usage row", () => {
+    const rich: BtwThread = {
+      ...thread(0),
+      turns: [
+        {
+          text: "q",
+          question: "q",
+          message: assistant("use **bold** and `code`"),
+          askedAt: 0,
+          durationMs: 3200,
+        },
+      ],
+    };
+    const rows = plain(draw({ thread: rich }).lines).join("\n");
+    assert.ok(rows.includes("use bold and code"), rows);
+    assert.ok(!rows.includes("**"), rows);
+    assert.ok(rows.includes("probe-model · 3.2s · 8.1k tok · cache 7.8k/8k"), rows);
   });
 });

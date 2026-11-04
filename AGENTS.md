@@ -6,7 +6,7 @@ input box and status line. Extensions only. Built and tested against Pi 1.4.0.
 ## Layout
 
 - `extensions/<area>.ts`: one Pi extension per screen area (`tools`, `thinking`, `navigation`, `viewer`,
-  `markdown`, `status`, `editor`, `chrome`). Wiring only: register renderers, events, shortcuts, and commands,
+  `markdown`, `status`, `editor`, `chrome`, `btw`). Wiring only: register renderers, events, shortcuts, and commands,
   then call into `src/<area>/`. An area must keep working when any other area is disabled in `pi config`.
 - `src/<area>/`: the logic. Prefer pure functions (`(input, width, theme) => string[]`) so they can be unit
   tested. Tests sit next to the code: `diff.ts` and `diff.test.ts`.

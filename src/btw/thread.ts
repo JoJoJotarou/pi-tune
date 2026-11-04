@@ -15,6 +15,8 @@ export interface BtwTurn {
   /** The assistant message as returned, for display and replay. */
   message: AssistantMessage;
   askedAt: number;
+  /** From asking to the last streamed token. */
+  durationMs: number;
 }
 
 export interface BtwThread {
@@ -71,8 +73,8 @@ export function threadMessages(thread: BtwThread): Message[] {
 }
 
 /** The visible answer: every text block of the assistant message, in order. */
-export function turnAnswer(turn: BtwTurn): string {
-  return turn.message.content
+export function messageText(message: AssistantMessage): string {
+  return message.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("");
