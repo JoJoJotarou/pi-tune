@@ -1,5 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { parseModelId, type SuggestSettings } from "./suggest-settings.ts";
+import { parseModelId, type SuggestSettings, type SuggestStyle } from "./suggest-settings.ts";
 
 /** pi-tui's fake cursor marker (`FAKE_CURSOR_END` in its tui.d.ts, not a runtime export). */
 const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
@@ -45,7 +45,7 @@ export function buildTranscript(turns: readonly TranscriptTurn[]): string | unde
   return lines.reverse().join("\n\n");
 }
 
-export const SUGGEST_SYSTEM_PROMPT: string = [
+const CAREFUL_PROMPT: string = [
   "You predict the next line the USER will type into their coding agent.",
   "You see a transcript. The last line is from the agent.",
   "Write only that next user line, or NONE.",
@@ -61,6 +61,26 @@ export const SUGGEST_SYSTEM_PROMPT: string = [
   "If you write a line, use 2-12 words in their style.",
   "Reply with only the line or NONE.",
 ].join("\n");
+
+/** Offers a line whenever a natural next step exists; still never a question, filler, or the agent's voice. */
+const EAGER_PROMPT: string = [
+  "You predict the next line the USER will type into their coding agent.",
+  "You see a transcript. The last line is from the agent.",
+  "Write the most likely next user line. Write NONE only when no next line makes sense.",
+  "",
+  "Predict what they would type, not what you think they should do.",
+  "If the agent asked something or offered a next step, answer it as the user would.",
+  "If the work looks done, write the natural follow-up: verify it, commit it, or the next item.",
+  "",
+  "Never write a line the user already sent.",
+  "Never write filler, a question, or agent voice.",
+  "",
+  "Use 2-12 words, in the user's language and style.",
+  "Reply with only the line or NONE.",
+].join("\n");
+
+/** System prompt per suggestion style. */
+export const SUGGEST_PROMPTS: Record<SuggestStyle, string> = { careful: CAREFUL_PROMPT, eager: EAGER_PROMPT };
 
 export function buildSuggestionUserMessage(cwd: string, transcript: string): string {
   return `CWD: ${cwd}\n\nTranscript:\n\n${transcript}\n\nPredict the user's next message. Reply with ONLY the suggestion text.`;
@@ -141,6 +161,7 @@ const SUGGEST_CHARS = 80;
 export class Suggestion {
   private readonly options: SuggestionOptions;
   private enabled = false;
+  private style: SuggestStyle = "careful";
   private overrideModel: unknown;
   private sessionModelValue: unknown;
   private invalidModel = false;
@@ -167,6 +188,7 @@ export class Suggestion {
   /** Apply the settings the user just saved; an unknown model warns and leaves suggestions off. */
   applySettings(settings: SuggestSettings): void {
     this.enabled = settings.enabled;
+    this.style = settings.style ?? "careful";
     this.overrideModel = undefined;
     this.invalidModel = false;
     // A new choice is a fresh try, even after a failed request.
@@ -243,7 +265,7 @@ export class Suggestion {
     try {
       const text = await this.options.complete({
         model,
-        systemPrompt: SUGGEST_SYSTEM_PROMPT,
+        systemPrompt: SUGGEST_PROMPTS[this.style],
         userMessage: buildSuggestionUserMessage(this.options.cwd(), transcript),
         signal: controller.signal,
       });

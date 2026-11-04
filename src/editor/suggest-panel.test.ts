@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { type Component, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { SuggestPanel } from "./suggest-panel.ts";
 import type { SuggestSettings } from "./suggest-settings.ts";
 
@@ -118,4 +118,16 @@ test("the model picker brings its own frame, so the panel's border steps aside w
   assert.deepEqual(instance.render(40), ["picker"]);
   instance.handleInput("\r");
   assert.equal(border(instance.render(40)), 2);
+});
+
+test("while on, a Style row flips careful and eager and keeps the model", () => {
+  const { instance, changes } = panel({ enabled: true, model: "faux/scripted" });
+  assert.match(stripTerminalSequences(rows(instance).join("\n")), /Style\s+careful/);
+  instance.handleInput("\x1b[B");
+  instance.handleInput("\x1b[B");
+  instance.handleInput("\r");
+  assert.deepEqual(changes, [{ enabled: true, model: "faux/scripted", style: "eager" }]);
+  assert.match(stripTerminalSequences(rows(instance).join("\n")), /Style\s+eager/);
+  const off = panel({ enabled: false, style: "eager" });
+  assert.ok(!rows(off.instance).join("\n").includes("Style"));
 });

@@ -120,8 +120,28 @@ test("/suggest rejects an unknown model and bad arguments", () => {
   for (const args of ["maybe", "on now", "model", "model a b"]) {
     assert.equal(
       errorOf(suggestCommand(args, { enabled: true }, known)),
-      "Usage: /suggest [on|off|model <provider/id|session>]",
+      "Usage: /suggest [on|off|model <provider/id|session>|style <careful|eager>]",
       args,
     );
   }
+});
+
+test("the style is saved, read back, and checked", () => {
+  withDir((path) => {
+    saveSuggestSettings(path, { enabled: true, style: "eager" });
+    assert.deepEqual(loadSuggestSettings(path), { ok: true, settings: { enabled: true, style: "eager" } });
+    writeFileSync(path, JSON.stringify({ suggest: { enabled: true, style: "wild" } }));
+    const loaded = loadSuggestSettings(path);
+    assert.ok(!loaded.ok && loaded.problem.includes('"suggest.style"'), JSON.stringify(loaded));
+  });
+});
+
+test("/suggest style sets the style and keeps the rest; model session keeps the style", () => {
+  assert.deepEqual(suggestCommand("style eager", { enabled: true, model: "cheap/mini" }, known), {
+    settings: { enabled: true, model: "cheap/mini", style: "eager" },
+  });
+  assert.deepEqual(suggestCommand("model session", { enabled: true, model: "cheap/mini", style: "eager" }, known), {
+    settings: { enabled: true, style: "eager" },
+  });
+  assert.match(errorOf(suggestCommand("style wild", { enabled: true }, known)), /^Usage: \/suggest/);
 });

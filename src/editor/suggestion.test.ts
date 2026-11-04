@@ -8,7 +8,7 @@ import {
   buildTranscript,
   cleanSuggestion,
   collectSessionTurns,
-  SUGGEST_SYSTEM_PROMPT,
+  SUGGEST_PROMPTS,
   Suggestion,
   type TranscriptTurn,
   withGhostSuggestion,
@@ -115,8 +115,24 @@ test("the suggestion prompt carries cwd, transcript and the reply-only instructi
   assert.ok(message.startsWith("CWD: /tmp/x"));
   assert.ok(message.includes("User: hi"));
   assert.ok(message.includes("Reply with ONLY the suggestion text."));
-  assert.ok(SUGGEST_SYSTEM_PROMPT.includes("A wrong line is worse than NONE."));
-  assert.ok(SUGGEST_SYSTEM_PROMPT.includes("2-12 words in their style."));
+});
+
+test("the style picks the system prompt, careful unless set", async () => {
+  const prompts: string[] = [];
+  const { suggestion } = makeSuggestion({
+    complete: async ({ systemPrompt }) => {
+      prompts.push(systemPrompt);
+      return "next";
+    },
+  });
+  start(suggestion);
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done"), 0);
+  suggestion.applySettings({ enabled: true, style: "eager" });
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done again"), 0);
+  assert.deepEqual(prompts, [SUGGEST_PROMPTS.careful, SUGGEST_PROMPTS.eager]);
+  assert.notEqual(SUGGEST_PROMPTS.careful, SUGGEST_PROMPTS.eager);
 });
 
 function fakeEditor() {

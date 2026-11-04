@@ -14,6 +14,7 @@ import { SuggestPanel } from "../src/editor/suggest-panel.ts";
 import {
   loadSuggestSettings,
   parseModelId,
+  SUGGEST_STYLES,
   type SuggestSettings,
   saveSuggestSettings,
   suggestCommand,
@@ -127,7 +128,7 @@ export default function (pi: ExtensionAPI) {
     suggestSettings = next;
     suggestion?.applySettings(next);
     const state = next.enabled
-      ? `Next-step suggestions on · ${next.model === undefined ? "session model" : next.model}`
+      ? `Next-step suggestions on · ${next.model ?? "session model"} · ${next.style ?? "careful"}`
       : "Next-step suggestions off";
     ctx.ui.notify(state, "info");
     return next;
@@ -136,11 +137,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("suggest", {
     description: "Turn next-step suggestions on/off and pick their model",
     getArgumentCompletions: (prefix) => {
-      const modelPrefix = /^model\s+(\S*)$/.exec(prefix);
-      const candidates = modelPrefix === null ? ["on", "off", "model"] : ["session", ...availableModelIds()];
-      const matches = candidates.filter((candidate) => candidate.startsWith(modelPrefix?.[1] ?? prefix));
+      const argument = /^(model|style)\s+(\S*)$/.exec(prefix);
+      const candidates =
+        argument === null
+          ? ["on", "off", "model", "style"]
+          : argument[1] === "model"
+            ? ["session", ...availableModelIds()]
+            : [...SUGGEST_STYLES];
+      const matches = candidates.filter((candidate) => candidate.startsWith(argument?.[2] ?? prefix));
       if (matches.length === 0) return null;
-      return matches.map((match) => ({ value: modelPrefix === null ? match : `model ${match}`, label: match }));
+      return matches.map((match) => ({ value: argument === null ? match : `${argument[1]} ${match}`, label: match }));
     },
     handler: async (args, ctx) => {
       if (suggestPath === undefined) {

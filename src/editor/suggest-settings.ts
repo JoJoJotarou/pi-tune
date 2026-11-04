@@ -1,9 +1,15 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
+/** `careful` (the default) suggests only an obvious next line; `eager` whenever a natural one exists. */
+export const SUGGEST_STYLES = ["careful", "eager"] as const;
+export type SuggestStyle = (typeof SUGGEST_STYLES)[number];
+
 export interface SuggestSettings {
   enabled: boolean;
   /** `provider/id`; absent means the session model. */
   model?: string;
+  /** Absent means `careful`. */
+  style?: SuggestStyle;
 }
 
 export type SuggestSettingsLoad = { ok: true; settings: SuggestSettings } | { ok: false; problem: string };
@@ -42,8 +48,15 @@ export function parseSuggestSettings(raw: string, path: string): SuggestSettings
       problem: `Next-step suggestions off: ${path} has a "suggest.model" value that is not a string.`,
     };
   }
+  if ("style" in suggest && !isStyle(suggest.style)) {
+    return {
+      ok: false,
+      problem: `Next-step suggestions off: ${path} has a "suggest.style" value that is not ${SUGGEST_STYLES.join(" or ")}.`,
+    };
+  }
   const settings: SuggestSettings = { enabled: suggest.enabled === true };
   if (typeof suggest.model === "string") settings.model = suggest.model;
+  if (isStyle(suggest.style)) settings.style = suggest.style;
   return { ok: true, settings };
 }
 
@@ -64,6 +77,7 @@ export function saveSuggestSettings(path: string, settings: SuggestSettings): vo
   }
   const suggest: Record<string, unknown> = { enabled: settings.enabled };
   if (settings.model !== undefined) suggest.model = settings.model;
+  if (settings.style !== undefined) suggest.style = settings.style;
   writeFileSync(path, `${JSON.stringify({ ...existing, suggest }, null, 2)}\n`);
 }
 
@@ -86,14 +100,22 @@ export function suggestCommand(
   if (extra.length === 0) {
     if (head === "on" && value === undefined) return { settings: { ...current, enabled: true } };
     if (head === "off" && value === undefined) return { settings: { ...current, enabled: false } };
-    if (head === "model" && value === "session") return { settings: { enabled: current.enabled } };
+    if (head === "model" && value === "session") {
+      const { model: _session, ...rest } = current;
+      return { settings: rest };
+    }
+    if (head === "style" && isStyle(value)) return { settings: { ...current, style: value } };
     if (head === "model" && value !== undefined) {
       return isModel(value)
         ? { settings: { ...current, model: value } }
         : { error: `Next-step suggestion model "${value}" is not a known provider/model.` };
     }
   }
-  return { error: "Usage: /suggest [on|off|model <provider/id|session>]" };
+  return { error: "Usage: /suggest [on|off|model <provider/id|session>|style <careful|eager>]" };
+}
+
+function isStyle(value: unknown): value is SuggestStyle {
+  return SUGGEST_STYLES.includes(value as SuggestStyle);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,6 +1,6 @@
 import { DynamicBorder, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { type Component, type SettingItem, SettingsList } from "@earendil-works/pi-tui";
-import type { SuggestSettings } from "./suggest-settings.ts";
+import { SUGGEST_STYLES, type SuggestSettings } from "./suggest-settings.ts";
 
 /** The `Model` row's value when the suggestion follows the conversation's model. */
 export const SESSION_MODEL = "session model";
@@ -90,6 +90,13 @@ export class SuggestPanel implements Component {
             },
           },
     );
+    items.push({
+      id: "style",
+      label: "Style",
+      description: "careful: only an obvious next line · eager: whenever a natural one exists",
+      currentValue: this.settings.style ?? "careful",
+      values: [...SUGGEST_STYLES],
+    });
     return items;
   }
 
@@ -103,8 +110,10 @@ export class SuggestPanel implements Component {
         this.options.onWarning(picker.message);
         return;
       }
-      next =
-        value === SESSION_MODEL ? { enabled: this.settings.enabled } : { enabled: this.settings.enabled, model: value };
+      const { model: _previous, ...rest } = this.settings;
+      next = value === SESSION_MODEL ? rest : { ...rest, model: value };
+    } else if (id === "style") {
+      next = { ...this.settings, style: value === "eager" ? "eager" : "careful" };
     } else {
       return;
     }
