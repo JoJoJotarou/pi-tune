@@ -118,15 +118,16 @@ function turnRows(turn: BtwTurn, width: number, theme: Theme, markdown: Markdown
   return rows;
 }
 
+const MAX_PHASE_WIDTH = 48;
+
 function pendingRows(pending: PendingExchange, width: number, theme: Theme, markdown: MarkdownTheme): string[] {
-  const elapsed = formatDuration(pending.elapsedMs);
-  const phase = pending.blocked ? theme.fg("warning", `⚠ ${pending.phase} blocked`) : theme.fg("dim", pending.phase);
-  const status = truncateToWidth(
-    `${theme.fg("accent", pending.spinner)} ${phase}${theme.fg("dim", ` · ${elapsed}`)}`,
-    width,
-    "",
-    true,
-  );
+  // A tool call can be a long command; cut it so the row stays short and the elapsed time stays in view.
+  const suffix = ` · ${formatDuration(pending.elapsedMs)}`;
+  const marks = pending.blocked ? visibleWidth("⚠  blocked") : 0;
+  const room = Math.max(1, Math.min(MAX_PHASE_WIDTH, width - 2 - visibleWidth(suffix) - marks));
+  const label = truncateToWidth(pending.phase, room, "…");
+  const phase = pending.blocked ? theme.fg("warning", `⚠ ${label} blocked`) : theme.fg("dim", label);
+  const status = truncateToWidth(`${theme.fg("accent", pending.spinner)} ${phase}${theme.fg("dim", suffix)}`, width);
   const rows = [...questionRows(pending.question, width, theme), ""];
   if (pending.answer.trim() === "") return [...rows, status];
   return [...rows, ...answerRows(pending.answer, width, markdown), status];

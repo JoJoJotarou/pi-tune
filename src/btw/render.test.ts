@@ -205,6 +205,18 @@ describe("renderBtw", () => {
     assert.ok(row.includes(theme.getFgAnsi("warning")), "a refused call shows in warning color");
   });
 
+  it("keeps a long tool call short, so the elapsed time stays in view", () => {
+    const command = `bash tinyfish search query ${"very long words ".repeat(20)}`;
+    for (const width of [120, 60, 40]) {
+      for (const blocked of [false, true]) {
+        const pending = { question: "q", answer: "", phase: command, blocked, elapsedMs: 1200, spinner: "⠋" };
+        const row = body(draw({ width, pending }).lines).find((line) => line.startsWith("⠋")) ?? "";
+        assert.match(row, /… (blocked )?· 1\.2s$/, `${width}: ${row}`);
+        assert.ok(visibleWidth(row) <= Math.min(width - 6, 2 + 48 + (blocked ? 10 : 0) + 7), `${width}: ${row}`);
+      }
+    }
+  });
+
   it("explains a new thread before its first question", () => {
     const fresh = plain(draw({ thread: null, number: 2, mainTurns: 4 }).lines);
     assert.ok(fresh[0].includes("btw #2"), fresh[0]);
