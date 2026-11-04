@@ -21,7 +21,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { stripDynamicSystemPromptFooter } from "./prompt.ts";
-import { type BtwRules, judge, type Verdict } from "./rules.ts";
+import { allowedCalls, type BtwRules, BUILT_IN_TOOLS, judge, type Verdict } from "./rules.ts";
 import { type SandboxKind, sandboxCommand } from "./sandbox.ts";
 
 export interface SideToolOptions {
@@ -39,11 +39,9 @@ type ToolInfo = ReturnType<ExtensionAPI["getAllTools"]>[number];
 // biome-ignore lint/suspicious/noExplicitAny: the built-in definitions differ only in their parameter schemas.
 type AnyToolDefinition = ToolDefinition<any, any, any>;
 
-const BUILT_IN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
-
 /** What the model reads for a refused call: why, what is allowed, and the rule that would allow it. */
 function refusalMessage(verdict: Extract<Verdict, { allowed: false }>, options: SideToolOptions): string {
-  const allowed = `Allowed in btw threads: ${options.rules.allow.join(", ") || "nothing"}.`;
+  const allowed = `Allowed in btw threads: ${allowedCalls(options.rules).join(", ") || "nothing"}.`;
   if (verdict.refusal === "denied") {
     return `${verdict.label} matches "btw.deny" in ${options.rulesPath}, so btw threads never run it. ${allowed}`;
   }

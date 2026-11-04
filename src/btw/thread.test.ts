@@ -12,8 +12,8 @@ import {
   staleNotice,
   storedTurn,
   threadMessages,
+  toolsNotice,
   turnReply,
-  turnToolCalls,
 } from "./thread.ts";
 
 function assistant(text: string, timestamp = 1): AssistantMessage {
@@ -56,8 +56,8 @@ function thread(): BtwThread {
 }
 
 describe("composeTurnText", () => {
-  it("puts the addendum first, the notice next, the question last", () => {
-    assert.equal(composeTurnText("why?", { addendum: "A", notice: "N" }), "A\n\nN\n\nwhy?");
+  it("puts the addendum first, then the tools, the notice, and the question last", () => {
+    assert.equal(composeTurnText("why?", { addendum: "A", tools: "T", notice: "N" }), "A\n\nT\n\nN\n\nwhy?");
   });
 
   it("omits missing parts without leaving blank lines", () => {
@@ -119,7 +119,6 @@ describe("threadMessages", () => {
       ["user", "assistant", "toolResult", "assistant", "user", "assistant"],
     );
     assert.equal(messageText(turnReply(original.turns[0])), "first");
-    assert.equal(turnToolCalls(original.turns[0]), 1);
   });
 
   it("serializes to the same bytes on every replay", () => {
@@ -175,10 +174,26 @@ describe("SIDE_THREAD_ADDENDUM", () => {
     assert.doesNotMatch(SIDE_THREAD_ADDENDUM, /one-off|no follow-up/i);
   });
 
-  it("lets the model look things up and says refused calls come back as errors", () => {
-    assert.match(SIDE_THREAD_ADDENDUM, /may use tools to look things up/);
-    assert.match(SIDE_THREAD_ADDENDUM, /not allowed comes back as an error/);
-    assert.doesNotMatch(SIDE_THREAD_ADDENDUM, /Do not call tools/);
+  it("leaves the tool rules to the tools notice", () => {
+    assert.doesNotMatch(SIDE_THREAD_ADDENDUM, /Do not call tools|tool calls/);
+  });
+});
+
+describe("toolsNotice", () => {
+  it("names the calls that run and the ones that never do", () => {
+    const notice = toolsNotice(["read", "bash(tinyfish *)"], ["bash(rm *)"], false);
+    assert.match(notice, /Only these tool calls run in this thread: read, bash\(tinyfish \*\)\./);
+    assert.match(notice, /bash\(git log \*\) allows the bash commands that start that way/);
+    assert.match(notice, /Never run: bash\(rm \*\)\./);
+    assert.match(notice, /do not try it/);
+    assert.doesNotMatch(notice, /changed/);
+  });
+
+  it("says when the rules changed, and when nothing runs", () => {
+    const notice = toolsNotice([], [], true);
+    assert.match(notice, /rules of this thread changed/);
+    assert.match(notice, /No tool calls run in this thread\./);
+    assert.doesNotMatch(notice, /bash\(git log/);
   });
 });
 

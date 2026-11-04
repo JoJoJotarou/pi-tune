@@ -46,7 +46,7 @@ function setup(turns: number) {
     turns: Array.from({ length: turns }, (_, index) => turn(index + 1)),
   };
   const view: DrawerView = { open: true, thread, number: 1, mainTurns: 1, revision: 0 };
-  // 16 terminal rows: an 8-row drawer, 6 body rows.
+  // 16 terminal rows: an 8-row drawer, 3 body rows inside its borders, padding and the gap under it.
   const drawer = new Drawer({ view: () => view, theme: testTheme(), terminalRows: () => 16, now: () => 0 });
   const text = () => drawer.render(60).map(stripTerminalSequences).join("\n");
   return { thread, view, drawer, text };
@@ -107,7 +107,7 @@ describe("Drawer", () => {
     text();
     drawer.page(-1);
     const rows = text().split("\n");
-    assert.match(rows.at(-1) ?? "", /↓ 5/);
+    assert.match(rows.at(-2) ?? "", /↓ 2/);
   });
 
   it("leaves other mouse events to Pi", () => {

@@ -237,3 +237,28 @@ export function judge(tool: string, args: unknown, rules: BtwRules): Verdict {
   }
   return { allowed: true };
 }
+
+/** Pi's built-in tools: the only ones a btw thread can run. */
+export const BUILT_IN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const;
+
+/** What a btw thread can run under these rules, written as rules: `read`, `bash(tinyfish *)`. */
+export function allowedCalls(rules: BtwRules): string[] {
+  const allow = rules.allow.map(parseRule);
+  const calls: string[] = [];
+  for (const tool of BUILT_IN_TOOLS) {
+    if (tool !== "bash") {
+      if (judge(tool, {}, rules).allowed) calls.push(tool);
+      continue;
+    }
+    const byName = (list: typeof allow) =>
+      list.some((rule) => rule.command === undefined && globMatches(rule.name, "bash"));
+    if (byName(rules.deny.map(parseRule))) continue;
+    if (byName(allow)) {
+      calls.push("bash");
+      continue;
+    }
+    for (const rule of allow)
+      if (rule.name === "bash" && rule.command !== undefined) calls.push(`bash(${rule.command})`);
+  }
+  return calls;
+}

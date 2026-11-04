@@ -10,7 +10,7 @@ import { matchesKey, type TUI } from "@earendil-works/pi-tui";
 import { openSideSession } from "../src/btw/child.ts";
 import { Drawer, type DrawerView, SPINNER_INTERVAL_MS } from "../src/btw/drawer.ts";
 import { activityLabel } from "../src/btw/render.ts";
-import { type BtwRules, DEFAULT_RULES, loadBtwRules } from "../src/btw/rules.ts";
+import { allowedCalls, type BtwRules, DEFAULT_RULES, loadBtwRules } from "../src/btw/rules.ts";
 import { detectSandbox, type SandboxKind } from "../src/btw/sandbox.ts";
 import {
   BTW_ENTRY_TYPE,
@@ -25,6 +25,7 @@ import {
   staleNotice,
   storedTurn,
   threadMessages,
+  toolsNotice,
 } from "../src/btw/thread.ts";
 import { NEW_THREAD, ThreadList, threadItems } from "../src/btw/thread-list.ts";
 import { editorHasFocus } from "../src/internals/focus.ts";
@@ -158,8 +159,16 @@ export default function btwExtension(pi: ExtensionAPI) {
       threads = [...threads, thread];
       displayedId = thread.id;
     }
+    // The tool rules ride along the first question, and again only when they changed since the model was told.
+    const tools = toolsNotice(allowedCalls(rules), rules.deny, false);
+    const told = thread.turns
+      .map((turn) => turn.announcedTools)
+      .filter((announced) => announced !== undefined)
+      .at(-1);
+    const announce = thread.turns.length === 0 || told !== tools;
     const text = composeTurnText(question, {
       addendum: thread.turns.length === 0 ? SIDE_THREAD_ADDENDUM : undefined,
+      tools: announce ? toolsNotice(allowedCalls(rules), rules.deny, thread.turns.length > 0) : undefined,
       notice: staleNotice(thread.anchorTurns, mainTurns),
     });
     const seeded = [...snapshot(ctx, thread.anchorEntryId || null), ...threadMessages(thread)];
@@ -224,6 +233,7 @@ export default function btwExtension(pi: ExtensionAPI) {
         askedAt: current.startedAt,
         durationMs: Date.now() - current.startedAt,
         denied: current.denied,
+        ...(announce ? { announcedTools: tools } : {}),
       };
       thread.turns.push(turn);
       pi.appendEntry(BTW_ENTRY_TYPE, storedTurn(thread, turn));

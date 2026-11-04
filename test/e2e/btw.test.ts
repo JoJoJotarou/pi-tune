@@ -36,7 +36,7 @@ test("btw mode: ask, follow up, close with esc, reopen a thread from the list", 
     await pi.waitFor(BTW_EDITOR);
     let screen = pi.screen().join("\n");
     assert.match(screen, /╭─ btw #1 ─+ @turn 1 · main 1 ─╮/, "title and anchor on the drawer's top border");
-    assert.ok(screen.includes("you what does the read tool do?"), screen);
+    assert.ok(screen.includes("what does the read tool do?"), screen);
     assert.ok(screen.includes("enter ask"), screen);
     await pi.shot("btw-drawer");
 
@@ -45,7 +45,7 @@ test("btw mode: ask, follow up, close with esc, reopen a thread from the list", 
     await pi.waitFor("side answer two");
     screen = pi.screen().join("\n");
     const asked = pi.screen().filter((line) => line.includes("and the bash tool?"));
-    assert.ok(asked.length === 1 && asked[0].includes("│ you and the bash tool?"), "only the drawer shows it");
+    assert.ok(asked.length === 1 && asked[0].startsWith("│"), "only the drawer shows it");
 
     // Esc belongs to whatever has focus: it closes the thread list first and leaves the drawer open.
     pi.type("/btw\r");
@@ -88,9 +88,9 @@ test("a running side question shows at once, streams, and esc stops it", { timeo
   const pi = await startPi({ scenario });
   try {
     pi.type("/btw why is it slow?\r");
-    await pi.waitFor("you why is it slow?");
+    await pi.waitFor("why is it slow?");
     await pi.waitFor(/esc stop/);
-    await pi.waitFor(/btw slow slow/);
+    await pi.waitFor(/│ {2}slow slow/);
     await pi.waitFor(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d+\.\ds/);
     await pi.shot("btw-running");
 
@@ -118,20 +118,20 @@ test("a long answer scrolls with the wheel and shift+arrows", { timeout: 180_000
   try {
     pi.type("/btw list forty lines\r");
     await pi.waitFor("line 40");
-    await pi.waitFor(/↑ \d+ ─╯/);
-    assert.ok(!pi.screen().join("\n").includes("you list forty lines"), "the start is scrolled off");
+    await pi.waitFor(/↑ \d+ ·/);
+    assert.ok(!pi.screen().join("\n").includes("list forty lines"), "the start is scrolled off");
 
     const body = rowOf(pi, DRAWER) + 2;
     for (let i = 0; i < 40; i++) pi.wheel(10, body, "up");
-    await pi.waitFor("you list forty lines");
-    await pi.waitFor(/↓ \d+ ─╯/);
+    await pi.waitFor("list forty lines");
+    await pi.waitFor(/↓ \d+ ·/);
     await pi.shot("btw-scrolled");
 
     pi.type("\x1b[1;2B".repeat(10));
     await pi.waitFor("line 40");
-    await pi.waitForGone(/↓ \d+ ─╯/);
+    await pi.waitForGone(/↓ \d+ ·/);
     pi.type("\x1b[1;2A");
-    await pi.waitFor(/↓ \d+ ─╯/);
+    await pi.waitFor(/↓ \d+ ·/);
   } finally {
     await pi.close();
   }
@@ -145,7 +145,7 @@ test("the drawer fits a 40x20 terminal", { timeout: 180_000 }, async () => {
   });
   try {
     pi.type("/btw a narrow question that wraps\r");
-    await pi.waitFor(/│ +drawer +│/);
+    await pi.waitFor(/narrow +│|drawer +│/);
     for (const line of pi.screen()) assert.ok(line.length <= 40, line);
     await pi.shot("btw-narrow");
   } finally {
@@ -166,7 +166,7 @@ test("side threads run allowed tools, refuse the rest and show only the exchange
   try {
     pi.type("/btw what is in the readme?\r");
     await pi.waitFor("side answer after tools");
-    await pi.waitFor(/2 tools · denied: bash\(git log \*\)/);
+    await pi.waitFor("⚠ blocked: bash(git log *)");
     const screen = pi.screen().join("\n");
     assert.ok(!/^\s*\$ git log/m.test(screen) && !screen.includes("# demo"), "no tool blocks are drawn");
     await pi.shot("btw-denied");
@@ -189,8 +189,7 @@ test("an allowed bash command runs read-only", { timeout: 180_000 }, async () =>
   try {
     pi.type("/btw make a file\r");
     await pi.waitFor("tried to touch");
-    await pi.waitFor("1 tool");
-    assert.ok(!pi.screen().join("\n").includes("denied"), "the rule allowed it");
+    assert.ok(!pi.screen().join("\n").includes("blocked"), "the rule allowed it");
     if (sandbox instanceof Error) {
       await pi.waitFor("btw runs allowed bash commands without a sandbox");
       assert.ok(existsSync(target));
@@ -250,6 +249,13 @@ test("threads come back after /reload, saved one turn per entry", { timeout: 180
       .filter((entry) => entry.customType === "pi-tune-btw");
     assert.equal(saved.length, 2, "one entry per answered turn");
     for (const entry of saved) assert.deepEqual(Object.keys(entry.data ?? {}).sort(), ["thread", "turn"]);
+    const texts = saved.map((entry) => String((entry.data?.turn as { text?: unknown } | undefined)?.text));
+    assert.match(
+      texts[0],
+      /Only these tool calls run in this thread: read, grep, find, ls\./,
+      "told on the first question",
+    );
+    assert.doesNotMatch(texts[1], /btw_tools/, "not repeated while the rules stay the same");
 
     pi.type("/reload\r");
     await pi.waitForGone("/reload");

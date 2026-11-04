@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { DEFAULT_RULES, judge, parseBtwRules, splitCommand } from "./rules.ts";
+import { allowedCalls, DEFAULT_RULES, judge, parseBtwRules, splitCommand } from "./rules.ts";
 
 const PATH = "/agent/pi-tune.json";
 
@@ -134,5 +134,18 @@ describe("judge", () => {
       label: "bash(ls $(…))",
       detail: "command substitution",
     });
+  });
+});
+
+describe("allowedCalls", () => {
+  it("lists the built-in calls the rules allow, written as rules", () => {
+    assert.deepEqual(allowedCalls(DEFAULT_RULES), ["read", "grep", "find", "ls"]);
+    assert.deepEqual(allowedCalls(rules(["read", "bash(tinyfish *)", "bash(git log *)", "mcp__docs__*"])), [
+      "read",
+      "bash(tinyfish *)",
+      "bash(git log *)",
+    ]);
+    assert.deepEqual(allowedCalls(rules(["*"], ["edit", "write"])), ["read", "grep", "find", "ls", "bash"]);
+    assert.deepEqual(allowedCalls(rules(["bash"], ["bash"])), []);
   });
 });

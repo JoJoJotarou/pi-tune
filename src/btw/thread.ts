@@ -19,6 +19,8 @@ export interface BtwTurn {
   durationMs: number;
   /** Tool calls the rules refused, named the way a rule would name them. */
   denied: string[];
+  /** The tool rules this turn's text told the model, when it told them; a later turn repeats them only on change. */
+  announcedTools?: string;
 }
 
 /** The answer: the turn's last assistant message. */
@@ -28,11 +30,6 @@ export function turnReply(turn: BtwTurn): AssistantMessage {
     if (message.role === "assistant") return message;
   }
   throw new Error("A btw turn was stored without an answer.");
-}
-
-/** Tool calls the turn made, refused ones included. */
-export function turnToolCalls(turn: BtwTurn): number {
-  return turn.messages.filter((message) => message.role === "toolResult").length;
 }
 
 export interface BtwThread {
@@ -54,7 +51,6 @@ export const SIDE_THREAD_ADDENDUM = [
   "The conversation before this message is the main session as it stood when this thread started;",
   "main-session turns from after that point are not visible to you.",
   "Answer directly. The user may ask follow-ups in this thread.",
-  "You may use tools to look things up. A call the user has not allowed comes back as an error; work with what you can reach.",
   "Do not change files, and do not start work of your own or continue the main session's task unless the user asks.",
   "</btw_side_thread>",
 ].join("\n");
@@ -72,9 +68,32 @@ export function staleNotice(anchorTurns: number, currentTurns: number): string |
   ].join("\n");
 }
 
+/**
+ * The tool calls this thread runs. Every tool stays declared, so the request prefix matches the main session; this
+ * says which of them work, so the model does not find out one refused call at a time.
+ */
+export function toolsNotice(allowed: readonly string[], denied: readonly string[], changed: boolean): string {
+  return [
+    "<btw_tools>",
+    ...(changed ? ["The tool rules of this thread changed."] : []),
+    allowed.length > 0
+      ? `Only these tool calls run in this thread: ${allowed.join(", ")}.`
+      : "No tool calls run in this thread.",
+    ...(allowed.some((call) => call.startsWith("bash("))
+      ? ["A rule such as bash(git log *) allows the bash commands that start that way."]
+      : []),
+    ...(denied.length > 0 ? [`Never run: ${denied.join(", ")}.`] : []),
+    "Any other call is refused, so do not try it; answer from what these calls can reach.",
+    "</btw_tools>",
+  ].join("\n");
+}
+
 /** Builds the exact user text for one turn. Stored once and reused by replay. */
-export function composeTurnText(question: string, options: { addendum?: string; notice?: string } = {}): string {
-  return [options.addendum, options.notice, question]
+export function composeTurnText(
+  question: string,
+  options: { addendum?: string; tools?: string; notice?: string } = {},
+): string {
+  return [options.addendum, options.tools, options.notice, question]
     .filter((part): part is string => part !== undefined && part.length > 0)
     .join("\n\n");
 }
