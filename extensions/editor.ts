@@ -5,10 +5,12 @@ import {
   type ExtensionContext,
   getAgentDir,
   type KeybindingsManager,
+  ModelSelectorComponent,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { PastePreview, type PastePreviewAction } from "../src/editor/paste-preview.ts";
+import { SuggestPanel } from "../src/editor/suggest-panel.ts";
 import {
   loadSuggestSettings,
   parseModelId,
@@ -18,6 +20,7 @@ import {
 } from "../src/editor/suggest-settings.ts";
 import { collectSessionTurns, Suggestion, type SuggestionComplete } from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
+import { modelRuntimeOf } from "../src/internals/model-runtime.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
 const SUGGEST_MAX_TOKENS = 1024;
@@ -108,8 +111,10 @@ export default function (pi: ExtensionAPI) {
   const availableModelIds = (): string[] =>
     (registry?.getAvailable() ?? []).map((available) => `${available.provider}/${available.id}`);
 
-  async function applySuggestSettings(next: SuggestSettings, ctx: ExtensionContext): Promise<void> {
-    if (suggestPath === undefined) return;
+  /** Saves and applies `next`; returns the settings that ended up in effect. */
+  function applySuggestSettings(next: SuggestSettings, ctx: ExtensionContext): SuggestSettings {
+    const current = suggestSettings ?? { enabled: false };
+    if (suggestPath === undefined) return current;
     try {
       saveSuggestSettings(suggestPath, next);
     } catch (error) {
@@ -117,7 +122,7 @@ export default function (pi: ExtensionAPI) {
         `pi-tune could not save ${suggestPath}: ${error instanceof Error ? error.message : String(error)}`,
         "error",
       );
-      return;
+      return current;
     }
     suggestSettings = next;
     suggestion?.applySettings(next);
@@ -125,6 +130,7 @@ export default function (pi: ExtensionAPI) {
       ? `Next-step suggestions on · ${next.model === undefined ? "session model" : next.model}`
       : "Next-step suggestions off";
     ctx.ui.notify(state, "info");
+    return next;
   }
 
   pi.registerCommand("suggest", {
@@ -145,18 +151,44 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(suggestProblem, "warning");
         return;
       }
-      let command = args.trim();
+      const command = args.trim();
       if (command === "") {
-        const choice = await ctx.ui.select("Next-step suggestions", ["On", "Off", "Model…"]);
-        if (choice === "Model…") {
-          const picked = await ctx.ui.select("Suggestion model", ["Session model", ...availableModelIds()]);
-          if (picked === undefined) return;
-          command = `model ${picked === "Session model" ? "session" : picked}`;
-        } else if (choice !== undefined) {
-          command = choice.toLowerCase();
-        } else {
-          return;
-        }
+        const runtime = modelRuntimeOf(ctx.modelRegistry);
+        await ctx.ui.custom<void>((panelTui, _theme, _keybindings, done) => {
+          return new SuggestPanel({
+            settings: suggestSettings ?? { enabled: false },
+            tui: panelTui,
+            onChange: (next) => applySuggestSettings(next, ctx),
+            onClose: () => done(undefined),
+            modelPicker:
+              runtime instanceof Error
+                ? runtime
+                : (picked) => {
+                    const stored =
+                      suggestSettings?.model === undefined ? undefined : parseModelId(suggestSettings.model);
+                    const current =
+                      stored === undefined ? chatModel : ctx.modelRegistry.find(stored.provider, stored.id);
+                    // The selector refreshes the catalog in the background until it is disposed.
+                    const selector: ModelSelectorComponent = new ModelSelectorComponent(
+                      panelTui,
+                      current ?? chatModel,
+                      runtime,
+                      [],
+                      (selected) => {
+                        selector.dispose();
+                        picked(`${selected.provider}/${selected.id}`);
+                      },
+                      () => {
+                        selector.dispose();
+                        picked();
+                      },
+                    );
+                    return selector;
+                  },
+            onWarning: (message) => ctx.ui.notify(`${message} Use /suggest model <provider/id> instead.`, "warning"),
+          });
+        });
+        return;
       }
       const isModel = (value: string) => {
         const parsed = parseModelId(value);
@@ -167,7 +199,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(result.error, "error");
         return;
       }
-      await applySuggestSettings(result.settings, ctx);
+      applySuggestSettings(result.settings, ctx);
     },
   });
 

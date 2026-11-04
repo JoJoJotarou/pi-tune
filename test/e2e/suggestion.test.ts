@@ -72,6 +72,45 @@ test("/suggest on turns suggestions on for the next run", { timeout: 120_000 }, 
   });
 });
 
+test("/suggest opens a settings panel that turns suggestions on and picks a model", { timeout: 120_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true });
+  await closeAfter(pi, async () => {
+    pi.type("/suggest\r");
+    await pi.waitFor("Next-step suggestions");
+    assert.ok(
+      pi.screen().some((row) => row.includes("Next-step suggestions") && row.includes("off")),
+      pi.screen().join("\n"),
+    );
+
+    pi.press("enter");
+    await pi.waitFor("session model");
+    assert.ok(
+      pi.screen().some((row) => row.includes("Model") && row.includes("session model")),
+      pi.screen().join("\n"),
+    );
+
+    pi.press("down");
+    pi.press("enter");
+    // Pi's own model selector, with its search input.
+    await pi.waitFor("Only showing models from configured providers.");
+    pi.type("scripted");
+    await pi.waitFor("Model Name: scripted");
+    pi.press("enter");
+    await pi.waitFor("Next-step suggestions on · faux/scripted");
+    assert.ok(
+      pi.screen().some((row) => row.includes("Model") && row.includes("faux/scripted")),
+      pi.screen().join("\n"),
+    );
+
+    pi.press("escape");
+    await pi.waitForGone("Enter/Space to change");
+
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.waitFor(GHOST);
+  });
+});
+
 test("the ghost is discarded by a bash command that starts no run", { timeout: 120_000 }, async () => {
   const pi = await startPi({
     scenario,
