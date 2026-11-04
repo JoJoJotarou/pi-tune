@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { buildSuggestionPrompt, cleanSuggestion, digestFromReply, withGhostSuggestion } from "./suggestion.ts";
+import {
+  buildSuggestionUserMessage,
+  buildTranscript,
+  cleanSuggestion,
+  SUGGEST_SYSTEM_PROMPT,
+  type TranscriptTurn,
+  withGhostSuggestion,
+} from "./suggestion.ts";
 
 const GHOST_CLEAR = "\x1b_pi:fc\x07";
 const GHOST_RESTORE = "\x1b_pi:/fc\x07";
@@ -47,22 +54,63 @@ test("cleanSuggestion takes the first non-empty line and unwraps decoration", ()
   assert.equal(cleanSuggestion("- write a summary", 80), "write a summary");
 });
 
+test("silence tokens mean no suggestion", () => {
+  for (const word of ["NONE", "n/a", "no suggestion", "nothing", "silence", "null"]) {
+    assert.equal(cleanSuggestion(word, 80), "", word);
+  }
+  assert.equal(cleanSuggestion("none of them", 80), "none of them");
+});
+
 test("cleanSuggestion truncates and drops empty replies", () => {
   assert.equal(cleanSuggestion("x".repeat(200), 80), "x".repeat(80));
   assert.equal(cleanSuggestion("  \n \n", 80), "");
 });
 
-test("digestFromReply keeps the tail of long replies", () => {
-  const text = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
-  const digest = digestFromReply(text);
-  assert.ok(digest.length <= 2000);
-  assert.ok(digest.endsWith("line 199"));
-  assert.equal(digestFromReply("short"), "short");
+function turns(...items: [TranscriptTurn["role"], string][]): TranscriptTurn[] {
+  return items.map(([role, text]) => ({ role, text }));
+}
+
+test("the transcript is role-labeled, oldest last, and keeps the whole newest reply", () => {
+  const transcript = buildTranscript(
+    turns(
+      ["user", "把测试跑起来"],
+      ["assistant", "跑了 npm test,3 个失败,我改一下。"],
+      ["user", "顺便看看 CI"],
+      ["assistant", "CI 也是同一个原因,已修复,全绿。"],
+    ),
+  );
+  assert.equal(
+    transcript,
+    [
+      "User: 把测试跑起来",
+      "Agent: 跑了 npm test,3 个失败,我改一下。",
+      "User: 顺便看看 CI",
+      "Agent: CI 也是同一个原因,已修复,全绿。",
+    ].join("\n\n"),
+  );
 });
 
-test("the suggestion prompt bounds the reply and states the budget", () => {
-  const prompt = buildSuggestionPrompt("the reply", 80);
-  assert.ok(prompt.includes("at most 80 characters"));
-  assert.ok(prompt.includes("the reply"));
-  assert.ok(buildSuggestionPrompt("", 80).includes("(no text)"));
+test("transcript caps earlier messages and gives the newest reply the remaining budget", () => {
+  const transcript = buildTranscript(turns(["user", "b".repeat(2000)], ["assistant", "a".repeat(3000)]));
+  assert.ok(transcript !== undefined);
+  const [userLine, agentLine] = transcript.split("\n\n");
+  // The newest assistant reply gets the whole remaining budget (~8000), the user turn is capped at 1000.
+  assert.ok(agentLine.length > 3000, agentLine.length.toString());
+  assert.ok(userLine.startsWith("User: b"));
+  assert.ok(userLine.length <= 1000 + "User: ".length + 2);
+  assert.ok(userLine.endsWith("…"));
+});
+
+test("transcript without an assistant reply is undefined", () => {
+  assert.equal(buildTranscript(turns(["user", "hello"])), undefined);
+  assert.equal(buildTranscript([]), undefined);
+});
+
+test("the suggestion prompt carries cwd, transcript and the reply-only instruction", () => {
+  const message = buildSuggestionUserMessage("/tmp/x", "User: hi\n\nAgent: hello");
+  assert.ok(message.startsWith("CWD: /tmp/x"));
+  assert.ok(message.includes("User: hi"));
+  assert.ok(message.includes("Reply with ONLY the suggestion text."));
+  assert.ok(SUGGEST_SYSTEM_PROMPT.includes("A wrong line is worse than NONE."));
+  assert.ok(SUGGEST_SYSTEM_PROMPT.includes("2-12 words in their style."));
 });

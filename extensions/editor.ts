@@ -2,7 +2,13 @@ import type { AnyModel, Api, AssistantMessage, Model } from "@earendil-works/pi-
 import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { PastePreview, type PastePreviewAction } from "../src/editor/paste-preview.ts";
-import { buildSuggestionPrompt, cleanSuggestion, digestFromReply } from "../src/editor/suggestion.ts";
+import {
+  buildSuggestionUserMessage,
+  buildTranscript,
+  cleanSuggestion,
+  SUGGEST_SYSTEM_PROMPT,
+  type TranscriptTurn,
+} from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
@@ -27,6 +33,8 @@ export default function (pi: ExtensionAPI) {
   // --- ghost suggestion state ---
   let chatModel: AnyModel | undefined;
   let modelRegistry: Registry | undefined;
+  let cwd = "";
+  let collectTurns: (() => TranscriptTurn[]) | undefined;
   let runActive = false;
   let requestedThisRun = false;
   let suggestAbort: AbortController | undefined;
@@ -42,10 +50,21 @@ export default function (pi: ExtensionAPI) {
     if (editor !== undefined && editor.getSuggestion() !== undefined) editor.setSuggestion(undefined);
   };
 
-  const requestSuggestion = async (replyText: string): Promise<void> => {
-    if (!SUGGEST_ENABLED || !editor || !modelRegistry) return;
+  const requestSuggestion = async (concludingReply?: string): Promise<void> => {
+    if (!SUGGEST_ENABLED || !editor || !modelRegistry || !collectTurns) return;
     const model = resolveSuggestModel(modelRegistry, chatModel) as Model<Api> | undefined;
     if (!model) return;
+    // The settled message may not be in the session entries yet; append it when it is missing.
+    const turns = collectTurns();
+    const reply = concludingReply?.trim() ?? "";
+    if (reply !== "") {
+      const last = turns[turns.length - 1];
+      if (!last || last.role !== "assistant" || last.text.trim() !== reply) {
+        turns.push({ role: "assistant", text: reply });
+      }
+    }
+    const transcript = buildTranscript(turns);
+    if (transcript === undefined) return;
     requestedThisRun = true;
     const controller = new AbortController();
     suggestAbort = controller;
@@ -56,15 +75,22 @@ export default function (pi: ExtensionAPI) {
       const response = await modelRegistry.complete(
         model,
         {
+          systemPrompt: SUGGEST_SYSTEM_PROMPT,
           messages: [
             {
               role: "user",
-              content: [{ type: "text", text: buildSuggestionPrompt(digestFromReply(replyText), SUGGEST_CHARS) }],
+              content: [{ type: "text", text: buildSuggestionUserMessage(cwd, transcript) }],
               timestamp: Date.now(),
             },
           ],
         },
-        { apiKey: auth.apiKey, headers: auth.headers, signal: controller.signal, maxTokens: SUGGEST_MAX_TOKENS },
+        {
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          signal: controller.signal,
+          maxTokens: SUGGEST_MAX_TOKENS,
+          temperature: 0.2,
+        },
       );
       if (controller.signal.aborted) return;
       const text = response.content
@@ -112,7 +138,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("agent_settled", (event) => {
     // Backstop for endings turn_end's concluding gate misses (length cut, terminate).
-    if (!event.aborted && runActive && !requestedThisRun) void requestSuggestion("");
+    if (!event.aborted && runActive && !requestedThisRun) void requestSuggestion();
     runActive = false;
   });
 
@@ -137,6 +163,8 @@ export default function (pi: ExtensionAPI) {
     model = ctx.model?.id ?? "no model";
     chatModel = ctx.model;
     modelRegistry = ctx.modelRegistry;
+    cwd = ctx.cwd;
+    collectTurns = () => collectTranscriptTurns(ctx.sessionManager.getEntries());
     thinking = pi.getThinkingLevel();
     notify = (message, level) => ctx.ui.notify(message, level);
     currentTheme = () => ctx.ui.theme;
@@ -177,6 +205,7 @@ export default function (pi: ExtensionAPI) {
     editor = undefined;
     tui = undefined;
     modelRegistry = undefined;
+    collectTurns = undefined;
   });
 }
 
@@ -185,4 +214,26 @@ function resolveSuggestModel(registry: Registry, fallback: AnyModel | undefined)
   const slash = SUGGEST_MODEL.indexOf("/");
   if (slash <= 0) return fallback;
   return registry.find(SUGGEST_MODEL.slice(0, slash), SUGGEST_MODEL.slice(slash + 1)) ?? fallback;
+}
+
+interface SessionEntryLike {
+  type?: string;
+  message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
+}
+
+/** User and assistant text from the session entries, oldest first; everything else is skipped. */
+function collectTranscriptTurns(entries: readonly unknown[]): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = [];
+  for (const entry of entries) {
+    const message = (entry as SessionEntryLike).message;
+    if (!message) continue;
+    const role = message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    const text = (message.content ?? [])
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    if (text.trim() !== "") turns.push({ role, text });
+  }
+  return turns;
 }
