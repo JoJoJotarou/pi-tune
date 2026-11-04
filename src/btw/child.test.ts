@@ -64,14 +64,14 @@ describe("sideTool", () => {
 
   it("refuses a call the rules do not allow, saying what is allowed and which rule would allow it", async () => {
     const { value, denied } = options();
-    await assert.rejects(run(sideTool(bash, dir, value), { command: "echo hi" }), (error: Error) => {
+    await assert.rejects(run(sideTool(bash, dir, value), { command: "git log --oneline" }), (error: Error) => {
       assert.equal(
         error.message,
-        'bash(echo *) is not allowed in btw threads. Allowed in btw threads: read, grep, find, ls. Adding "bash(echo *)" to "btw.allow" in /agent/pi-tune.json would allow it.',
+        'bash(git log *) is not allowed in btw threads. Allowed in btw threads: read, grep, find, ls. Adding "bash(git log *)" to "btw.allow" in /agent/pi-tune.json would allow it.',
       );
       return true;
     });
-    assert.deepEqual(denied, ["bash(echo *)"]);
+    assert.deepEqual(denied, ["bash(git log *)"]);
   });
 
   it("explains a command it cannot check instead of suggesting a rule", async () => {

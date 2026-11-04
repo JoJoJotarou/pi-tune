@@ -107,6 +107,23 @@ describe("judge", () => {
     assert.deepEqual(date, { allowed: false, refusal: "not-allowed", rule: "bash(date *)", label: "bash(date *)" });
     const second = judge("bash", { command: "ls -la | wc -l" }, rules(["bash(ls *)"]));
     assert.equal(second.allowed === false && second.rule, "bash(wc *)", "the segment that failed names the rule");
+  });
+
+  it("keeps the subcommand in a suggested rule, so copying it does not open the program's other subcommands", () => {
+    const rule = (command: string) => {
+      const verdict = judge("bash", { command }, DEFAULT_RULES);
+      return verdict.allowed ? "allowed" : verdict.rule;
+    };
+    assert.equal(rule("git log --oneline -5"), "bash(git log *)");
+    assert.equal(rule("gh pr view 12"), "bash(gh pr view *)");
+    assert.equal(rule("tinyfish search query 'pi'"), "bash(tinyfish search query *)");
+    assert.equal(rule("cat README.md"), "bash(cat *)");
+    assert.equal(rule("rg TODO src"), "bash(rg *)");
+    const copied = (refused: string, other: string) =>
+      judge("bash", { command: other }, rules([rule(refused)])).allowed;
+    assert.equal(copied("git log --oneline", "git log -5"), true, "the copied rule allows the refused command's kind");
+    assert.equal(copied("git log --oneline", "git push origin main"), false);
+    assert.equal(copied("gh pr view 12", "gh pr merge 12"), false);
     const denied = judge("bash", { command: "rm x" }, rules(["bash"], ["bash(rm *)"]));
     assert.equal(denied.allowed === false && denied.refusal, "denied");
     const unchecked = judge("bash", { command: "ls $(x)" }, rules(["bash(ls *)"]));

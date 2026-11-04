@@ -179,9 +179,19 @@ const UNCHECKED_MARK: Record<string, string> = {
   "a redirection that writes a file": ">",
 };
 
-/** `bash(date *)` for `date +%F`: the rule that allows the command's program. */
+/**
+ * The rule to suggest for a refused command: the program and up to two subcommand words, `bash(git log *)` for
+ * `git log --oneline`. A flag, path, number or quoted value ends it, so copying the rule never opens the program's
+ * other subcommands (`git push`); a rule that is too narrow is the safe mistake.
+ */
 function commandRule(segment: string): string {
-  return `bash(${segment.trim().split(/\s+/)[0] ?? ""} *)`;
+  const [program = "", ...rest] = segment.trim().split(/\s+/);
+  const words = [program];
+  for (const word of rest.slice(0, 2)) {
+    if (!/^[a-z][a-z0-9-]*$/.test(word)) break;
+    words.push(word);
+  }
+  return `bash(${words.join(" ")} *)`;
 }
 
 /** Whether a btw thread runs this call. */

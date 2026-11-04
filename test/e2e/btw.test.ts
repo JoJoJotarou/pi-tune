@@ -158,7 +158,7 @@ test("side threads run allowed tools, refuse the rest and show only the exchange
     files: { "README.md": "# demo\n" },
     turns: [
       [{ tool: "read", args: { path: "README.md" } }],
-      [{ tool: "bash", args: { command: "echo from bash" } }],
+      [{ tool: "bash", args: { command: "git log --oneline -5" } }],
       [{ text: "side answer after tools" }],
     ],
   };
@@ -166,9 +166,9 @@ test("side threads run allowed tools, refuse the rest and show only the exchange
   try {
     pi.type("/btw what is in the readme?\r");
     await pi.waitFor("side answer after tools");
-    await pi.waitFor(/2 tools · denied: bash\(echo \*\)/);
+    await pi.waitFor(/2 tools · denied: bash\(git log \*\)/);
     const screen = pi.screen().join("\n");
-    assert.ok(!screen.includes("from bash\n") && !/^\s*\$ echo/m.test(screen), "no tool blocks are drawn");
+    assert.ok(!/^\s*\$ git log/m.test(screen) && !screen.includes("# demo"), "no tool blocks are drawn");
     await pi.shot("btw-denied");
   } finally {
     await pi.close();
