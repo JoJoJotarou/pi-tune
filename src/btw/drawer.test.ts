@@ -13,25 +13,28 @@ function turn(index: number): BtwTurn {
   return {
     text: `question ${index}`,
     question: `question ${index}`,
-    message: {
-      role: "assistant",
-      content: [{ type: "text", text: `answer ${index}` }],
-      provider: "probe",
-      model: "probe-model",
-      api: "openai-completions",
-      usage: {
-        input: 1,
-        output: 1,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: 1,
-    } as AssistantMessage,
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: `answer ${index}` }],
+        provider: "probe",
+        model: "probe-model",
+        api: "openai-completions",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: 1,
+      } as AssistantMessage,
+    ],
     askedAt: index,
     durationMs: 1000,
+    denied: [],
   };
 }
 

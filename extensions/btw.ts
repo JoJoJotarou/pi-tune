@@ -1,19 +1,25 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { join } from "node:path";
 import {
   type AgentSession,
   buildSessionContext,
   type ExtensionAPI,
   type ExtensionContext,
+  getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { matchesKey, type TUI } from "@earendil-works/pi-tui";
 import { openSideSession } from "../src/btw/child.ts";
 import { Drawer, type DrawerView, SPINNER_INTERVAL_MS } from "../src/btw/drawer.ts";
+import { activityLabel } from "../src/btw/render.ts";
+import { type BtwRules, DEFAULT_RULES, loadBtwRules } from "../src/btw/rules.ts";
+import { detectSandbox, type SandboxKind } from "../src/btw/sandbox.ts";
 import {
   BTW_ENTRY_TYPE,
   type BtwThread,
+  type BtwTurn,
   composeTurnText,
   countUserTurns,
   messageText,
+  producedMessages,
   SIDE_THREAD_ADDENDUM,
   staleNotice,
   threadMessages,
@@ -33,17 +39,28 @@ interface Pending {
   threadId: string;
   question: string;
   answer: string;
+  /** The tool call running right now. */
+  activity?: string;
+  denied: string[];
   startedAt: number;
   stopped: boolean;
   session?: AgentSession;
 }
 
-function lastAssistant(messages: readonly { role: string }[]): AssistantMessage | undefined {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message.role === "assistant") return message as AssistantMessage;
-  }
-  return undefined;
+/** A stored thread in the shape this build writes; sessions from earlier builds may hold others. */
+function isStoredThread(value: unknown): value is BtwThread {
+  const thread = value as Partial<BtwThread> | undefined;
+  return (
+    typeof thread?.id === "string" &&
+    Array.isArray(thread.turns) &&
+    thread.turns.every(
+      (turn: Partial<BtwTurn>) =>
+        typeof turn?.text === "string" &&
+        Array.isArray(turn.messages) &&
+        Array.isArray(turn.denied) &&
+        typeof turn.durationMs === "number",
+    )
+  );
 }
 
 export default function btwExtension(pi: ExtensionAPI) {
@@ -60,6 +77,11 @@ export default function btwExtension(pi: ExtensionAPI) {
   let tui: TUI | undefined;
   let ticker: ReturnType<typeof setInterval> | undefined;
   let stopListening: (() => void) | undefined;
+  let rules: BtwRules = DEFAULT_RULES;
+  let rulesPath = "pi-tune.json";
+  /** Detected on the first allowed bash command, then kept for the process. */
+  let sandbox: SandboxKind | Error | undefined;
+  let warnedUnsandboxed = false;
 
   const displayed = (): BtwThread | null => threads.find((thread) => thread.id === displayedId) ?? null;
 
@@ -72,7 +94,14 @@ export default function btwExtension(pi: ExtensionAPI) {
       number: thread ? threads.indexOf(thread) + 1 : threads.length + 1,
       mainTurns,
       ...(running
-        ? { pending: { question: running.question, answer: running.answer, startedAt: running.startedAt } }
+        ? {
+            pending: {
+              question: running.question,
+              answer: running.answer,
+              ...(running.activity === undefined ? {} : { activity: running.activity }),
+              startedAt: running.startedAt,
+            },
+          }
         : {}),
       revision,
     };
@@ -105,12 +134,20 @@ export default function btwExtension(pi: ExtensionAPI) {
   }
 
   function restore(ctx: ExtensionContext): void {
-    threads = [];
+    let stored: unknown[] = [];
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE) {
-        const stored = (entry as unknown as { data?: StoredThreads }).data;
-        if (stored?.threads) threads = stored.threads;
+        const data = (entry as unknown as { data?: Partial<StoredThreads> }).data;
+        if (Array.isArray(data?.threads)) stored = data.threads;
       }
+    }
+    threads = stored.filter(isStoredThread);
+    const skipped = stored.length - threads.length;
+    if (skipped > 0) {
+      ctx.ui.notify(
+        `Skipped ${skipped} btw thread${skipped === 1 ? "" : "s"} saved by an older pi-tune build.`,
+        "warning",
+      );
     }
     mainTurns = countUserTurns(snapshot(ctx, null));
   }
@@ -154,7 +191,14 @@ export default function btwExtension(pi: ExtensionAPI) {
     });
     const seeded = [...snapshot(ctx, thread.anchorEntryId || null), ...threadMessages(thread)];
 
-    const current: Pending = { threadId: thread.id, question, answer: "", startedAt: Date.now(), stopped: false };
+    const current: Pending = {
+      threadId: thread.id,
+      question,
+      answer: "",
+      denied: [],
+      startedAt: Date.now(),
+      stopped: false,
+    };
     pending = current;
     drawer?.follow();
     startTicker();
@@ -163,26 +207,48 @@ export default function btwExtension(pi: ExtensionAPI) {
     let session: AgentSession | undefined;
     let unsubscribe = () => {};
     try {
-      session = await openSideSession(pi, ctx, seeded);
+      session = await openSideSession(pi, ctx, seeded, {
+        rules,
+        rulesPath,
+        sandbox: () => {
+          sandbox ??= detectSandbox();
+          return sandbox;
+        },
+        onDenied: (label) => current.denied.push(label),
+        onUnsandboxed: (problem) => {
+          if (warnedUnsandboxed) return;
+          warnedUnsandboxed = true;
+          ctx.ui.notify(`btw runs allowed bash commands without a sandbox: ${problem.message}`, "warning");
+        },
+      });
       current.session = session;
       if (current.stopped) return;
       const streaming = session;
       unsubscribe = streaming.subscribe((event) => {
-        if (event.type !== "message_update" || event.message.role !== "assistant") return;
-        current.answer = messageText(event.message);
+        if (event.type === "message_update" && event.message.role === "assistant") {
+          current.answer = messageText(event.message);
+        } else if (event.type === "tool_execution_start") {
+          current.activity = activityLabel(event.toolName, event.args);
+        } else if (event.type === "tool_execution_end") {
+          current.activity = undefined;
+        } else {
+          return;
+        }
         changed();
       });
       await streaming.prompt(text, { source: "extension" });
       if (current.stopped) return;
-      const message = lastAssistant(streaming.state.messages);
-      if (!message) throw new Error("The side question finished without an answer.");
-      if (message.stopReason === "error") throw new Error(message.errorMessage || "The side question failed.");
+      const messages = producedMessages(streaming.state.messages);
+      const reply = messages.at(-1);
+      if (reply?.role !== "assistant") throw new Error("The side question finished without an answer.");
+      if (reply.stopReason === "error") throw new Error(reply.errorMessage || "The side question failed.");
       thread.turns.push({
         text,
         question,
-        message,
+        messages,
         askedAt: current.startedAt,
         durationMs: Date.now() - current.startedAt,
+        denied: current.denied,
       });
       persist();
     } finally {
@@ -270,6 +336,10 @@ export default function btwExtension(pi: ExtensionAPI) {
     displayedId = undefined;
     pending = undefined;
     pi.events.emit(BTW_MODE_CHANNEL, false);
+    rulesPath = join(getAgentDir(), "pi-tune.json");
+    const load = loadBtwRules(rulesPath);
+    rules = load.rules;
+    if (load.problem) ctx.ui.notify(load.problem, "warning");
     restore(ctx);
     if (ctx.mode !== "tui") return;
     mountWidget(ctx);

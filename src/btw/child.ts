@@ -9,25 +9,92 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
+  createBashToolDefinition,
+  createEditToolDefinition,
   createExtensionRuntime,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { stripDynamicSystemPromptFooter } from "./prompt.ts";
+import { type BtwRules, judge } from "./rules.ts";
+import { type SandboxKind, sandboxCommand } from "./sandbox.ts";
+
+export interface SideToolOptions {
+  rules: BtwRules;
+  /** The settings file, named in the error a refused call returns. */
+  rulesPath: string;
+  /** The read-only sandbox allowed bash commands run in, detected on first use; an `Error` runs them bare. */
+  sandbox: () => SandboxKind | Error;
+  onDenied: (label: string) => void;
+  /** Called on every unsandboxed bash run; the caller decides how often to show it. */
+  onUnsandboxed: (problem: Error) => void;
+}
+
+type ToolInfo = ReturnType<ExtensionAPI["getAllTools"]>[number];
+// biome-ignore lint/suspicious/noExplicitAny: the built-in definitions differ only in their parameter schemas.
+type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+/** Pi's own implementation of a built-in tool; extension tools only run in the session that registered them. */
+function builtInTool(name: string, cwd: string, options: SideToolOptions): AnyToolDefinition | undefined {
+  switch (name) {
+    case "read":
+      return createReadToolDefinition(cwd);
+    case "grep":
+      return createGrepToolDefinition(cwd);
+    case "find":
+      return createFindToolDefinition(cwd);
+    case "ls":
+      return createLsToolDefinition(cwd);
+    case "edit":
+      return createEditToolDefinition(cwd);
+    case "write":
+      return createWriteToolDefinition(cwd);
+    case "bash":
+      return createBashToolDefinition(cwd, {
+        spawnHook: (context) => {
+          const kind = options.sandbox();
+          if (kind instanceof Error) {
+            options.onUnsandboxed(kind);
+            return context;
+          }
+          return { ...context, command: sandboxCommand(kind, context.command) };
+        },
+      });
+    default:
+      return undefined;
+  }
+}
 
 /**
- * A tool that serializes exactly like the parent's but never runs: the declarations are only there
- * to keep the request prefix byte-identical, and a side thread answers in plain text.
+ * A tool that serializes exactly like the parent's, so the request prefix stays byte-identical, and runs a
+ * call only when the btw rules allow it. A refused call throws, which the model receives as an error result.
  */
-function stubTool(info: ReturnType<ExtensionAPI["getAllTools"]>[number]): ToolDefinition {
+export function sideTool(info: ToolInfo, cwd: string, options: SideToolOptions): ToolDefinition {
   return {
     name: info.name,
     label: info.name,
     description: info.description,
     parameters: info.parameters,
     ...(info.promptGuidelines ? { promptGuidelines: info.promptGuidelines } : {}),
-    async execute() {
-      throw new Error("A btw side thread does not run tools.");
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
+      const verdict = judge(info.name, params, options.rules);
+      if (!verdict.allowed) {
+        options.onDenied(verdict.label);
+        throw new Error(
+          `${verdict.label} ${verdict.reason} for btw threads. The user can allow it in "btw.allow" of ${options.rulesPath}.`,
+        );
+      }
+      const tool = builtInTool(info.name, cwd, options);
+      if (!tool) {
+        options.onDenied(`${info.name} (main session only)`);
+        throw new Error(`${info.name} runs only in the main session; a btw thread can run Pi's built-in tools.`);
+      }
+      return tool.execute(toolCallId, params, signal, onUpdate, ctx);
     },
   };
 }
@@ -87,6 +154,7 @@ export async function openSideSession(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   seeded: readonly (AgentMessage | Message)[],
+  tools: SideToolOptions,
 ): Promise<AgentSession> {
   const sessionManager = SessionManager.inMemory(ctx.cwd);
   // Appended raw: bash, summary, and custom entries are normalized into the request at prompt time,
@@ -99,7 +167,7 @@ export async function openSideSession(
   if (!model) throw new Error("No active model to answer the side question.");
 
   const active = new Set(pi.getActiveTools());
-  const tools = pi.getAllTools().filter((info) => active.has(info.name));
+  const declared = pi.getAllTools().filter((info) => active.has(info.name));
 
   const runtimeOptions = await sideRuntimeOptions(ctx, model);
 
@@ -109,8 +177,8 @@ export async function openSideSession(
     model,
     thinkingLevel: ctx.thinkingLevel,
     ...runtimeOptions,
-    tools: tools.map((info) => info.name),
-    customTools: tools.map(stubTool),
+    tools: declared.map((info) => info.name),
+    customTools: declared.map((info) => sideTool(info, ctx.cwd, tools)),
     resourceLoader: inheritedResources(ctx),
   });
   return session;

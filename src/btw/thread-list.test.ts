@@ -17,9 +17,10 @@ function thread(id: string, anchorTurns: number, questions: string[]): BtwThread
     turns: questions.map((question, index) => ({
       text: question,
       question,
-      message: { role: "assistant", content: [] } as unknown as AssistantMessage,
+      messages: [{ role: "assistant", content: [] } as unknown as AssistantMessage],
       askedAt: index,
       durationMs: 1,
+      denied: [],
     })),
   };
 }

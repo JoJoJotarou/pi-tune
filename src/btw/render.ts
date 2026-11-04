@@ -1,16 +1,29 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { rawKeyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import { Markdown, type MarkdownTheme, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { BTW_BORDER } from "../shared/btw.ts";
 import { formatDuration } from "../shared/format.ts";
 import { frameBottom, frameRow, frameTop, joinHints } from "../shared/frame.ts";
-import { type BtwThread, type BtwTurn, messageText } from "./thread.ts";
+import { type BtwThread, type BtwTurn, messageText, turnReply, turnToolCalls } from "./thread.ts";
 
 /** The question being answered right now, with whatever has streamed in so far. */
 export interface PendingExchange {
   question: string;
   answer: string;
+  /** The tool call running right now, e.g. `read src/x.ts`. */
+  activity?: string;
   elapsedMs: number;
   spinner: string;
+}
+
+/** A tool call on one line: the tool and its command, pattern or path. */
+export function activityLabel(tool: string, args: unknown): string {
+  const field = (key: string) => {
+    const value = (args as Record<string, unknown> | undefined)?.[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  const detail = tool === "bash" ? field("command") : (field("pattern") ?? field("path"));
+  return (detail ? `${tool} ${detail}` : tool).replace(/\s+/g, " ").trim();
 }
 
 export interface DrawerInput {
@@ -75,16 +88,26 @@ function compactTokens(value: number): string {
   return `${(value / 1000).toFixed(1).replace(/\.0$/, "")}k`;
 }
 
+/** Usage of every request the turn made, the tools it called, and in warning color the calls the rules refused. */
 function usageRow(turn: BtwTurn, width: number, theme: Theme): string {
-  const usage = turn.message.usage;
-  const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
+  const replies = turn.messages.filter((message): message is AssistantMessage => message.role === "assistant");
+  const sum = (pick: (usage: AssistantMessage["usage"]) => number) =>
+    replies.reduce((total, message) => total + pick(message.usage), 0);
+  const prompt = sum((usage) => usage.input + usage.cacheRead + usage.cacheWrite);
+  const tokens = sum((usage) => usage.totalTokens || usage.input + usage.cacheRead + usage.cacheWrite + usage.output);
+  const tools = turnToolCalls(turn);
   const parts = [
-    turn.message.model,
+    turnReply(turn).model,
     formatDuration(turn.durationMs),
-    `${compactTokens(usage.totalTokens || prompt + usage.output)} tok`,
-    `cache ${compactTokens(usage.cacheRead)}/${compactTokens(prompt)}`,
+    `${compactTokens(tokens)} tok`,
+    `cache ${compactTokens(sum((usage) => usage.cacheRead))}/${compactTokens(prompt)}`,
+    ...(tools > 0 ? [`${tools} tool${tools === 1 ? "" : "s"}`] : []),
   ];
-  return truncateToWidth(`${INDENT}${theme.fg("dim", parts.join(" · "))}`, width, "", true);
+  const denied =
+    turn.denied.length === 0
+      ? ""
+      : theme.fg("warning", ` · denied: ${turn.denied.map((label) => truncateToWidth(label, 32, "…")).join(", ")}`);
+  return truncateToWidth(`${INDENT}${theme.fg("dim", parts.join(" · "))}${denied}`, width, "", true);
 }
 
 /** Markdown is the costly part and a stored turn never changes, so each turn keeps its rows per width. */
@@ -95,7 +118,7 @@ function turnRows(turn: BtwTurn, width: number, theme: Theme, markdown: Markdown
   if (cached && cached.width === width && cached.theme === theme) return cached.rows;
   const rows = [
     ...questionRows(turn.question, width, theme),
-    ...answerRows(messageText(turn.message), width, theme, markdown),
+    ...answerRows(messageText(turnReply(turn)), width, theme, markdown),
     usageRow(turn, width, theme),
   ];
   turnCache.set(turn, { width, theme, rows });
@@ -105,15 +128,15 @@ function turnRows(turn: BtwTurn, width: number, theme: Theme, markdown: Markdown
 function pendingRows(pending: PendingExchange, width: number, theme: Theme, markdown: MarkdownTheme): string[] {
   const spinner = theme.fg("accent", pending.spinner);
   const elapsed = formatDuration(pending.elapsedMs);
+  const status = (what: string | undefined) =>
+    `${spinner} ${theme.fg("dim", what === undefined ? elapsed : `${what} · ${elapsed}`)}`;
   const rows = questionRows(pending.question, width, theme);
   if (pending.answer.trim() === "") {
-    rows.push(
-      ...labelled(`${theme.fg("success", "btw")} `, [`${spinner} ${theme.fg("dim", `answering · ${elapsed}`)}`], width),
-    );
+    rows.push(...labelled(`${theme.fg("success", "btw")} `, [status(pending.activity ?? "answering")], width));
     return rows;
   }
   rows.push(...answerRows(pending.answer, width, theme, markdown));
-  rows.push(truncateToWidth(`${INDENT}${spinner} ${theme.fg("dim", elapsed)}`, width, "", true));
+  rows.push(truncateToWidth(`${INDENT}${status(pending.activity)}`, width, "", true));
   return rows;
 }
 

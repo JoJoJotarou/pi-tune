@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
 import { getMarkdownTheme, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { type DrawerInput, drawerMaxHeight, renderBtw } from "./render.ts";
+import { activityLabel, type DrawerInput, drawerMaxHeight, renderBtw } from "./render.ts";
 import type { BtwThread } from "./thread.ts";
 
 initTheme("dark");
@@ -38,9 +38,10 @@ function thread(turns: number, anchorTurns = 3): BtwThread {
     turns: Array.from({ length: turns }, (_, index) => ({
       text: `question ${index + 1}`,
       question: `question ${index + 1}`,
-      message: assistant(`answer ${index + 1}`),
+      messages: [assistant(`answer ${index + 1}`)],
       askedAt: index,
       durationMs: 3200,
+      denied: [],
     })),
   };
 }
@@ -172,9 +173,10 @@ describe("renderBtw", () => {
         {
           text: "q",
           question: "q",
-          message: assistant("use **bold** and `code`"),
+          messages: [assistant("use **bold** and `code`")],
           askedAt: 0,
           durationMs: 3200,
+          denied: [],
         },
       ],
     };
@@ -182,5 +184,49 @@ describe("renderBtw", () => {
     assert.ok(rows.includes("use bold and code"), rows);
     assert.ok(!rows.includes("**"), rows);
     assert.ok(rows.includes("probe-model · 3.2s · 8.1k tok · cache 7.8k/8k"), rows);
+  });
+
+  it("names the tool call that is running instead of the answer", () => {
+    const pending = { question: "q", answer: "", elapsedMs: 1500, spinner: "⠋", activity: "read src/x.ts" };
+    const waiting = plain(draw({ pending }).lines).join("\n");
+    assert.ok(waiting.includes("btw ⠋ read src/x.ts · 1.5s"), waiting);
+    const streaming = plain(draw({ pending: { ...pending, answer: "partial" } }).lines).join("\n");
+    assert.ok(streaming.includes("    ⠋ read src/x.ts · 1.5s"), streaming);
+  });
+
+  it("sums the usage of every request, counts the tools and names the refused calls", () => {
+    const call = assistant("looking", { input: 100, output: 10, cacheRead: 900, cacheWrite: 0, totalTokens: 1010 });
+    const result: ToolResultMessage = {
+      role: "toolResult",
+      toolCallId: "c1",
+      toolName: "bash",
+      content: [{ type: "text", text: "denied" }],
+      isError: true,
+      timestamp: 2,
+    };
+    const tooled: BtwThread = {
+      ...thread(0),
+      turns: [
+        {
+          text: "q",
+          question: "q",
+          messages: [call, result, assistant("done")],
+          askedAt: 0,
+          durationMs: 3200,
+          denied: ["bash(rm -rf build)"],
+        },
+      ],
+    };
+    const rows = plain(draw({ thread: tooled, width: 120 }).lines).join("\n");
+    assert.ok(rows.includes("9.1k tok · cache 8.7k/9k · 1 tool · denied: bash(rm -rf build)"), rows);
+  });
+});
+
+describe("activityLabel", () => {
+  it("shows the command, pattern or path on one line", () => {
+    assert.equal(activityLabel("bash", { command: "tinyfish search\nquery x" }), "bash tinyfish search query x");
+    assert.equal(activityLabel("grep", { pattern: "TODO", path: "src" }), "grep TODO");
+    assert.equal(activityLabel("read", { path: "src/x.ts" }), "read src/x.ts");
+    assert.equal(activityLabel("mcp__docs__search", { query: "x" }), "mcp__docs__search");
   });
 });

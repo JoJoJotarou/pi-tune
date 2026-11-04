@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import { detectSandbox } from "../../src/btw/sandbox.ts";
 import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
 const DRAWER = /╭─ btw #\d/;
@@ -145,6 +148,70 @@ test("the drawer fits a 40x20 terminal", { timeout: 180_000 }, async () => {
     await pi.waitFor(/│ +drawer +│/);
     for (const line of pi.screen()) assert.ok(line.length <= 40, line);
     await pi.shot("btw-narrow");
+  } finally {
+    await pi.close();
+  }
+});
+
+test("side threads run allowed tools, refuse the rest and show only the exchange", { timeout: 180_000 }, async () => {
+  const scenario: Scenario = {
+    files: { "README.md": "# demo\n" },
+    turns: [
+      [{ tool: "read", args: { path: "README.md" } }],
+      [{ tool: "bash", args: { command: "echo from bash" } }],
+      [{ text: "side answer after tools" }],
+    ],
+  };
+  const pi = await startPi({ scenario });
+  try {
+    pi.type("/btw what is in the readme?\r");
+    await pi.waitFor("side answer after tools");
+    await pi.waitFor(/2 tools · denied: bash\(echo from bash\)/);
+    const screen = pi.screen().join("\n");
+    assert.ok(!screen.includes("from bash\n") && !/^\s*\$ echo/m.test(screen), "no tool blocks are drawn");
+    await pi.shot("btw-denied");
+  } finally {
+    await pi.close();
+  }
+});
+
+test("an allowed bash command runs read-only", { timeout: 180_000 }, async () => {
+  const sandbox = detectSandbox();
+  // Outside the temp directories, which the sandbox leaves writable and where the scenario's project lives.
+  const target = join(import.meta.dirname, `made-by-btw-${process.pid}.txt`);
+  const scenario: Scenario = {
+    turns: [[{ tool: "bash", args: { command: `touch ${target}` } }], [{ text: "tried to touch" }]],
+  };
+  const pi = await startPi({
+    scenario,
+    agentFiles: { "pi-tune.json": JSON.stringify({ btw: { allow: ["read", "bash(touch *)"] } }) },
+  });
+  try {
+    pi.type("/btw make a file\r");
+    await pi.waitFor("tried to touch");
+    await pi.waitFor("1 tool");
+    assert.ok(!pi.screen().join("\n").includes("denied"), "the rule allowed it");
+    if (sandbox instanceof Error) {
+      await pi.waitFor("btw runs allowed bash commands without a sandbox");
+      assert.ok(existsSync(target));
+    } else {
+      assert.ok(!existsSync(target), "the sandbox blocked the write");
+    }
+  } finally {
+    await pi.close();
+    rmSync(target, { force: true });
+  }
+});
+
+test("a broken btw setting warns with the file and field, and keeps the defaults", { timeout: 180_000 }, async () => {
+  const pi = await startPi({
+    scenario: { turns: [] },
+    agentFiles: { "pi-tune.json": JSON.stringify({ btw: { allow: "read" } }) },
+  });
+  try {
+    await pi.waitFor("btw tools use the defaults:");
+    const warning = pi.screen().join(" ").replace(/\s+/g, " ");
+    assert.match(warning, /pi-tune\.json has a "btw\.allow" value that is not a list of strings/);
   } finally {
     await pi.close();
   }
