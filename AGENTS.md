@@ -29,6 +29,7 @@ npm test           # unit tests: node --test "src/**/*.test.ts"
 npm run smoke      # loads the package in Pi (rpc mode) and fails on any extension error
 npm run e2e        # real Pi in a pseudo-terminal (needs rg and fd for the grep and find tools)
 npm run ci         # lint + typecheck + test + smoke
+npm run bench      # wheel latency in a long session, Pi alone vs with pi-tune (`-- <session.jsonl>` for a real one)
 ```
 
 ## TypeScript
@@ -50,6 +51,13 @@ npm run ci         # lint + typecheck + test + smoke
 - No rendered line may be wider than the width it was given. Measure with `visibleWidth`, and cut with
   `truncateToWidth` or `sliceByColumn` from `@earendil-works/pi-tui`. In regular mode, an over-wide line crashes
   Pi. Test at width 40 as well as at normal widths.
+- Pi redraws the whole transcript on every frame (each wheel step, each streamed token) and relies on every
+  component's own cache. A component that stays in the transcript returns its previous lines while the width and
+  every input it draws from are unchanged, and drops them in `invalidate()`. Nothing may do work per frame that
+  grows with the session.
+- Before a PR that adds or changes anything drawn on screen, run `npm run bench` while nothing else heavy runs (no
+  e2e, builds or other agents): the pi-tune p50 must stay under 2x Pi alone (the bench prints the ratio). Timing
+  is noisy, so a miss counts only when a second run misses too. Put the table in the PR.
 - Take colors from the `Theme` you are handed (`theme.fg`, `theme.bg`, `theme.style`, `theme.colors`). Never
   hard-code ANSI colors.
 - All TUI text is English, short, and uses the exact strings given in the task spec. Issue mockups that show
