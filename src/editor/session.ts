@@ -35,9 +35,9 @@ export interface EditorHost {
   /** `getAgentDir()`: where `pi-tune.json` lives. */
   agentDir(): string;
   now(): number;
-  /** `pi.events.emit("pi-tune:editor-stash", held)`. */
+  /** `pi.events.emit(EDITOR_STASH_CHANNEL, held)`. */
   emitStash(held: boolean): void;
-  /** `pi.events.emit("pi-tune:editor-ready", undefined)`. */
+  /** `pi.events.emit(EDITOR_READY_CHANNEL, undefined)`. */
   emitReady(): void;
 }
 

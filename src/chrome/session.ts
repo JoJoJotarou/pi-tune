@@ -43,9 +43,9 @@ export interface ChromeContext {
 }
 
 export interface ChromeSession {
-  /** `pi-tune:editor-ready`: the editor area mounted its custom editor. */
+  /** `EDITOR_READY_CHANNEL`: the editor area mounted its custom editor. */
   editorReady(): void;
-  /** `pi-tune:editor-stash`: a draft sits in the editor's stash. */
+  /** `EDITOR_STASH_CHANNEL`: a draft sits in the editor's stash. */
   editorStash(held: boolean): void;
   /** `BTW_MODE_CHANNEL`: a btw side thread holds the drawer and the input. */
   btwMode(open: boolean): void;

@@ -4,7 +4,7 @@ import { openSideSession } from "../src/btw/agent.ts";
 import { createBtwSession } from "../src/btw/session.ts";
 import { BTW_ENTRY_TYPE } from "../src/btw/thread.ts";
 import { editorHasFocus } from "../src/internals/focus.ts";
-import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
+import { BTW_MODE_CHANNEL } from "../src/shared/channels.ts";
 
 export default function btwExtension(pi: ExtensionAPI) {
   const session = createBtwSession({

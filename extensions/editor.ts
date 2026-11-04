@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createEditorSession } from "../src/editor/session.ts";
-import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
+import { BTW_MODE_CHANNEL, EDITOR_READY_CHANNEL, EDITOR_STASH_CHANNEL } from "../src/shared/channels.ts";
 
 export default function (pi: ExtensionAPI) {
   const session = createEditorSession({
@@ -9,8 +9,8 @@ export default function (pi: ExtensionAPI) {
     thinkingLevel: () => pi.getThinkingLevel(),
     agentDir: () => getAgentDir(),
     now: () => Date.now(),
-    emitStash: (held) => pi.events.emit("pi-tune:editor-stash", held),
-    emitReady: () => pi.events.emit("pi-tune:editor-ready", undefined),
+    emitStash: (held) => pi.events.emit(EDITOR_STASH_CHANNEL, held),
+    emitReady: () => pi.events.emit(EDITOR_READY_CHANNEL, undefined),
   });
 
   pi.events.on(BTW_MODE_CHANNEL, (on) => session.btwMode(on === true));
