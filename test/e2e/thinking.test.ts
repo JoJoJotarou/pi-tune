@@ -31,6 +31,13 @@ const streamingScenario: Scenario = {
   tokensPerSecond: 30,
 };
 
+/** Thinking takes well under a second here, while every reply claims nine seconds, as a long real reply would. */
+const measuredScenario: Scenario = {
+  turns: [[{ thinking: "Plan the answer briefly." }, { text: "Done thinking, here is the answer." }]],
+  tokensPerSecond: 60,
+  durationMs: 9_000,
+};
+
 function rows(screen: string[]): string[] {
   return screen.map((row) => row.trim());
 }
@@ -89,6 +96,18 @@ test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
     pi.press("ctrl+o");
     await new Promise((done) => setTimeout(done, 1000));
     assertHidden(rows(pi.screen()), "after ctrl+o");
+  });
+});
+
+test("the summary keeps the measured thinking time, not the whole reply's", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: measuredScenario, tune: true, settings: { hideThinkingBlock: false } });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    // The status area appends `Worked for` once the run settles, so message_end has been handled by then.
+    await pi.waitFor(/Worked for/);
+    const summary = rows(pi.screen()).find((line) => line.startsWith("◆ Thought for"));
+    assert.ok(summary, `summary expected:\n${pi.screen().join("\n")}`);
+    assert.doesNotMatch(summary, /Thought for 9\.0s/);
   });
 });
 

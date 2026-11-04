@@ -37,12 +37,13 @@ export default function (pi: ExtensionAPI) {
     tokensPerSecond: scenario.tokensPerSecond ?? 2000,
   });
   faux.setResponses(
-    scenario.turns.map((turn) =>
-      fauxAssistantMessage(
+    scenario.turns.map((turn) => {
+      const message = fauxAssistantMessage(
         toContent(turn),
         turn.some((block) => "tool" in block) ? { stopReason: "toolUse" } : undefined,
-      ),
-    ),
+      );
+      return scenario.durationMs === undefined ? message : { ...message, durationMs: scenario.durationMs };
+    }),
   );
   pi.registerProvider(faux.provider);
 }

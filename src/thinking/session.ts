@@ -1,3 +1,4 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   ExtensionContext,
   MarkdownTransformContext,
@@ -5,20 +6,10 @@ import type {
   MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { groupThinkingBlocks } from "./group.ts";
 import { buildThoughtSummary } from "./summary.ts";
 import { createThinkingTiming } from "./timing.ts";
 import { buildThinkingWindow } from "./window.ts";
-
-interface ThinkingBlockLike {
-  type?: string;
-  thinking?: string;
-}
-
-interface AssistantMessageLike {
-  role: string;
-  durationMs?: number;
-  content?: ThinkingBlockLike[];
-}
 
 /** Rows shown for an expanded thinking block: the head row plus the newest content rows. */
 const WINDOW_LINES = 4;
@@ -43,33 +34,6 @@ export interface ThinkingSession {
   messageEnd(event: MessageEndEvent): void;
   /** The registered markdown transformer's body; Pi calls it for every markdown it renders. */
   transformThinking(markdown: string, context: MarkdownTransformContext): string;
-}
-
-/** Duration table for historical blocks after a session resume: whole-response durationMs per thinking run. */
-function hydrateDurations(entries: readonly unknown[], seed: (markdown: string, ms: number) => void): void {
-  for (const entry of entries) {
-    const message = (entry as { type?: string; message?: AssistantMessageLike }).message;
-    if (message?.role !== "assistant") continue;
-    const durationMs = message.durationMs;
-    if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0) continue;
-    // The renderer joins consecutive thinking blocks into one markdown, so key the same way.
-    let group: string[] = [];
-    const flush = (): void => {
-      if (group.length > 0) {
-        seed(group.join("\n\n"), durationMs);
-        group = [];
-      }
-    };
-    for (const block of message.content ?? []) {
-      if (block?.type !== "thinking") {
-        flush();
-        continue;
-      }
-      const text = typeof block.thinking === "string" ? block.thinking.trim() : "";
-      if (text !== "") group.push(text);
-    }
-    flush();
-  }
 }
 
 export function createThinkingSession(host: ThinkingHost): ThinkingSession {
@@ -107,28 +71,15 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
     }
   }
 
-  function seedJoinedGroups(message: AssistantMessageLike): void {
-    const fallback = typeof message.durationMs === "number" && message.durationMs >= 0 ? message.durationMs : undefined;
-    let group: Run[] = [];
-    const flush = (): void => {
-      if (group.length === 0) return;
-      const joined = group.map((run) => run.text).join("\n\n");
-      if (joined.trim() !== "") {
-        const total = group.reduce((sum, run) => sum + (run.ms ?? 0), 0);
-        if (group.every((run) => run.ms !== undefined)) timing.seed(joined, total);
-        else if (fallback !== undefined) timing.seed(joined, fallback);
-      }
-      group = [];
-    };
-    for (const block of message.content ?? []) {
-      if (block?.type !== "thinking") {
-        flush();
-        continue;
-      }
-      const text = typeof block.thinking === "string" ? block.thinking.trim() : "";
-      if (text !== "") group.push({ text, ms: undefined });
+  /** Each group's measured time: the sum of its runs, or the whole reply's `durationMs` when a run went unmeasured. */
+  function seedGroups(message: AssistantMessage): void {
+    for (const group of groupThinkingBlocks(message.content)) {
+      const measured = group.indexes.map((index) => runs.get(index)?.ms);
+      const ms = measured.every((value) => value !== undefined)
+        ? measured.reduce((sum, value) => sum + value, 0)
+        : message.durationMs;
+      if (ms !== undefined) timing.seed(group.text, ms);
     }
-    flush();
   }
 
   return {
@@ -138,7 +89,13 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       thinkingStreaming = false;
       if (ctx.mode !== "tui") return;
       ctx.ui.setHiddenThinkingLabel("◆ Thinking · click to expand");
-      hydrateDurations(ctx.sessionManager.getEntries(), (markdown, ms) => timing.seed(markdown, ms));
+      // A resumed session kept no run timings, so its blocks show the whole reply's duration.
+      for (const entry of ctx.sessionManager.getEntries()) {
+        if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+        const { durationMs } = entry.message;
+        if (durationMs === undefined) continue;
+        for (const group of groupThinkingBlocks(entry.message.content)) timing.seed(group.text, durationMs);
+      }
     },
     messageUpdate(event) {
       const update = event.assistantMessageEvent;
@@ -171,8 +128,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       }
     },
     messageEnd(event) {
-      const message = event.message.role === "assistant" ? event.message : undefined;
-      if (message) seedJoinedGroups(message as AssistantMessageLike);
+      if (event.message.role === "assistant") seedGroups(event.message);
       runs.clear();
       thinkingStreaming = false;
     },

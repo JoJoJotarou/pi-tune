@@ -21,6 +21,8 @@ export interface Scenario {
   files?: Record<string, string>;
   turns: Block[][];
   tokensPerSecond?: number;
+  /** Set on every reply, as real providers do; the faux provider leaves it out otherwise. */
+  durationMs?: number;
 }
 
 export interface StartOptions {
