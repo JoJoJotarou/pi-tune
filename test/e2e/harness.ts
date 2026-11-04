@@ -36,8 +36,6 @@ export interface StartOptions {
   agentFiles?: Record<string, string>;
   /** Leave `--no-skills` out, so Pi loads the skills under the agent dir. */
   skills?: boolean;
-  /** Extra environment for the Pi process (e.g. pi-tune feature switches). */
-  env?: Record<string, string>;
 }
 
 export interface PiSession {
@@ -197,9 +195,6 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
       COLORTERM: "truecolor",
       PI_CODING_AGENT_DIR: agentDir,
       PI_TUNE_SCENARIO: scenarioPath,
-      // The ghost suggestion's own model request would consume a scripted faux response.
-      PI_TUNE_EDITOR_SUGGEST: "off",
-      ...options.env,
     },
   });
   const term = new xterm.Terminal({ cols, rows, allowProposedApi: true });

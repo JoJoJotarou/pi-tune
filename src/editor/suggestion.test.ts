@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import type { SuggestSettings } from "./suggest-settings.ts";
 import {
   buildSuggestionUserMessage,
   buildTranscript,
@@ -138,7 +139,6 @@ function makeSuggestion(overrides: Partial<ConstructorParameters<typeof Suggesti
   const warnings: string[] = [];
   const editor = fakeEditor();
   const suggestion = new Suggestion({
-    enabled: true,
     complete: async () => "run the tests",
     findModel: () => undefined,
     sessionModel: () => ({ id: "session" }),
@@ -149,6 +149,12 @@ function makeSuggestion(overrides: Partial<ConstructorParameters<typeof Suggesti
     ...overrides,
   });
   return { suggestion, editor, warnings };
+}
+
+/** A fresh session with the given settings, the way the extension starts one. */
+function start(suggestion: Suggestion, settings: SuggestSettings = { enabled: true }): void {
+  suggestion.startSession();
+  suggestion.applySettings(settings);
 }
 
 const asMessage = (value: unknown) => value as Parameters<SessionManager["appendMessage"]>[0];
@@ -183,7 +189,6 @@ test("the suggestion model setting overrides the session model", async () => {
   const override = { id: "override" };
   const session = { id: "session" };
   const { suggestion } = makeSuggestion({
-    modelSetting: "provider/model",
     findModel: (provider, id) => (provider === "provider" && id === "model" ? override : undefined),
     sessionModel: () => session,
     complete: async ({ model }) => {
@@ -191,7 +196,7 @@ test("the suggestion model setting overrides the session model", async () => {
       return "next";
     },
   });
-  suggestion.startSession();
+  start(suggestion, { enabled: true, model: "provider/model" });
   suggestion.agentStart();
   await suggestion.turnEnd(assistantTurn("done"), 0);
   assert.deepEqual(seen, [override]);
@@ -202,7 +207,7 @@ test("a reply that lands while the user is typing is kept and shown when the edi
   const { suggestion, editor } = makeSuggestion({
     complete: () => new Promise<string>((resolve) => (reply = resolve)),
   });
-  suggestion.startSession();
+  start(suggestion);
   suggestion.agentStart();
   const pending = suggestion.turnEnd(assistantTurn("done"), 0);
   editor.state.text = "hello";
@@ -222,7 +227,7 @@ test("a new run aborts the request and leaves no suggestion", async () => {
       return new Promise<string>((resolve) => (reply = resolve));
     },
   });
-  suggestion.startSession();
+  start(suggestion);
   suggestion.agentStart();
   const pending = suggestion.turnEnd(assistantTurn("done"), 0);
   suggestion.agentStart();
@@ -240,7 +245,7 @@ test("a failed request warns once and stops asking for the session", async () =>
       throw new Error("provider exploded");
     },
   });
-  suggestion.startSession();
+  start(suggestion);
   suggestion.agentStart();
   await suggestion.turnEnd(assistantTurn("done"), 0);
   assert.equal(requests, 1);
@@ -254,21 +259,93 @@ test("a failed request warns once and stops asking for the session", async () =>
   assert.equal(warnings.length, 1);
 });
 
+test("changing the settings after a failure asks again", async () => {
+  let requests = 0;
+  const { suggestion } = makeSuggestion({
+    complete: async () => {
+      requests++;
+      throw new Error("bad key");
+    },
+    findModel: (provider, id) => ({ provider, id }),
+  });
+  start(suggestion);
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done"), 0);
+  suggestion.applySettings({ enabled: true, model: "cheap/mini" });
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done again"), 0);
+  assert.equal(requests, 2);
+});
+
 test("an unknown suggestion model warns at session start and disables suggestions", async () => {
-  for (const modelSetting of ["not-a-provider-model", "missing/model"]) {
+  for (const model of ["not-a-provider-model", "missing/model"]) {
     let requests = 0;
     const { suggestion, warnings } = makeSuggestion({
-      modelSetting,
       findModel: () => undefined,
       complete: async () => {
         requests++;
         return "next";
       },
     });
-    suggestion.startSession();
+    start(suggestion, { enabled: true, model });
     suggestion.agentStart();
     await suggestion.turnEnd(assistantTurn("done"), 0);
     assert.equal(requests, 0);
-    assert.deepEqual(warnings, [`Next-step suggestion model "${modelSetting}" is not a known provider/model.`]);
+    assert.deepEqual(warnings, [`Next-step suggestion model "${model}" is not a known provider/model.`]);
   }
+});
+
+test("settings applied at runtime turn suggestions on and switch the model", async () => {
+  const seen: unknown[] = [];
+  const override = { id: "override" };
+  const { suggestion } = makeSuggestion({
+    findModel: (provider, id) => (provider === "provider" && id === "model" ? override : undefined),
+    complete: async ({ model }) => {
+      seen.push(model);
+      return "next";
+    },
+  });
+  start(suggestion, { enabled: false });
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done"), 0);
+  assert.deepEqual(seen, [], "suggestions started on");
+
+  suggestion.applySettings({ enabled: true, model: "provider/model" });
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done again"), 0);
+  assert.deepEqual(seen, [override]);
+
+  suggestion.applySettings({ enabled: true });
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done once more"), 0);
+  assert.deepEqual(
+    seen,
+    [override, { id: "session" }],
+    "dropping the model setting did not fall back to the session model",
+  );
+});
+
+test("turning suggestions off discards the ghost and aborts the request", async () => {
+  let reply!: (text: string) => void;
+  let signal: AbortSignal | undefined;
+  const { suggestion, editor } = makeSuggestion({
+    complete: ({ signal: requestSignal }) => {
+      signal = requestSignal;
+      return new Promise<string>((resolve) => (reply = resolve));
+    },
+  });
+  start(suggestion);
+  suggestion.agentStart();
+  const pending = suggestion.turnEnd(assistantTurn("done"), 0);
+  editor.setSuggestion("old ghost");
+
+  suggestion.applySettings({ enabled: false });
+  reply("late suggestion");
+  await pending;
+  assert.equal(signal?.aborted, true);
+  assert.equal(editor.getSuggestion(), undefined);
+
+  suggestion.agentStart();
+  await suggestion.turnEnd(assistantTurn("done again"), 0);
+  assert.equal(editor.getSuggestion(), undefined, "a disabled suggestion still requested");
 });

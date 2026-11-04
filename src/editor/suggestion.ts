@@ -1,4 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { parseModelId, type SuggestSettings } from "./suggest-settings.ts";
 
 /** pi-tui's fake cursor marker (`FAKE_CURSOR_END` in its tui.d.ts, not a runtime export). */
 const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
@@ -124,9 +125,6 @@ export interface SuggestionRequest {
 export type SuggestionComplete = (request: SuggestionRequest) => Promise<string>;
 
 export interface SuggestionOptions {
-  enabled: boolean;
-  /** `PI_TUNE_SUGGEST_MODEL`; validated at session start, never a silent fallback. */
-  modelSetting?: string;
   complete: SuggestionComplete;
   findModel(provider: string, id: string): unknown | undefined;
   sessionModel(): unknown | undefined;
@@ -142,6 +140,7 @@ const SUGGEST_CHARS = 80;
 /** One suggestion request per run, aborted by the next run or session change. */
 export class Suggestion {
   private readonly options: SuggestionOptions;
+  private enabled = false;
   private overrideModel: unknown;
   private sessionModelValue: unknown;
   private invalidModel = false;
@@ -156,18 +155,32 @@ export class Suggestion {
 
   startSession(): void {
     this.discard();
+    this.enabled = false;
     this.overrideModel = undefined;
     this.sessionModelValue = this.options.sessionModel();
     this.invalidModel = false;
     this.failed = false;
     this.runActive = false;
     this.requestedThisRun = false;
-    if (!this.options.enabled) return;
-    const setting = this.options.modelSetting;
+  }
+
+  /** Apply the settings the user just saved; an unknown model warns and leaves suggestions off. */
+  applySettings(settings: SuggestSettings): void {
+    this.enabled = settings.enabled;
+    this.overrideModel = undefined;
+    this.invalidModel = false;
+    // A new choice is a fresh try, even after a failed request.
+    this.failed = false;
+    if (!settings.enabled) {
+      this.discard();
+      return;
+    }
+    const setting = settings.model;
     if (setting === undefined || setting === "") return;
-    const slash = setting.indexOf("/");
-    const model = slash > 0 ? this.options.findModel(setting.slice(0, slash), setting.slice(slash + 1)) : undefined;
+    const parsed = parseModelId(setting);
+    const model = parsed === undefined ? undefined : this.options.findModel(parsed.provider, parsed.id);
     if (model === undefined) {
+      this.enabled = false;
       this.invalidModel = true;
       this.options.notify(`Next-step suggestion model "${setting}" is not a known provider/model.`, "warning");
       return;
@@ -211,7 +224,7 @@ export class Suggestion {
 
   private async request(concludingReply?: string): Promise<void> {
     const editor = this.options.editor();
-    if (!this.options.enabled || this.invalidModel || this.failed || editor === undefined) return;
+    if (!this.enabled || this.invalidModel || this.failed || editor === undefined) return;
     const model = this.overrideModel ?? this.sessionModelValue;
     if (model === undefined) return;
     const turns = this.options.collectTurns();

@@ -10,6 +10,9 @@ const scenario: Scenario = {
   tokensPerSecond: 2000,
 };
 
+/** Suggestions are off unless the agent dir turns them on. */
+const suggestOn = { "pi-tune.json": JSON.stringify({ suggest: { enabled: true } }) };
+
 async function closeAfter(pi: PiSession, body: () => Promise<void>): Promise<void> {
   try {
     await body();
@@ -22,7 +25,7 @@ test("the ghost suggestion fills on tab and hides while typing", { timeout: 120_
   const pi = await startPi({
     scenario,
     tune: true,
-    env: { PI_TUNE_EDITOR_SUGGEST: "on" },
+    agentFiles: suggestOn,
   });
   await closeAfter(pi, async () => {
     pi.type("go\r");
@@ -40,7 +43,7 @@ test("the ghost suggestion fills on tab and hides while typing", { timeout: 120_
   });
 });
 
-test("PI_TUNE_EDITOR_SUGGEST=off never requests a suggestion", { timeout: 120_000 }, async () => {
+test("suggestions are off by default", { timeout: 120_000 }, async () => {
   const pi = await startPi({
     scenario: {
       turns: [[{ text: "First answer." }], [{ text: GHOST }], [{ text: "Second answer." }]],
@@ -58,11 +61,22 @@ test("PI_TUNE_EDITOR_SUGGEST=off never requests a suggestion", { timeout: 120_00
   });
 });
 
+test("/suggest on turns suggestions on for the next run", { timeout: 120_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true });
+  await closeAfter(pi, async () => {
+    pi.type("/suggest on\r");
+    await pi.waitFor("Next-step suggestions on · session model");
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.waitFor(GHOST);
+  });
+});
+
 test("the ghost is discarded by a bash command that starts no run", { timeout: 120_000 }, async () => {
   const pi = await startPi({
     scenario,
     tune: true,
-    env: { PI_TUNE_EDITOR_SUGGEST: "on" },
+    agentFiles: suggestOn,
   });
   await closeAfter(pi, async () => {
     pi.type("go\r");
@@ -86,7 +100,7 @@ test("the ghost is discarded once a new prompt is submitted", { timeout: 120_000
       tokensPerSecond: 100,
     },
     tune: true,
-    env: { PI_TUNE_EDITOR_SUGGEST: "on" },
+    agentFiles: suggestOn,
   });
   await closeAfter(pi, async () => {
     pi.type("go\r");

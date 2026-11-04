@@ -1,15 +1,26 @@
+import { join } from "node:path";
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  getAgentDir,
+  type KeybindingsManager,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TUI } from "@earendil-works/pi-tui";
 import { PastePreview, type PastePreviewAction } from "../src/editor/paste-preview.ts";
+import {
+  loadSuggestSettings,
+  parseModelId,
+  type SuggestSettings,
+  saveSuggestSettings,
+  suggestCommand,
+} from "../src/editor/suggest-settings.ts";
 import { collectSessionTurns, Suggestion, type SuggestionComplete } from "../src/editor/suggestion.ts";
 import { TuneEditor } from "../src/editor/tune-editor.ts";
 import { MODAL_OVERLAY } from "../src/shared/frame.ts";
 
 const SUGGEST_MAX_TOKENS = 1024;
-
-const SUGGEST_ENABLED = process.env.PI_TUNE_EDITOR_SUGGEST !== "off";
-const SUGGEST_MODEL = process.env.PI_TUNE_SUGGEST_MODEL;
 
 type Registry = ExtensionContext["modelRegistry"];
 
@@ -27,6 +38,9 @@ export default function (pi: ExtensionAPI) {
   let chatModel: Model<Api> | undefined;
   let registry: Registry | undefined;
   let suggestion: Suggestion | undefined;
+  let suggestPath: string | undefined;
+  let suggestSettings: SuggestSettings | undefined;
+  let suggestProblem: string | undefined;
 
   const sync = () => {
     editor?.setStatus(model, thinking);
@@ -91,6 +105,72 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_compact", () => suggestion?.discard());
 
+  const availableModelIds = (): string[] =>
+    (registry?.getAvailable() ?? []).map((available) => `${available.provider}/${available.id}`);
+
+  async function applySuggestSettings(next: SuggestSettings, ctx: ExtensionContext): Promise<void> {
+    if (suggestPath === undefined) return;
+    try {
+      saveSuggestSettings(suggestPath, next);
+    } catch (error) {
+      ctx.ui.notify(
+        `pi-tune could not save ${suggestPath}: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+      return;
+    }
+    suggestSettings = next;
+    suggestion?.applySettings(next);
+    const state = next.enabled
+      ? `Next-step suggestions on · ${next.model === undefined ? "session model" : next.model}`
+      : "Next-step suggestions off";
+    ctx.ui.notify(state, "info");
+  }
+
+  pi.registerCommand("suggest", {
+    description: "Turn next-step suggestions on/off and pick their model",
+    getArgumentCompletions: (prefix) => {
+      const modelPrefix = /^model\s+(\S*)$/.exec(prefix);
+      const candidates = modelPrefix === null ? ["on", "off", "model"] : ["session", ...availableModelIds()];
+      const matches = candidates.filter((candidate) => candidate.startsWith(modelPrefix?.[1] ?? prefix));
+      if (matches.length === 0) return null;
+      return matches.map((match) => ({ value: modelPrefix === null ? match : `model ${match}`, label: match }));
+    },
+    handler: async (args, ctx) => {
+      if (suggestPath === undefined) {
+        ctx.ui.notify("pi-tune: /suggest needs an interactive session", "warning");
+        return;
+      }
+      if (suggestProblem !== undefined) {
+        ctx.ui.notify(suggestProblem, "warning");
+        return;
+      }
+      let command = args.trim();
+      if (command === "") {
+        const choice = await ctx.ui.select("Next-step suggestions", ["On", "Off", "Model…"]);
+        if (choice === "Model…") {
+          const picked = await ctx.ui.select("Suggestion model", ["Session model", ...availableModelIds()]);
+          if (picked === undefined) return;
+          command = `model ${picked === "Session model" ? "session" : picked}`;
+        } else if (choice !== undefined) {
+          command = choice.toLowerCase();
+        } else {
+          return;
+        }
+      }
+      const isModel = (value: string) => {
+        const parsed = parseModelId(value);
+        return parsed !== undefined && ctx.modelRegistry.find(parsed.provider, parsed.id) !== undefined;
+      };
+      const result = suggestCommand(command, suggestSettings ?? { enabled: false }, isModel);
+      if ("error" in result) {
+        ctx.ui.notify(result.error, "error");
+        return;
+      }
+      await applySuggestSettings(result.settings, ctx);
+    },
+  });
+
   async function preview(target: TuneEditor, id: number): Promise<void> {
     const content = target.readPaste(id);
     if (content instanceof Error) {
@@ -110,9 +190,12 @@ export default function (pi: ExtensionAPI) {
     registry = ctx.modelRegistry;
     thinking = pi.getThinkingLevel();
     notify = (message, level) => ctx.ui.notify(message, level);
+    suggestPath = join(getAgentDir(), "pi-tune.json");
+    const loaded = loadSuggestSettings(suggestPath);
+    suggestProblem = loaded.ok ? undefined : loaded.problem;
+    suggestSettings = loaded.ok ? loaded.settings : { enabled: false };
+    if (suggestProblem !== undefined) ctx.ui.notify(suggestProblem, "warning");
     suggestion = new Suggestion({
-      enabled: SUGGEST_ENABLED,
-      modelSetting: SUGGEST_MODEL,
       complete: completeSuggestion,
       findModel: (provider, id) => ctx.modelRegistry.find(provider, id),
       sessionModel: () => chatModel,
@@ -122,6 +205,7 @@ export default function (pi: ExtensionAPI) {
       notify: (message, level) => ctx.ui.notify(message, level),
     });
     suggestion.startSession();
+    suggestion.applySettings(suggestSettings);
     currentTheme = () => ctx.ui.theme;
     openPreviewModal = (id, content) =>
       ctx.ui.custom<PastePreviewAction | undefined>(
@@ -156,6 +240,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     suggestion?.discard();
     suggestion = undefined;
+    suggestPath = undefined;
+    suggestSettings = undefined;
+    suggestProblem = undefined;
     notify = undefined;
     currentTheme = undefined;
     openPreviewModal = undefined;
