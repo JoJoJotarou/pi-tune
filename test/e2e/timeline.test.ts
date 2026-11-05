@@ -159,6 +159,34 @@ test("the rail ticks jump between prompts", { timeout: 180_000 }, async () => {
   }
 });
 
+test("a tick still jumps to its prompt after a click expands a tool block above it", { timeout: 180_000 }, async () => {
+  const withTool: Scenario = {
+    files: { "README.md": "# demo\n" },
+    turns: [
+      [{ tool: "bash", args: { command: "seq -f 'tool line %g' 1 40" } }],
+      ...questions.map((_, i) => [{ text: answer(i + 1) }]),
+    ],
+  };
+  const pi = await startPi({ scenario: withTool, cols, rows, tune: true, settings });
+  try {
+    await runTurns(pi);
+    const marks = railMarks(pi);
+    assert.equal(marks.ticks.length, questions.length, pi.screen().join("\n"));
+
+    pi.click(cols - 1, marks.ticks[0]);
+    await waitForRow(pi, "first question", [0, 1]);
+    // The output unfolds on screen and pushes every later prompt down. Unlike ctrl+o, which also adds a notice to
+    // the chat, a click changes only heights.
+    pi.click(10, rowOf(pi, "bash seq"));
+    await pi.waitFor("tool line 10");
+
+    pi.click(cols - 1, marks.ticks[2]);
+    await waitForRow(pi, "third question", [0, 1]);
+  } finally {
+    await pi.close();
+  }
+});
+
 test("many prompts stack one tick each", { timeout: 180_000 }, async () => {
   const many: Scenario = {
     files: { "README.md": "# demo\n" },

@@ -12,6 +12,7 @@ import {
   jumpTo,
   type Prompt,
   type ScrollableTui,
+  type Transcript,
   transcriptViewportHeight,
   transcriptWidth,
 } from "../internals/transcript.ts";
@@ -258,6 +259,8 @@ export class TimelineRail implements Component {
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   /** Layout computed by `visible()` (or by the last render) and reused by the next render in the same frame. */
   private layoutCache: Layout | undefined;
+  /** The last walk of the chat, reused until the transcript's shape changes. */
+  private transcript: Transcript | undefined;
 
   constructor(
     tui: ScrollableTui,
@@ -275,11 +278,12 @@ export class TimelineRail implements Component {
   }
 
   private layout(): Layout | undefined {
-    const transcript = collectPrompts(this.tui);
+    const transcript = collectPrompts(this.tui, this.transcript);
     if (transcript instanceof Error) {
       this.disable(transcript);
       return undefined;
     }
+    this.transcript = transcript;
     const height = transcriptViewportHeight(this.tui);
     if (height instanceof Error) {
       this.disable(height);
