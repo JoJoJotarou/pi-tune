@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -43,8 +43,9 @@ interface Harness {
   drawerLines(width?: number): string[];
 }
 
-function harness(): Harness {
+function harness(setup?: (dir: string) => void): Harness {
   const dir = mkdtempSync(join(tmpdir(), "pi-tune-btw-"));
+  setup?.(dir);
   const notified: Notice[] = [];
   const modes: boolean[] = [];
   const stored: StoredTurn[] = [];
@@ -241,4 +242,16 @@ test("shutdown aborts the pending question", async () => {
   h.side.resolvePrompt();
   await flush();
   assert.equal(h.stored.length, 0);
+});
+
+test("start reports an unreadable rules file once instead of throwing", async () => {
+  const h = harness((dir) => mkdirSync(join(dir, "pi-tune.json")));
+  assert.equal(h.notified.length, 1);
+  assert.equal(h.notified[0].level, "warning");
+  assert.match(h.notified[0].message, /btw tools use the defaults: .*pi-tune\.json could not be read/);
+
+  await h.session.runBtwCommand("what is pi?", h.ctx);
+  await flush();
+  assert.equal(h.notified.length, 1);
+  assert.equal(h.side.prompts.length, 1);
 });

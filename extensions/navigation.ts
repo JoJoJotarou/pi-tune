@@ -1,7 +1,7 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { asScrollable, collectPrompts, jumpTo, type ScrollableTui } from "../src/internals/transcript.ts";
 import { promptLabel, RAIL_WIDTH, TimelineHoverCard, TimelineRail } from "../src/navigation/timeline.ts";
-import { RAIL_CHANNEL } from "../src/shared/rail.ts";
+import { RAIL_CHANNEL } from "../src/shared/channels.ts";
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;

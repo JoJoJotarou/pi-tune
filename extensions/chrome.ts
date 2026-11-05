@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { createChromeSession } from "../src/chrome/session.ts";
 import { editorHasFocus } from "../src/internals/focus.ts";
-import { BTW_MODE_CHANNEL } from "../src/shared/btw.ts";
+import { BTW_MODE_CHANNEL, EDITOR_READY_CHANNEL, EDITOR_STASH_CHANNEL } from "../src/shared/channels.ts";
 
 export default function (pi: ExtensionAPI) {
   const session = createChromeSession({
@@ -15,8 +15,8 @@ export default function (pi: ExtensionAPI) {
     editorFocused: (tui) => editorHasFocus(tui),
   });
 
-  pi.events.on("pi-tune:editor-ready", () => session.editorReady());
-  pi.events.on("pi-tune:editor-stash", (held) => session.editorStash(held === true));
+  pi.events.on(EDITOR_READY_CHANNEL, () => session.editorReady());
+  pi.events.on(EDITOR_STASH_CHANNEL, (held) => session.editorStash(held === true));
   pi.events.on(BTW_MODE_CHANNEL, (open) => session.btwMode(open === true));
   pi.on("agent_start", () => session.agentStart());
   pi.on("turn_start", () => session.turnStart());

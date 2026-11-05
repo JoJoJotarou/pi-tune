@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
-import { RAIL_CHANNEL } from "../src/shared/rail.ts";
+import { RAIL_CHANNEL } from "../src/shared/channels.ts";
 import { setRailCoveredColumns } from "../src/tools/rail.ts";
 import { toolRenderers } from "../src/tools/renderers.ts";
 import { clearWriteRecords, recordWriteTarget } from "../src/tools/write.ts";
