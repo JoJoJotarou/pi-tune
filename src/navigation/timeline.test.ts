@@ -273,6 +273,26 @@ test("reports the covered columns, once per change, and clears them when the rai
   assert.deepEqual(published, [2, 0]);
 });
 
+test("frames that leave the transcript's shape alone do not walk the chat again", () => {
+  let renders = 0;
+  const counted = {
+    render: () => {
+      renders++;
+      return ["answer"];
+    },
+    invalidate: () => {},
+  };
+  const { rail } = railWith([...conversation(), counted]);
+
+  for (let frame = 0; frame < 3; frame++) {
+    assert.equal(rail.visible(), true);
+    rail.render(2);
+  }
+  rail.handleMouse(mouse({ type: "move", button: "none", y: 0 }));
+
+  assert.equal(renders, 1);
+});
+
 test("the rail is hidden with a single prompt", () => {
   const { rail } = railWith([new UserMessageComponent("only question")]);
 

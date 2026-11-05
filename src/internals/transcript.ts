@@ -10,6 +10,8 @@ import { type Component, ScrollView, type TUI } from "@earendil-works/pi-tui";
  * - The private `layoutRoot` has the primary `ScrollView` around the document among its children. The
  *   document renders at that view's content width, a column narrower than the terminal while the scrollbar
  *   is always shown, and the view's `viewportHeight` is the number of transcript rows on screen.
+ * - That view's private `contentHeight` is the document's height from the layout pass of the frame being drawn;
+ *   overlays' `visible` gates run after that pass.
  * - User prompts are `UserMessageComponent` children of the chat; the prompt text is the private `text` field.
  *
  * Every shape is checked at runtime. A mismatch returns an `Error` so the caller can disable the feature.
@@ -23,6 +25,24 @@ export type ScrollableTui = TUI & {
 export interface Prompt {
   row: number;
   text: string;
+}
+
+/**
+ * Prompts move only when the width changes, a child's height changes (which changes the content height), or the chat
+ * gains or loses children; a rebuilt chat also ends in a new child. Two height changes that cancel out within one
+ * frame go unnoticed until the next change.
+ */
+interface TranscriptKey {
+  width: number;
+  contentHeight: number;
+  count: number;
+  last: Component | undefined;
+}
+
+export interface Transcript {
+  prompts: Prompt[];
+  total: number;
+  key: TranscriptKey;
 }
 
 function isComponent(value: unknown): value is Component {
@@ -57,9 +77,17 @@ export function transcriptWidth(tui: TUI): number | Error {
   return view instanceof Error ? view : view.getContentWidth(tui.terminal.columns);
 }
 
-export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } | Error {
-  const width = transcriptWidth(tui);
-  if (width instanceof Error) return width;
+function sameKey(a: TranscriptKey, b: TranscriptKey): boolean {
+  return a.width === b.width && a.contentHeight === b.contentHeight && a.count === b.count && a.last === b.last;
+}
+
+/** Walking the chat renders every child, so pass the previous result to get it back while its key still holds. */
+export function collectPrompts(tui: TUI, previous?: Transcript): Transcript | Error {
+  const view = transcriptView(tui);
+  if (view instanceof Error) return view;
+  const width = view.getContentWidth(tui.terminal.columns);
+  const contentHeight = (view as unknown as { contentHeight?: unknown }).contentHeight;
+  if (typeof contentHeight !== "number") return new Error("transcript scroll view has no content height");
   const root = childrenOf(tui);
   if (!root) return new Error("TUI root has no component children");
   const document = childrenOf(root[0]);
@@ -70,6 +98,8 @@ export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } |
   const [header, resources, chat] = document;
   const chatChildren = childrenOf(chat);
   if (!chatChildren) return new Error("chat has no component children");
+  const key = { width, contentHeight, count: chatChildren.length, last: chatChildren.at(-1) };
+  if (previous && sameKey(previous.key, key)) return previous;
 
   let row = header.render(width).length + resources.render(width).length;
   const prompts: Prompt[] = [];
@@ -81,7 +111,7 @@ export function collectPrompts(tui: TUI): { prompts: Prompt[]; total: number } |
     }
     row += child.render(width).length;
   }
-  return { prompts, total: row };
+  return { prompts, total: row, key };
 }
 
 /** Transcript rows on screen, as laid out for the frame being drawn. */

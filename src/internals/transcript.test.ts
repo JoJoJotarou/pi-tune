@@ -10,7 +10,7 @@ import {
   type TUI,
   VStack,
 } from "@earendil-works/pi-tui";
-import { asScrollable, collectPrompts } from "./transcript.ts";
+import { asScrollable, collectPrompts, type Transcript } from "./transcript.ts";
 
 initTheme("dark", false);
 
@@ -72,6 +72,54 @@ test("collectPrompts reports a TUI without a transcript scroll view", () => {
 
   assert.ok(result instanceof Error);
   assert.match(result.message, /no transcript scroll view/);
+});
+
+test("collectPrompts reports a scroll view without a content height", () => {
+  const view = new ScrollView(new Container(), { primary: true });
+  Object.defineProperty(view, "contentHeight", { value: undefined });
+  const tui = { children: [], layoutRoot: new VStack([view]), terminal: { columns: 40, rows: 30 } } as unknown as TUI;
+
+  const result = collectPrompts(tui);
+
+  assert.ok(result instanceof Error);
+  assert.match(result.message, /no content height/);
+});
+
+test("collectPrompts reuses the previous walk until a chat child, the width or the content height changes", () => {
+  let answerLines = 1;
+  const chat = new Container();
+  chat.addChild(new UserMessageComponent("first"));
+  chat.addChild({ render: () => Array.from({ length: answerLines }, () => "answer"), invalidate() {} });
+  chat.addChild(new UserMessageComponent("second"));
+  const document = new Container();
+  for (const child of [new Container(), new Container(), chat]) document.addChild(child);
+  const view = new ScrollView(document, { primary: true });
+  const terminal = { columns: 40, rows: 30 };
+  const tui = { children: [document], layoutRoot: new VStack([view]), terminal } as unknown as TUI;
+  // Pi lays the document out before the overlays read it.
+  const layOut = () => view.updateLayout(document.render(view.getContentWidth(terminal.columns)).length, 30, () => {});
+  const collect = (previous?: Transcript) => {
+    const result = collectPrompts(tui, previous);
+    assert.ok(!(result instanceof Error));
+    return result;
+  };
+
+  layOut();
+  const first = collect();
+  assert.equal(collect(first), first);
+
+  answerLines = 3;
+  layOut();
+  const taller = collect(first);
+  assert.equal(taller.prompts[1].row, first.prompts[1].row + 2);
+  assert.equal(collect(taller), taller);
+
+  chat.addChild(new UserMessageComponent("third"));
+  const added = collect(taller);
+  assert.equal(added.prompts.length, 3);
+
+  terminal.columns = 30;
+  assert.notEqual(collect(added), added);
 });
 
 test("asScrollable ignores a TUI without scrollBy", () => {
