@@ -339,3 +339,43 @@ test("the rail stays centered on the transcript while the editor grows", { timeo
     await pi.close();
   }
 });
+
+// Session replacement replaces the extension runtime while Pi keeps the mounted overlays, so a rail that still
+// publishes crashes the process.
+test("/new drops the old rail and mounts one for the new session", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true, session: true, settings });
+  try {
+    await runTurns(pi);
+    await pi.waitFor("▴");
+
+    pi.type("/new\r");
+    await pi.waitForGone("▴");
+
+    pi.type("after new one\r");
+    await pi.waitFor("answer 1 line 20");
+    pi.type("after new two\r");
+    await pi.waitFor("answer 2 line 20");
+    await pi.waitFor("▴");
+  } finally {
+    await pi.close();
+  }
+});
+
+test("/reload keeps the rail usable", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, cols, rows, tune: true, settings });
+  try {
+    await runTurns(pi);
+    await pi.waitFor("▴");
+
+    pi.type("/reload\r");
+    await pi.waitFor("Reloaded keybindings");
+
+    pi.type("/timeline\r");
+    await pi.waitFor("Prompts in this session");
+    pi.press("escape");
+    await pi.waitForGone("Prompts in this session");
+    await pi.waitFor("▴");
+  } finally {
+    await pi.close();
+  }
+});

@@ -255,6 +255,7 @@ export class TimelineRail implements Component {
   private readonly publish: (covered: number) => void;
   private hovered: TimelineHit | undefined;
   private disabled = false;
+  private disposed = false;
   private covered = 0;
   private hoverTimer: ReturnType<typeof setTimeout> | undefined;
   /** Layout computed by `visible()` (or by the last render) and reused by the next render in the same frame. */
@@ -305,8 +306,20 @@ export class TimelineRail implements Component {
     this.onError(error);
   }
 
+  /**
+   * Session replacement makes the API this rail publishes on stale, while Pi keeps rendering the mounted overlay,
+   * so the rail must go inert before the next frame.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.layoutCache = undefined;
+    this.transcript = undefined;
+    this.resetHover();
+  }
+
   /** Eligibility, also used as the overlay's `visible` gate so Pi's own scrollbar works while the rail is off. */
   visible(): boolean {
+    if (this.disposed) return false;
     if (this.disabled) {
       this.publishCovered(0);
       return false;
@@ -389,7 +402,7 @@ export class TimelineRail implements Component {
   }
 
   render(width: number): string[] {
-    if (this.disabled) return [];
+    if (this.disposed || this.disabled) return [];
     const layout = this.layoutCache ?? this.layout();
     this.layoutCache = undefined;
     if (!layout) return [];
@@ -413,7 +426,7 @@ export class TimelineRail implements Component {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (this.disabled) return undefined;
+    if (this.disposed || this.disabled) return undefined;
     // A wheel over the rail scrolls the transcript natively.
     if (event.type === "wheel") {
       if (this.hovered) this.clearHover();

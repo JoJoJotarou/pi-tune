@@ -1,10 +1,13 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { OverlayHandle } from "@earendil-works/pi-tui";
 import { asScrollable, collectPrompts, jumpTo, type ScrollableTui } from "../src/internals/transcript.ts";
 import { promptLabel, RAIL_WIDTH, TimelineHoverCard, TimelineRail } from "../src/navigation/timeline.ts";
 import { RAIL_CHANNEL } from "../src/shared/channels.ts";
 
 export default function (pi: ExtensionAPI) {
   let tuiRef: ScrollableTui | undefined;
+  let railRef: TimelineRail | undefined;
+  let overlays: OverlayHandle[] = [];
   let timelineDisabledReason: string | undefined;
   let timelineShown = false;
 
@@ -42,13 +45,16 @@ export default function (pi: ExtensionAPI) {
             card,
           );
           // The rail only exists while it has something to show; Pi's own scrollbar works otherwise.
-          tui.showOverlay(rail, {
-            anchor: "top-right",
-            width: RAIL_WIDTH,
-            nonCapturing: true,
-            visible: () => rail.visible(),
-          });
-          tui.showOverlay(card, card.options);
+          overlays = [
+            tui.showOverlay(rail, {
+              anchor: "top-right",
+              width: RAIL_WIDTH,
+              nonCapturing: true,
+              visible: () => rail.visible(),
+            }),
+            tui.showOverlay(card, card.options),
+          ];
+          railRef = rail;
         }
       }
 
@@ -56,8 +62,16 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", () => {
     notify = undefined;
+    // Pi keeps rendering these overlays until the process exits, but the runtime they publish on is replaced, so
+    // drop the rail and the overlays before Pi draws another frame.
+    railRef?.dispose();
+    railRef = undefined;
+    for (const overlay of overlays) overlay.hide();
+    overlays = [];
+    tuiRef = undefined;
+    timelineShown = false;
   });
 
   pi.registerCommand("timeline", {

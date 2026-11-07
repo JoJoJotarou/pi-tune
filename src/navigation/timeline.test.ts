@@ -273,6 +273,25 @@ test("reports the covered columns, once per change, and clears them when the rai
   assert.deepEqual(published, [2, 0]);
 });
 
+test("a disposed rail stops drawing and publishing, so a replaced session cannot be reported to", () => {
+  const published: number[] = [];
+  const tui = fakeTui(conversation());
+  const rail = new TimelineRail(
+    tui as never,
+    () => testTheme("dark"),
+    () => {},
+    (covered) => published.push(covered),
+  );
+
+  assert.equal(rail.visible(), true);
+  rail.dispose();
+
+  assert.equal(rail.visible(), false);
+  assert.deepEqual(rail.render(2), []);
+  assert.equal(rail.handleMouse(mouse({ type: "move", button: "none", y: 0 })), undefined);
+  assert.deepEqual(published, [2]);
+});
+
 test("frames that leave the transcript's shape alone do not walk the chat again", () => {
   let renders = 0;
   const counted = {
