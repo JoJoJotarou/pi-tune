@@ -43,12 +43,45 @@ const FAILURE_LINES = 3;
 
 interface CompactContext {
   state: Record<string, unknown>;
+  invalidate: () => void;
   executionStarted: boolean;
   expanded: boolean;
   isPartial: boolean;
   isError: boolean;
   durationMs: number | undefined;
   outputPad: number;
+}
+
+/** How often a running row's clock advances, the same cadence as the status line. */
+const CLOCK_MS = 250;
+
+/** The row's clock, kept in Pi's renderer state: Pi only fills `durationMs` once the call ends. */
+interface RowClock {
+  startedAt?: number;
+  timer?: ReturnType<typeof setInterval>;
+}
+
+/** Start the clock once the tool executes; redraws the row every {@link CLOCK_MS} while it runs. */
+function startClock(context: CompactContext): void {
+  const clock = context.state as RowClock;
+  if (clock.startedAt !== undefined) return;
+  clock.startedAt = Date.now();
+  clock.timer = setInterval(() => context.invalidate(), CLOCK_MS);
+  // A running tool must not keep the process alive on its own; Bun's timers may lack `unref`.
+  clock.timer.unref?.();
+}
+
+function stopClock(context: CompactContext): void {
+  const clock = context.state as RowClock;
+  if (clock.timer === undefined) return;
+  clearInterval(clock.timer);
+  clock.timer = undefined;
+}
+
+/** Milliseconds since the tool started, or `undefined` before it started or for a row that never started. */
+function elapsedMs(context: CompactContext): number | undefined {
+  const startedAt = (context.state as RowClock).startedAt;
+  return typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : undefined;
 }
 
 /** Body lines at a given content width; the shell paints and indents them. */
@@ -174,6 +207,8 @@ class HeaderComponent implements Component {
   private readonly text: HeaderText;
   private readonly theme: Theme;
   private readonly context: CompactContext;
+  /** The running row's elapsed time, set by the box before each render so the cache key and the line agree. */
+  liveMs: number | undefined;
 
   constructor(text: HeaderText, theme: Theme, context: CompactContext) {
     this.text = text;
@@ -184,17 +219,19 @@ class HeaderComponent implements Component {
   render(width: number): string[] {
     const meta = this.context.state.meta;
     const summary = this.context.state.summary;
-    // Expanded bash ends with the timer line Pi's own body draws, so its duration is on that line only.
-    const timerInBody = this.context.expanded && this.text.name === "bash";
+    const status = toolStatus(this.context);
+    // Expanded bash ends with the timer line Pi's own body draws, so its final duration is on that line only.
+    // While running there is no such line yet, and the header carries the live clock.
+    const timerInBody = this.context.expanded && this.text.name === "bash" && status !== "running";
     // The timeline rail sits on top of the transcript's right columns: keep them blank so the counts stay whole.
     const covered = railCoveredColumns();
     const lines = renderHeader(
       {
-        status: toolStatus(this.context),
+        status,
         name: this.text.name,
         summary: typeof summary === "string" ? summary : this.text.summary,
         meta: typeof meta === "string" ? meta : undefined,
-        durationMs: timerInBody ? undefined : this.context.durationMs,
+        durationMs: timerInBody ? undefined : (this.liveMs ?? this.context.durationMs),
         nameColor: this.text.nameColor,
         summaryColor: this.text.summaryColor,
         expanded: this.context.expanded,
@@ -274,7 +311,18 @@ class HeaderBoxComponent implements Component {
   render(width: number): string[] {
     const { outputPad, expanded, durationMs, state } = this.context;
     const status = toolStatus(this.context);
-    const inputs = [width, railCoveredColumns(), outputPad, status, expanded, durationMs, state.meta, state.summary];
+    const liveMs = status === "running" ? elapsedMs(this.context) : undefined;
+    this.header.liveMs = liveMs;
+    const inputs = [
+      width,
+      railCoveredColumns(),
+      outputPad,
+      status,
+      expanded,
+      liveMs ?? durationMs,
+      state.meta,
+      state.summary,
+    ];
     return this.cache.get(inputs, () => {
       const box = new Box(outputPad, 1, statusBackground(status, this.theme));
       box.addChild(this.header);
@@ -371,10 +419,13 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
     ...base,
     renderShell: "self",
     renderCall: (args, theme, context) => {
+      if (context.executionStarted && context.isPartial) startClock(context);
+      else stopClock(context);
       const text = headerText(toolName, args, context);
       return new HeaderBoxComponent(new HeaderComponent(text, theme, context), theme, context);
     },
     renderResult: (result, options, theme, context) => {
+      if (!options.isPartial) stopClock(context);
       const output = resultText(result);
       const expanded = options.expanded;
 

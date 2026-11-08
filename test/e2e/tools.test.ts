@@ -124,6 +124,33 @@ test("one-line tool calls hide output until expanded", { timeout: 180_000 }, asy
   });
 });
 
+test("a running tool counts its elapsed time on the header", { timeout: 180_000 }, async () => {
+  const scenario: Scenario = {
+    files,
+    turns: [[{ tool: "bash", args: { command: "sleep 3" } }], [{ text: "Slept." }]],
+  };
+  const pi = await startPi({ scenario, tune: true });
+  await closeAfter(pi, async () => {
+    const header = () => rows(pi.screen()).find((row) => row.includes("sleep 3")) ?? "";
+    const seconds = (row: string): number | undefined => {
+      const match = /(\d+(?:\.\d+)?)s$/.exec(row);
+      return match === null ? undefined : Number(match[1]);
+    };
+
+    pi.type("wait\r");
+    await pi.waitFor(/● bash sleep 3\s+\d+\.\ds/);
+    const first = seconds(header());
+    assert.notEqual(first, undefined, header());
+    await new Promise((done) => setTimeout(done, 1200));
+    const second = seconds(header());
+    assert.notEqual(second, undefined, header());
+    assert.ok(second !== undefined && first !== undefined && second > first, `${first}s then ${second}s`);
+
+    await pi.waitFor("Slept.");
+    assert.match(header(), /^✓ bash sleep 3\s+\d+\.\ds$/, header());
+  });
+});
+
 test("collapsed tool blocks in light theme", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: reference, tune: true, settings: { theme: "light" } });
   await closeAfter(pi, async () => {

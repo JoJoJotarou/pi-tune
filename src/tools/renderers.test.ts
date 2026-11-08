@@ -694,13 +694,46 @@ test("render cache: a header rerenders when a running call finishes", () => {
   const ctx = context({ args: { command: "sleep 1" }, isPartial: true });
   const header = headerFor("bash", { command: "sleep 1" }, ctx);
   const running = header.render(80);
-  assert.equal(plain(running)[1].trim(), "● bash sleep 1");
+  assert.match(plain(running)[1].trim(), /^● bash sleep 1\s+\d+\.\ds$/);
   assertPainted(running, "toolPendingBg");
 
   ctx.isPartial = false;
   const done = header.render(80);
   assert.equal(plain(done)[1].trim(), "✓ bash sleep 1");
   assertPainted(done, "toolSuccessBg");
+});
+
+test("a running call shows its elapsed time on the right and keeps counting", () => {
+  const ctx = context({ args: { command: "make" }, isPartial: true });
+  ctx.state.startedAt = Date.now() - 4200;
+  const first = plain(callLines("bash", { command: "make" }, ctx))[1].trim();
+  assert.match(first, /^● bash make\s+4\.2s$/);
+
+  ctx.state.startedAt = Date.now() - 12_000;
+  const later = plain(callLines("bash", { command: "make" }, ctx))[1].trim();
+  assert.match(later, /^● bash make\s+12s$/);
+});
+
+test("renderCall starts the row's clock only once the tool executes", () => {
+  const waiting = context({ args: { command: "make" }, executionStarted: false });
+  headerFor("bash", { command: "make" }, waiting);
+  assert.equal(waiting.state.startedAt, undefined);
+
+  const running = context({ args: { command: "make" }, isPartial: true });
+  headerFor("bash", { command: "make" }, running);
+  assert.equal(typeof running.state.startedAt, "number");
+});
+
+test("an expanded running bash keeps its clock in the header until the body has a timer line", () => {
+  const ctx = context({ args: { command: "make" }, isPartial: true, expanded: true, durationMs: undefined });
+  ctx.state.startedAt = Date.now() - 2000;
+  const running = plain(callLines("bash", { command: "make" }, ctx)).at(-2) ?? "";
+  assert.match(running.trim(), /2\.0s$/);
+
+  ctx.isPartial = false;
+  ctx.durationMs = 2000;
+  const done = plain(callLines("bash", { command: "make" }, ctx)).at(-2) ?? "";
+  assert.doesNotMatch(done, /2\.0s/, done);
 });
 
 test("render cache: a header rerenders when the call fails", () => {
