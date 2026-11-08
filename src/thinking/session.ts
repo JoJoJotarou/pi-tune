@@ -39,7 +39,9 @@ export interface ThinkingSession {
 export function createThinkingSession(host: ThinkingHost): ThinkingSession {
   const timing = createThinkingTiming();
   // context.isStreaming covers the whole message; thinking settles earlier, so track its own
-  // boundary. Events after thinking_end close the run for backends that never send thinking_end.
+  // boundary. Only thinking_end settles it: some backends (DeepSeek over an OpenAI-compatible
+  // stream) send thinking_end after the next block has started, and the run's measured time is
+  // still growing until then. A summary shown in between would change under the reader.
   let thinkingStreaming = false;
 
   // Per-block runs, keyed by contentIndex. The renderer joins consecutive thinking blocks into
@@ -121,8 +123,9 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
         case "text_delta":
         case "toolcall_start":
         case "toolcall_delta": {
+          // Close the run for the backends that never send thinking_end, but keep showing the
+          // window: until thinking_end the measured time is not final.
           closeOpenRuns(host.now());
-          thinkingStreaming = false;
           break;
         }
       }

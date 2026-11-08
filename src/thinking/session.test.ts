@@ -39,7 +39,7 @@ function harness(): Harness {
 }
 
 function thinkingEvent(
-  type: "thinking_start" | "thinking_delta" | "thinking_end" | "text_start",
+  type: "thinking_start" | "thinking_delta" | "thinking_end" | "text_start" | "toolcall_start",
   fields: { contentIndex?: number; delta?: string; content?: string } = {},
 ): MessageUpdateEvent {
   return {
@@ -64,7 +64,7 @@ function transform(session: ThinkingSession, markdown: string, width = 80): stri
   return stripTerminalSequences(session.transformThinking(markdown, context));
 }
 
-test("a closed run renders its measured summary", () => {
+test("a run without thinking_end keeps the rolling window until message_end", () => {
   const h = harness();
   h.session.start(h.ctx);
   h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
@@ -72,7 +72,31 @@ test("a closed run renders its measured summary", () => {
   h.now(3_200);
   h.session.messageUpdate(thinkingEvent("text_start", { contentIndex: 1 }));
 
+  assert.match(transform(h.session, "plan the answer"), /^◆ Thinking/);
+
+  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "text" }]));
   assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 2.2s (4 tokens)");
+});
+
+test("a late thinking_end never shows a stale summary first", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
+  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "plan the answer" }));
+  h.now(1_500);
+  h.session.messageUpdate(thinkingEvent("toolcall_start", { contentIndex: 1 }));
+
+  // DeepSeek-style backends send thinking_end only at the end of the message; the run is not
+  // final yet, so no duration may be claimed.
+  assert.match(transform(h.session, "plan the answer"), /^◆ Thinking/);
+  assert.doesNotMatch(transform(h.session, "plan the answer"), /Thought for/);
+
+  h.now(2_200);
+  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "plan the answer" }));
+  assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 1.2s (4 tokens)");
+
+  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "toolCall" }]));
+  assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 1.2s (4 tokens)");
 });
 
 test("other markdown passes through untouched", () => {
@@ -96,7 +120,7 @@ test("start resets the timing table and hydrates from the session entries", () =
   const h = harness();
   h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
   h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "stale" }));
-  h.session.messageUpdate(thinkingEvent("text_start", { contentIndex: 1 }));
+  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "stale" }));
   assert.match(transform(h.session, "stale"), /Thought for/);
 
   h.entries.push({
