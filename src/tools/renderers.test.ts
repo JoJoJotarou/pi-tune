@@ -6,6 +6,7 @@ import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-
 import { testTheme } from "../../test/theme.ts";
 import { setRailCoveredColumns } from "./rail.ts";
 import { toolRenderers } from "./renderers.ts";
+import { clearRuns, setHeadExpanded, setRunPlan, toggleCallExpanded } from "./run.ts";
 import { rememberWriteRecord } from "./write.ts";
 
 const theme = testTheme();
@@ -839,4 +840,278 @@ test("render cache: a native body change Pi is told about reaches the screen", (
   nativeContext?.invalidate();
   const after = plain(shell.render(80)).join("\n");
   assert.match(after, /AFTER/, after);
+});
+
+/** A read row through Pi's own shell, with args and a result already in. */
+function readRow(
+  id: string,
+  path: string,
+  lines: number,
+  options: { isError?: boolean; durationMs?: number } = {},
+): ToolExecutionComponent {
+  const renderers = toolRenderers("read", () => baseRenderers);
+  assert.ok(renderers);
+  const component = new ToolExecutionComponent(
+    "read",
+    id,
+    { path },
+    { outputPad: 1 },
+    renderers,
+    { requestRender: () => {} } as never,
+    "/tmp",
+  );
+  component.updateArgs({ path } as never);
+  component.markExecutionStarted();
+  const text = Array.from({ length: lines }, (_, index) => `line ${index + 1}`).join("\n");
+  component.updateResult({
+    content: [{ type: "text", text }],
+    details: undefined,
+    isError: options.isError ?? false,
+    durationMs: options.durationMs,
+  });
+  return component;
+}
+
+function readRun(): ToolExecutionComponent[] {
+  clearRuns();
+  setRunPlan([
+    {
+      headId: "run-head",
+      members: [
+        { id: "run-head", name: "read" },
+        { id: "run-member", name: "read" },
+      ],
+    },
+  ]);
+  return [
+    readRow("run-head", "src/a.ts", 12, { durationMs: 100 }),
+    readRow("run-member", "src/b.ts", 30, { durationMs: 200 }),
+  ];
+}
+
+/** Every line the card drew is painted; Pi's shell adds unpainted spacer rows around the blocks. */
+function assertPaintedCard(lines: string[], token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"): void {
+  const open = bgOpen(token);
+  const content = lines.filter((line) => stripTerminalSequences(line).trim() !== "");
+  assert.ok(content.length > 0, "nothing was rendered");
+  for (const line of content) assert.ok(line.startsWith(open), `not painted with ${token}: ${JSON.stringify(line)}`);
+}
+
+test("a run of two reads collapses into one painted group header and zero member rows", () => {
+  const [head, member] = readRun();
+  const memberLines = member.render(88);
+  assert.deepEqual(memberLines, [], `the member drew rows: ${JSON.stringify(memberLines)}`);
+
+  const lines = plain(head.render(88));
+  const shown = lines.map((line) => line.trim()).filter((line) => line !== "");
+  assert.equal(shown.length, 1);
+  assert.match(shown[0], /^▸ 2 reads\s+0\.\ds$/);
+  assertPaintedCard(head.render(88), "toolSuccessBg");
+});
+
+test("a run opens with its plan, keeps a finished row, and folds after the last", () => {
+  clearRuns();
+  setRunPlan([
+    {
+      headId: "run-head",
+      members: [
+        { id: "run-head", name: "read" },
+        { id: "run-member", name: "grep" },
+      ],
+    },
+  ]);
+  const readRenderers = toolRenderers("read", () => baseRenderers);
+  const grepRenderers = toolRenderers("grep", () => baseRenderers);
+  assert.ok(readRenderers && grepRenderers);
+  const head = new ToolExecutionComponent(
+    "read",
+    "run-head",
+    { path: "src/a.ts" },
+    { outputPad: 1 },
+    readRenderers,
+    { requestRender: () => {} } as never,
+    "/tmp",
+  );
+  const member = new ToolExecutionComponent(
+    "grep",
+    "run-member",
+    { pattern: "TODO", path: "src" },
+    { outputPad: 1 },
+    grepRenderers,
+    { requestRender: () => {} } as never,
+    "/tmp",
+  );
+  const rows = () =>
+    plain(head.render(88))
+      .map((line) => line.trim())
+      .filter((line) => line !== "");
+
+  head.updateArgs({ path: "src/a.ts" } as never);
+  head.markExecutionStarted();
+  member.updateArgs({ pattern: "TODO", path: "src" } as never);
+  head.render(88);
+
+  // Every planned call brings its row: the head is running, the member is still waiting to start.
+  assert.deepEqual(
+    rows().map((line) => line.replace(/\s+\d+\.\ds$/, "")),
+    ["▾ 1 read · 1 search", "● read src/a.ts", '● grep "TODO" in src'],
+  );
+  assertPaintedCard(head.render(88), "toolPendingBg");
+
+  member.markExecutionStarted();
+  member.render(88);
+  head.render(88);
+  assert.equal(rows().length, 3, rows().join("\n"));
+  assert.match(rows()[2], /^● grep "TODO" in src\s+\d+\.\ds$/);
+
+  head.updateResult({
+    content: [{ type: "text", text: "line one\nline two" }],
+    details: undefined,
+    isError: false,
+    durationMs: 100,
+  });
+  head.render(88);
+  // A finished call keeps its row, now with its own result, until the last call is done.
+  assert.equal(rows().length, 3, rows().join("\n"));
+  assert.match(rows()[1], /^✓ read src\/a\.ts\s+2 lines · 0\.1s$/);
+  assert.match(rows()[2], /^● grep "TODO" in src\s+\d+\.\ds$/);
+
+  member.updateResult({
+    content: [{ type: "text", text: "src/a.ts:1: TODO" }],
+    details: undefined,
+    isError: false,
+    durationMs: 200,
+  });
+  member.render(88);
+  const folded = rows();
+  assert.equal(folded.length, 1, folded.join("\n"));
+  assert.match(folded[0], /^▸ 1 read · 1 search\s+\d+\.\ds$/);
+  assertPaintedCard(head.render(88), "toolSuccessBg");
+});
+
+test("a mixed run keeps the card open-colored and counts the failure", () => {
+  clearRuns();
+  setRunPlan([
+    {
+      headId: "run-head",
+      members: [
+        { id: "run-head", name: "read" },
+        { id: "run-member", name: "read" },
+      ],
+    },
+  ]);
+  const head = readRow("run-head", "src/a.ts", 12, { durationMs: 100 });
+  const member = readRow("run-member", "src/b.ts", 30, { isError: true, durationMs: 200 });
+
+  // Folded, the group is just its header: one call did not turn the whole card red.
+  const folded = plain(head.render(88))
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  assert.equal(folded.length, 1, folded.join("\n"));
+  assert.match(folded[0], /^▸ 2 reads · 1 failed: src\/b\.ts\s+0\.\ds$/);
+  assertPaintedCard(head.render(88), "toolSuccessBg");
+  assert.deepEqual(plain(member.render(88)), []);
+
+  // Open, only the failed call's row carries the error color.
+  setHeadExpanded("run-head", true);
+  const raw = head.render(88);
+  const lines = plain(raw).map((line) => line.trim());
+  const header = lines.findIndex((line) => /^▾ 2 reads · 1 failed: src\/b\.ts/.test(line));
+  const failedRow = lines.findIndex((line) => /^✗ read src\/b\.ts\s+0\.2s$/.test(line));
+  const okRow = lines.findIndex((line) => /^✓ read src\/a\.ts\s+12 lines · 0\.1s$/.test(line));
+  assert.ok(header >= 0 && failedRow >= 0 && okRow >= 0, lines.join("\n"));
+  assert.ok(raw[header].includes(theme.fg("error", "1 failed: src/b.ts")), "the failure is not red");
+  assert.ok(raw[header].startsWith(bgOpen("toolSuccessBg")), "the header is not the open color");
+  assert.ok(raw[failedRow].startsWith(bgOpen("toolErrorBg")), "the failed row is not red");
+  assert.ok(raw[okRow].startsWith(bgOpen("toolSuccessBg")), "the successful row is not green");
+  assert.ok(
+    lines.some((line) => /line 30$/.test(line)),
+    `the error tail is missing:\n${lines.join("\n")}`,
+  );
+});
+
+test("an opened run draws every member's row inside the same card", () => {
+  const [head, member] = readRun();
+  setHeadExpanded("run-head", true);
+
+  const shown = plain(head.render(88))
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  // Open, the marker is the fold control `▾`; the member rows carry the per-call state.
+  assert.match(shown[0], /^▾ 2 reads\s+0\.\ds$/);
+  assert.ok(
+    shown.some((line) => /^✓ read src\/a\.ts\s+12 lines · 0\.1s$/.test(line)),
+    `the head's own row is missing:\n${shown.join("\n")}`,
+  );
+  assert.ok(
+    shown.some((line) => /^✓ read src\/b\.ts\s+30 lines · 0\.2s$/.test(line)),
+    `the member's row is missing:\n${shown.join("\n")}`,
+  );
+  // Header and rows are adjacent: one continuous card, with no Pi spacer between them.
+  assert.equal(shown.length, 3, shown.join("\n"));
+  assert.deepEqual(plain(member.render(88)), []);
+});
+
+test("a member's body opens inside the card", () => {
+  const [head] = readRun();
+  setHeadExpanded("run-head", true);
+  toggleCallExpanded("run-member");
+
+  const shown = plain(head.render(88))
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  const row = shown.findIndex((line) => line.includes("read src/b.ts"));
+  assert.ok(row >= 0, shown.join("\n"));
+  assert.match(shown[row + 1] ?? "", /^BASE RESULT$/, shown.join("\n"));
+  // The other rows keep their bodies folded.
+  assert.equal(shown.filter((line) => line.includes("BASE RESULT")).length, 1, shown.join("\n"));
+});
+
+test("expanding a run renders every call on its own, exactly as ungrouped", () => {
+  const [head, member] = readRun();
+  head.setExpanded(true);
+  member.setExpanded(true);
+  // Expanded bodies come from the base renderer in this harness; grouping adds nothing.
+  const headLines = plain(head.render(88))
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  assert.ok(
+    headLines.some((line) => /✓ read src\/a\.ts/.test(line) && /12 lines · 0\.1s/.test(line)),
+    headLines.join("\n"),
+  );
+  assert.ok(
+    headLines.some((line) => line.includes("BASE RESULT")),
+    headLines.join("\n"),
+  );
+  const memberLines = plain(member.render(88))
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  assert.ok(
+    memberLines.some((line) => /✓ read src\/b\.ts/.test(line) && /30 lines · 0\.2s/.test(line)),
+    memberLines.join("\n"),
+  );
+  assert.ok(
+    memberLines.some((line) => line.includes("BASE RESULT")),
+    memberLines.join("\n"),
+  );
+});
+
+test("a group header fits width 40 and keeps the rail columns blank", () => {
+  const [head] = readRun();
+  assertFits(head.render(40), 40);
+  setRailCoveredColumns(3);
+  try {
+    const lines = plain(head.render(60));
+    const content = lines.filter((line) => line.trim() !== "");
+    assert.ok(content.length > 0, "nothing was rendered");
+    const trailing = content[0].length - content[0].trimEnd().length;
+    assert.equal(trailing, 4, `covered columns must stay blank: ${JSON.stringify(content[0])}`);
+    for (const line of content) {
+      const trimmed = line.trimEnd();
+      assert.ok(visibleWidth(trimmed) <= 56, `width 56: ${JSON.stringify(trimmed)}`);
+    }
+  } finally {
+    setRailCoveredColumns(0);
+  }
+  clearRuns();
 });

@@ -239,27 +239,151 @@ const summaries: Scenario = {
   ],
 };
 
-test("collapsed summaries tell what each tool returned", { timeout: 180_000 }, async () => {
-  const pi = await startPi({ scenario: summaries, tune: true, cols: 100, rows: 40, settings: summarySettings });
+test("consecutive read-only calls collapse into one group header", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: summaries, tune: true, cols: 100, rows: 50, settings: summarySettings });
   await closeAfter(pi, async () => {
     pi.type("run it\r");
     await pi.waitFor("Summary done.");
     const lines = rows(pi.screen());
 
-    const expected: [string, RegExp][] = [
-      ["read", /^✓ read README\.md\s+3 lines · /],
-      ["grep", /^✓ grep "TODO" in src\s+4 matches · 2 files · /],
-      ["find", /^✓ find \*\.ts in \.\s+2 files · /],
-      ["ls", /^✓ ls \.\s+1 dir · 1 file · /],
-    ];
-    for (const [name, matcher] of expected) {
-      assert.equal(countRows(lines, matcher), 1, `${name} summary row:\n${lines.join("\n")}`);
+    // The four read-only calls share one row: counts by kind, duration, and no per-call rows.
+    const group = lines.find((line) => /^▸ 1 read · 2 searches · 1 list\s+/.test(line));
+    assert.ok(group, `group header row:\n${lines.join("\n")}`);
+    assert.match(group, /\s+\d+\.\d+s$/, `the header kept result stats: ${group}`);
+    for (const name of ["read README\\.md", 'grep "TODO"', "find \\*\\.ts", "ls \\."]) {
+      assert.equal(countRows(lines, new RegExp(`^✓ ${name}`)), 0, `${name} row leaked:\n${lines.join("\n")}`);
     }
 
     pi.press("ctrl+o");
     await pi.waitFor(/└─ 3 {2}\/\/ TODO: third/);
+    await pi.waitForGone(/▸ 1 read · 2 searches · 1 list/);
     const expanded = rows(pi.screen());
+    for (const matcher of [/^✓ read README\.md/, /^✓ grep "TODO" in src/, /^✓ find \*\.ts in \./, /^✓ ls \./]) {
+      assert.equal(countRows(expanded, matcher), 1, `${matcher} row:\n${expanded.join("\n")}`);
+    }
     assertNoExpandHint(expanded, rowIndex(expanded, /^✓ read README\.md/), rowIndex(expanded, /^Summary done\.$/));
+
+    pi.press("ctrl+o");
+    await pi.waitFor(/▸ 1 read · 2 searches · 1 list/);
+  });
+});
+
+const mixed: Scenario = {
+  files,
+  turns: [
+    [
+      { tool: "read", args: { path: "README.md" } },
+      { tool: "bash", args: { command: "echo hi" } },
+      { tool: "read", args: { path: "README.md" } },
+    ],
+    [{ text: "Mixed done." }],
+  ],
+};
+
+test("a bash call breaks the run of read-only calls", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: mixed, tune: true, cols: 100, rows: 40, settings: summarySettings });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Mixed done.");
+    const lines = rows(pi.screen());
+
+    // Each read stands alone; only a run of two or more merges.
+    assert.equal(countRows(lines, /^✓ read README\.md/), 2, `read rows:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines, /^✓ bash echo hi/), 1, `bash row:\n${lines.join("\n")}`);
+    assert.ok(!lines.some((line) => /^▸ \d+ reads?/.test(line)), `an unexpected group row:\n${lines.join("\n")}`);
+  });
+});
+
+const clickFiles = {
+  "README.md": "# demo\n\nA tiny project.\n",
+  "src/a.ts": "// TODO: first\n// TODO: second\n",
+};
+
+const clickRun: Scenario = {
+  files: clickFiles,
+  turns: [
+    [
+      { tool: "read", args: { path: "README.md" } },
+      { tool: "read", args: { path: "src/a.ts" } },
+    ],
+    [{ text: "Run done." }],
+  ],
+};
+
+test("a group header opens the run, and each row opens its own body", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: clickRun, tune: true, cols: 100, rows: 40 });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    await pi.waitFor("Run done.");
+    assert.equal(countRows(rows(pi.screen()), /^✓ read README\.md/), 0, pi.screen().join("\n"));
+
+    // The painted blank rows above and below the header belong to the group: clicking one opens it,
+    // rather than expanding the head call on its own.
+    const foldedHeader = rowIndex(rows(pi.screen()), /^▸ 2 reads/);
+    assert.ok(foldedHeader > 0, pi.screen().join("\n"));
+    pi.click(3, foldedHeader - 1);
+    await pi.waitFor(/✓ read README\.md/);
+    assert.ok(
+      rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0,
+      `the pad row expanded the head instead of the group:\n${pi.screen().join("\n")}`,
+    );
+    pi.clickText("2 reads");
+    await pi.waitForGone(/✓ read README\.md/);
+
+    pi.clickText("2 reads");
+    await pi.waitFor(/✓ read README\.md/);
+    await pi.waitFor(/✓ read src\/a\.ts/);
+    // The header stays on top while the run is open.
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, pi.screen().join("\n"));
+
+    // A member row opens its own body, and closes it again, without folding the run.
+    pi.clickText("read src/a.ts");
+    await pi.waitFor("TODO: first");
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, "the group header went away");
+    pi.clickText("read src/a.ts");
+    await pi.waitForGone("TODO: first");
+
+    // The head keeps its own row too, next to the header.
+    pi.clickText("read README.md");
+    await pi.waitFor("A tiny project.");
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, "the group header went away");
+
+    pi.clickText("2 reads");
+    await pi.waitForGone(/✓ read README\.md/);
+    assert.equal(countRows(rows(pi.screen()), /^✓ read src\/a\.ts/), 0, pi.screen().join("\n"));
+  });
+});
+
+const liveTokens = Array.from({ length: 30 }, (_, index) => `tok${index + 1}`);
+const livePath = `src/${liveTokens.join("-")}.ts`;
+const liveFold: Scenario = {
+  files: { "README.md": "# demo\n", [livePath]: "line one\n" },
+  turns: [
+    [
+      { tool: "read", args: { path: "README.md" } },
+      { tool: "read", args: { path: livePath } },
+    ],
+    [{ text: "Fold done." }],
+  ],
+  // Slow argument streaming keeps the second call's row in flight long enough to observe.
+  tokensPerSecond: 15,
+};
+
+test("a run opens as the calls stream and folds after the last result", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario: liveFold, tune: true, cols: 100, rows: 40 });
+  await closeAfter(pi, async () => {
+    pi.type("run it\r");
+    // The card opens while the second call's arguments are still streaming: the first call already
+    // has its row, and the run has not folded for the answer.
+    await pi.waitFor(/▾ 2 reads/);
+    await pi.waitFor(/read README\.md/);
+    const during = pi.screen().join("\n");
+    assert.ok(!during.includes("Fold done."), `the card waited for the answer:\n${during}`);
+
+    await pi.waitFor("Fold done.");
+    const folded = pi.screen().join("\n");
+    assert.ok(!folded.includes("read README.md"), `the finished run kept a member row:\n${folded}`);
+    assert.equal(countRows(rows(pi.screen()), /^▸ 2 reads\s+\d+\.\ds$/), 1, folded);
   });
 });
 

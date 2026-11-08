@@ -9,6 +9,7 @@ import type {
   Theme,
   ThemeColor,
   ToolRendererResolver,
+  ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { getLanguageFromPath } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
@@ -24,9 +25,26 @@ import {
   scriptToolNames,
 } from "./codemode.ts";
 import { prepareDiff, previewLines, renderDiffRows } from "./diff.ts";
-import { renderHeader, statusBackground, toolStatus } from "./header.ts";
+import { renderHeader, statusBackground, type ToolStatus, toolStatus } from "./header.ts";
 import { railCoveredColumns } from "./rail.ts";
 import { readMeta, skillLabel } from "./read.ts";
+import {
+  callExpanded,
+  MERGEABLE_TOOLS,
+  memberBody,
+  memberLabel,
+  memberRow,
+  type RunView,
+  recordFacts,
+  registerBody,
+  registerLabel,
+  registerRow,
+  runCountLabel,
+  runHead,
+  runView,
+  setHeadExpanded,
+  toggleCallExpanded,
+} from "./run.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
 import { grepBody, listBody } from "./tree.ts";
 import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
@@ -202,13 +220,36 @@ function headerText(toolName: string, rawArgs: unknown, context: { cwd: string; 
   return { name: toolName, summary: summaryFor(toolName, rawArgs) };
 }
 
+/** One call's header line at exactly `width`; the box paints it, and the run card draws its members through it. */
+function headerLines(context: CompactContext, text: HeaderText, theme: Theme, width: number): string[] {
+  const meta = context.state.meta;
+  const summary = context.state.summary;
+  const status = toolStatus(context);
+  const liveMs = status === "running" ? elapsedMs(context) : undefined;
+  // Expanded bash ends with the timer line Pi's own body draws, so its final duration is on that line only.
+  // While running there is no such line yet, and the header carries the live clock.
+  const timerInBody = context.expanded && text.name === "bash" && status !== "running";
+  return renderHeader(
+    {
+      status,
+      name: text.name,
+      summary: typeof summary === "string" ? summary : text.summary,
+      meta: typeof meta === "string" ? meta : undefined,
+      durationMs: timerInBody ? undefined : (liveMs ?? context.durationMs),
+      nameColor: text.nameColor,
+      summaryColor: text.summaryColor,
+      expanded: context.expanded,
+    },
+    Math.max(1, width),
+    theme,
+  );
+}
+
 /** The header, painted by the box around it: one line while collapsed, the summary wrapped once expanded. */
 class HeaderComponent implements Component {
   private readonly text: HeaderText;
   private readonly theme: Theme;
   private readonly context: CompactContext;
-  /** The running row's elapsed time, set by the box before each render so the cache key and the line agree. */
-  liveMs: number | undefined;
 
   constructor(text: HeaderText, theme: Theme, context: CompactContext) {
     this.text = text;
@@ -217,28 +258,8 @@ class HeaderComponent implements Component {
   }
 
   render(width: number): string[] {
-    const meta = this.context.state.meta;
-    const summary = this.context.state.summary;
-    const status = toolStatus(this.context);
-    // Expanded bash ends with the timer line Pi's own body draws, so its final duration is on that line only.
-    // While running there is no such line yet, and the header carries the live clock.
-    const timerInBody = this.context.expanded && this.text.name === "bash" && status !== "running";
-    // The timeline rail sits on top of the transcript's right columns: keep them blank so the counts stay whole.
     const covered = railCoveredColumns();
-    const lines = renderHeader(
-      {
-        status,
-        name: this.text.name,
-        summary: typeof summary === "string" ? summary : this.text.summary,
-        meta: typeof meta === "string" ? meta : undefined,
-        durationMs: timerInBody ? undefined : (this.liveMs ?? this.context.durationMs),
-        nameColor: this.text.nameColor,
-        summaryColor: this.text.summaryColor,
-        expanded: this.context.expanded,
-      },
-      Math.max(1, width - covered),
-      this.theme,
-    );
+    const lines = headerLines(this.context, this.text, this.theme, Math.max(1, width - covered));
     return covered === 0 ? lines : lines.map((line) => `${line}${" ".repeat(covered)}`);
   }
 
@@ -312,7 +333,6 @@ class HeaderBoxComponent implements Component {
     const { outputPad, expanded, durationMs, state } = this.context;
     const status = toolStatus(this.context);
     const liveMs = status === "running" ? elapsedMs(this.context) : undefined;
-    this.header.liveMs = liveMs;
     const inputs = [
       width,
       railCoveredColumns(),
@@ -359,6 +379,11 @@ class BodyBoxComponent implements Component {
     });
   }
 
+  /** The body lines at exactly `width`, unpainted; the open run card draws opened bodies through this. */
+  content(width: number): string[] {
+    return trimOutput(this.lines(Math.max(1, width - 2 * BODY_INDENT)));
+  }
+
   invalidate(): void {
     this.cache.clear();
   }
@@ -370,6 +395,177 @@ class EmptyComponent implements Component {
   }
 
   invalidate(): void {}
+}
+
+/** A rendered row's click target: a member call, the group header (`null`), or a non-clickable row. */
+type CardHit = string | null | undefined;
+
+/**
+ * The one card a run draws. Folded, it is the aggregate header row. Open, the same card draws every
+ * member's own header line and any opened body, so the group stays one painted block instead of Pi's
+ * per-tool spacing splitting it into separate blocks. The head call owns the card; members draw nothing.
+ */
+class RunHeaderComponent implements Component {
+  private readonly normal: Component;
+  private readonly toolCallId: string;
+  private readonly theme: Theme;
+  private readonly context: CompactContext;
+  private readonly cache = new RenderCache();
+  private hits: CardHit[] = [];
+
+  constructor(normal: Component, toolCallId: string, theme: Theme, context: CompactContext) {
+    this.normal = normal;
+    this.toolCallId = toolCallId;
+    this.theme = theme;
+    this.context = context;
+  }
+
+  render(width: number): string[] {
+    const headId = runHead(this.toolCallId, this.context.expanded);
+    if (headId === undefined) {
+      this.hits = [];
+      return this.normal.render(width);
+    }
+    if (headId !== this.toolCallId) {
+      this.hits = [];
+      return [];
+    }
+    const view = runView(headId);
+    if (view === undefined) {
+      this.hits = [];
+      return this.normal.render(width);
+    }
+    return this.card(width, view);
+  }
+
+  private card(width: number, view: RunView): string[] {
+    const { members, statuses, open, durationMs } = view;
+    const covered = railCoveredColumns();
+    // Every row stays until the fold: a call still queued shows as pending, a finished one keeps its
+    // own result. A group the user folded stays folded. A running member's clock advances the card.
+    const shownIds = open ? members.map((member) => member.id) : [];
+    const opened = shownIds.filter((id) => callExpanded(id));
+    const key = [
+      width,
+      covered,
+      this.context.outputPad,
+      open,
+      shownIds,
+      opened,
+      statuses,
+      durationMs,
+      statuses.includes("running") ? Math.floor(Date.now() / CLOCK_MS) : undefined,
+    ];
+    return this.cache.get(key, () => {
+      const padX = this.context.outputPad;
+      const lineWidth = Math.max(1, width - 2 * padX - covered);
+      const lead = " ".repeat(padX);
+      const tail = " ".repeat(padX + covered);
+      const paints: Record<ToolStatus, (text: string) => string> = {
+        running: statusBackground("running", this.theme),
+        success: statusBackground("success", this.theme),
+        error: statusBackground("error", this.theme),
+      };
+      const lines: string[] = [];
+      const hits: CardHit[] = [];
+      // Each row carries its own status color, so one failed call reddens its row, not the whole card.
+      const push = (status: ToolStatus, content: string, hit: CardHit): void => {
+        lines.push(paints[status](`${lead}${truncateToWidth(content, lineWidth, "…", true)}${tail}`));
+        hits.push(hit);
+      };
+
+      const failed = members.filter((_, index) => statuses[index] === "error");
+      // A group is red only when every call failed; a mixed run stays open-looking with a red failure.
+      const overall: ToolStatus =
+        statuses.length > 0 && statuses.every((status) => status === "error")
+          ? "error"
+          : statuses.some((status) => status === "queued" || status === "running")
+            ? "running"
+            : "success";
+      const failure =
+        failed.length === 0
+          ? ""
+          : failed.length === 1
+            ? `1 failed: ${memberLabel(failed[0].id) ?? failed[0].name}`
+            : `${failed.length} failed`;
+      const counts = runCountLabel(members.map((member) => member.name));
+      const name = failure === "" ? counts : `${counts} · ${this.theme.fg("error", failure)}`;
+
+      // The painted rows above and below belong to the header: clicking either folds the run.
+      push(overall, "", null);
+      const header = renderHeader(
+        {
+          status: overall,
+          name,
+          summary: "",
+          durationMs,
+          // The run always shows its fold control; the status color and the rows carry the rest.
+          icon: open ? "▾" : "▸",
+        },
+        lineWidth,
+        this.theme,
+      );
+      for (const line of header) push(overall, line, null);
+
+      if (open) {
+        const rowWidth = Math.max(1, lineWidth - BODY_INDENT);
+        const bodyWidth = Math.max(1, lineWidth - 2 * BODY_INDENT);
+        const rowIndent = " ".repeat(BODY_INDENT);
+        const bodyIndent = " ".repeat(2 * BODY_INDENT);
+        for (const [index, member] of members.entries()) {
+          const status = statuses[index];
+          const rowStatus: ToolStatus = status === "queued" ? "running" : status;
+          for (const line of memberRow(member.id, rowWidth)) push(rowStatus, `${rowIndent}${line}`, member.id);
+          // A failed call always shows its error tail; successful calls open theirs on click.
+          if (!callExpanded(member.id) && status !== "error") continue;
+          for (const line of memberBody(member.id, bodyWidth)) push(rowStatus, `${bodyIndent}${line}`, member.id);
+        }
+      }
+      push(overall, "", null);
+
+      this.hits = hits;
+      return lines;
+    });
+  }
+
+  handleMouse(event: { type: string; button: string; y: number }): { handled: boolean; render: boolean } | undefined {
+    if (event.type !== "click" || event.button !== "left") return undefined;
+    const hit = this.hits[event.y];
+    const headId = runHead(this.toolCallId, this.context.expanded);
+    if (hit === undefined || headId === undefined) return undefined;
+    if (hit === null) {
+      setHeadExpanded(headId, !(runView(headId)?.open ?? false));
+    } else {
+      toggleCallExpanded(hit);
+    }
+    return { handled: true, render: true };
+  }
+
+  invalidate(): void {
+    this.normal.invalidate();
+    this.cache.clear();
+  }
+}
+
+/** The result of a grouped call: its body is drawn inside the group card instead of its own block. */
+class RunResultComponent implements Component {
+  private readonly normal: Component;
+  private readonly toolCallId: string;
+  private readonly context: CompactContext;
+
+  constructor(normal: Component, toolCallId: string, context: CompactContext) {
+    this.normal = normal;
+    this.toolCallId = toolCallId;
+    this.context = context;
+  }
+
+  render(width: number): string[] {
+    return runHead(this.toolCallId, this.context.expanded) === undefined ? this.normal.render(width) : [];
+  }
+
+  invalidate(): void {
+    this.normal.invalidate();
+  }
 }
 
 /**
@@ -415,7 +611,7 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
 
   const baseRenderResult = base.renderResult;
 
-  return {
+  const renderers: ToolRenderers = {
     ...base,
     renderShell: "self",
     renderCall: (args, theme, context) => {
@@ -507,6 +703,47 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
         theme,
         context,
       );
+    },
+  };
+
+  // Consecutive read-only calls collapse into one card (see run.ts): the head draws the aggregate
+  // header, and once opened it draws every member's own row and opened body inside the same painted
+  // card; members draw nothing themselves. Facts and row/body renderers are registered here so the
+  // head can draw them; the wrappers decide per frame, so a plan change or a click needs no swap.
+  if (!MERGEABLE_TOOLS.has(toolName)) return renderers;
+
+  return {
+    ...renderers,
+    renderCall: (args, theme, context) => {
+      // A queued call has no facts yet; `runView` reports it as queued until it starts.
+      if (context.executionStarted) recordFacts(context.toolCallId, { status: toolStatus(context) });
+      const text = headerText(toolName, args, context);
+      registerLabel(context.toolCallId, text.summary === "" ? text.name : text.summary);
+      registerRow(context.toolCallId, (width) => headerLines(context, text, theme, width));
+      const normal = renderers.renderCall?.(args, theme, context) ?? new EmptyComponent();
+      return new RunHeaderComponent(normal, context.toolCallId, theme, context);
+    },
+    renderResult: (result, options, theme, context) => {
+      recordFacts(context.toolCallId, { status: toolStatus(context), durationMs: context.durationMs });
+      const normal = renderers.renderResult?.(result, options, theme, context) ?? new EmptyComponent();
+      // The card opens a body on click, outside Pi's own expansion flag. Build that body only when
+      // the card first draws it, and cache it for the width until this result updates again.
+      let expanded: Component | undefined;
+      let cachedWidth = -1;
+      let cachedLines: string[] = [];
+      registerBody(context.toolCallId, (width) => {
+        expanded ??=
+          options.expanded || context.isError
+            ? normal
+            : (renderers.renderResult?.(result, { ...options, expanded: true }, theme, context) ??
+              new EmptyComponent());
+        if (width !== cachedWidth) {
+          cachedWidth = width;
+          cachedLines = expanded instanceof BodyBoxComponent ? expanded.content(width) : [];
+        }
+        return cachedLines;
+      });
+      return new RunResultComponent(normal, context.toolCallId, context);
     },
   };
 };

@@ -30,6 +30,8 @@ export interface HeaderParts {
   summary: string;
   meta?: string;
   durationMs?: number;
+  /** Overrides the status icon, e.g. a run's fold control; the color still follows the status. */
+  icon?: string;
   /** Theme color of the name; the name is bold either way. Pi's own labels keep their own token. */
   nameColor?: ThemeColor;
   /** Theme color of the summary, `accent` unless a native label brings its own. */
@@ -68,8 +70,9 @@ export function renderHeader(parts: HeaderParts, width: number, theme: Theme): s
   if (width <= 0) return [""];
 
   const { icon, color } = ICONS[parts.status];
+  const marker = parts.icon ?? icon;
   const name = theme.bold(parts.name);
-  const prefix = `${theme.fg(color, icon)} ${parts.nameColor === undefined ? name : theme.fg(parts.nameColor, name)}`;
+  const prefix = `${theme.fg(color, marker)} ${parts.nameColor === undefined ? name : theme.fg(parts.nameColor, name)}`;
   const prefixWidth = visibleWidth(prefix);
   const duration = parts.durationMs === undefined ? undefined : formatDuration(parts.durationMs);
   const right = [parts.meta, duration].filter((part): part is string => Boolean(part)).join(" · ");
