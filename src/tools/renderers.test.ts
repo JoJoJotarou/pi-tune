@@ -905,7 +905,7 @@ test("a run of two reads collapses into one painted group header and zero member
   const lines = plain(head.render(88));
   const shown = lines.map((line) => line.trim()).filter((line) => line !== "");
   assert.equal(shown.length, 1);
-  assert.match(shown[0], /^▸ 2 reads\s+0\.\ds$/);
+  assert.match(shown[0], /^▸ Read 2 files\s+0\.\ds$/);
   assertPaintedCard(head.render(88), "toolSuccessBg");
 });
 
@@ -954,7 +954,7 @@ test("a run opens with its plan, keeps a finished row, and folds after the last"
   // Every planned call brings its row: the head is running, the member is still waiting to start.
   assert.deepEqual(
     rows().map((line) => line.replace(/\s+\d+\.\ds$/, "")),
-    ["▾ 1 read · 1 search", "● read src/a.ts", '● grep "TODO" in src'],
+    ["▾ Reading 1 file, Searching 1 pattern", "● read src/a.ts", '● grep "TODO" in src'],
   );
   assertPaintedCard(head.render(88), "toolPendingBg");
 
@@ -985,7 +985,7 @@ test("a run opens with its plan, keeps a finished row, and folds after the last"
   member.render(88);
   const folded = rows();
   assert.equal(folded.length, 1, folded.join("\n"));
-  assert.match(folded[0], /^▸ 1 read · 1 search\s+\d+\.\ds$/);
+  assert.match(folded[0], /^▸ Read 1 file, Searched 1 pattern\s+\d+\.\ds$/);
   assertPaintedCard(head.render(88), "toolSuccessBg");
 });
 
@@ -1008,7 +1008,7 @@ test("a mixed run keeps the card open-colored and counts the failure", () => {
     .map((line) => line.trim())
     .filter((line) => line !== "");
   assert.equal(folded.length, 1, folded.join("\n"));
-  assert.match(folded[0], /^▸ 2 reads · 1 failed: src\/b\.ts\s+0\.\ds$/);
+  assert.match(folded[0], /^▸ Read 2 files · 1 failed: src\/b\.ts\s+0\.\ds$/);
   assertPaintedCard(head.render(88), "toolSuccessBg");
   assert.deepEqual(plain(member.render(88)), []);
 
@@ -1016,7 +1016,7 @@ test("a mixed run keeps the card open-colored and counts the failure", () => {
   setHeadExpanded("run-head", true);
   const raw = head.render(88);
   const lines = plain(raw).map((line) => line.trim());
-  const header = lines.findIndex((line) => /^▾ 2 reads · 1 failed: src\/b\.ts/.test(line));
+  const header = lines.findIndex((line) => /^▾ Read 2 files · 1 failed: src\/b\.ts/.test(line));
   const failedRow = lines.findIndex((line) => /^✗ read src\/b\.ts\s+0\.2s$/.test(line));
   const okRow = lines.findIndex((line) => /^✓ read src\/a\.ts\s+12 lines · 0\.1s$/.test(line));
   assert.ok(header >= 0 && failedRow >= 0 && okRow >= 0, lines.join("\n"));
@@ -1038,7 +1038,7 @@ test("an opened run draws every member's row inside the same card", () => {
     .map((line) => line.trim())
     .filter((line) => line !== "");
   // Open, the marker is the fold control `▾`; the member rows carry the per-call state.
-  assert.match(shown[0], /^▾ 2 reads\s+0\.\ds$/);
+  assert.match(shown[0], /^▾ Read 2 files\s+0\.\ds$/);
   assert.ok(
     shown.some((line) => /^✓ read src\/a\.ts\s+12 lines · 0\.1s$/.test(line)),
     `the head's own row is missing:\n${shown.join("\n")}`,

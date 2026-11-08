@@ -1,6 +1,6 @@
 /**
  * Grouping of consecutive read-only tool calls into one card: the head draws the group header
- * (`2 reads · 1 search   0.2s`), the members draw their own rows inside the same card.
+ * (`Read 2 files, Searched 1 pattern   0.2s`), the members draw their own rows inside the same card.
  *
  * The plan is derived from the session branch (pure `planRuns`) and decides roles; per-call facts
  * are recorded by each row's own renderers and feed the header's status and clock. The card caches
@@ -213,23 +213,32 @@ function runDuration(members: readonly RunMember[], statuses: readonly RunFactSt
   return total > 0 ? total : undefined;
 }
 
-const NOUNS: Record<string, string> = { read: "read", grep: "search", find: "search", ls: "list" };
-const NOUN_ORDER = ["read", "search", "list"];
+interface VerbKind {
+  past: string;
+  present: string;
+  noun: string;
+}
 
-/** The group header's counts by what the calls did: `2 reads · 1 search · 1 list`. */
-export function runCountLabel(names: readonly string[]): string {
-  const counts = new Map<string, number>();
+const VERBS: Record<string, VerbKind> = {
+  read: { past: "Read", present: "Reading", noun: "file" },
+  grep: { past: "Searched", present: "Searching", noun: "pattern" },
+  find: { past: "Searched", present: "Searching", noun: "pattern" },
+  ls: { past: "Listed", present: "Listing", noun: "dir" },
+};
+const OTHER_TOOL: VerbKind = { past: "Ran", present: "Running", noun: "tool" };
+
+/** The group header's counts by what the calls did, in first-appearance order: `Read 2 files, Searched 1 pattern`. */
+export function runCountLabel(names: readonly string[], running: boolean): string {
+  const buckets = new Map<string, { kind: VerbKind; count: number }>();
   for (const name of names) {
-    const noun = NOUNS[name] ?? name;
-    counts.set(noun, (counts.get(noun) ?? 0) + 1);
+    const kind = VERBS[name] ?? OTHER_TOOL;
+    const bucket = buckets.get(kind.noun) ?? { kind, count: 0 };
+    bucket.count += 1;
+    buckets.set(kind.noun, bucket);
   }
-  const rest = [...counts.keys()].filter((noun) => !NOUN_ORDER.includes(noun));
-  return [...NOUN_ORDER, ...rest]
-    .flatMap((noun) => {
-      const count = counts.get(noun);
-      return count === undefined ? [] : [plural(count, noun)];
-    })
-    .join(" · ");
+  return [...buckets.values()]
+    .map(({ kind, count }) => `${running ? kind.present : kind.past} ${plural(count, kind.noun)}`)
+    .join(", ");
 }
 
 /** Records that the head row expanded or folded the whole run. */

@@ -488,7 +488,10 @@ class RunHeaderComponent implements Component {
           : failed.length === 1
             ? `1 failed: ${memberLabel(failed[0].id) ?? failed[0].name}`
             : `${failed.length} failed`;
-      const counts = runCountLabel(members.map((member) => member.name));
+      const counts = runCountLabel(
+        members.map((member) => member.name),
+        overall === "running",
+      );
       const name = failure === "" ? counts : `${counts} · ${this.theme.fg("error", failure)}`;
 
       // The painted rows above and below belong to the header: clicking either folds the run.

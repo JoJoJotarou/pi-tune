@@ -247,7 +247,7 @@ test("consecutive read-only calls collapse into one group header", { timeout: 18
     const lines = rows(pi.screen());
 
     // The four read-only calls share one row: counts by kind, duration, and no per-call rows.
-    const group = lines.find((line) => /^▸ 1 read · 2 searches · 1 list\s+/.test(line));
+    const group = lines.find((line) => /^▸ Read 1 file, Searched 2 patterns, Listed 1 dir\s+/.test(line));
     assert.ok(group, `group header row:\n${lines.join("\n")}`);
     assert.match(group, /\s+\d+\.\d+s$/, `the header kept result stats: ${group}`);
     for (const name of ["read README\\.md", 'grep "TODO"', "find \\*\\.ts", "ls \\."]) {
@@ -256,7 +256,7 @@ test("consecutive read-only calls collapse into one group header", { timeout: 18
 
     pi.press("ctrl+o");
     await pi.waitFor(/└─ 3 {2}\/\/ TODO: third/);
-    await pi.waitForGone(/▸ 1 read · 2 searches · 1 list/);
+    await pi.waitForGone(/▸ Read 1 file, Searched 2 patterns, Listed 1 dir/);
     const expanded = rows(pi.screen());
     for (const matcher of [/^✓ read README\.md/, /^✓ grep "TODO" in src/, /^✓ find \*\.ts in \./, /^✓ ls \./]) {
       assert.equal(countRows(expanded, matcher), 1, `${matcher} row:\n${expanded.join("\n")}`);
@@ -264,7 +264,7 @@ test("consecutive read-only calls collapse into one group header", { timeout: 18
     assertNoExpandHint(expanded, rowIndex(expanded, /^✓ read README\.md/), rowIndex(expanded, /^Summary done\.$/));
 
     pi.press("ctrl+o");
-    await pi.waitFor(/▸ 1 read · 2 searches · 1 list/);
+    await pi.waitFor(/▸ Read 1 file, Searched 2 patterns, Listed 1 dir/);
   });
 });
 
@@ -290,7 +290,7 @@ test("a bash call breaks the run of read-only calls", { timeout: 180_000 }, asyn
     // Each read stands alone; only a run of two or more merges.
     assert.equal(countRows(lines, /^✓ read README\.md/), 2, `read rows:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, /^✓ bash echo hi/), 1, `bash row:\n${lines.join("\n")}`);
-    assert.ok(!lines.some((line) => /^▸ \d+ reads?/.test(line)), `an unexpected group row:\n${lines.join("\n")}`);
+    assert.ok(!lines.some((line) => /^▸ /.test(line)), `an unexpected group row:\n${lines.join("\n")}`);
   });
 });
 
@@ -319,36 +319,36 @@ test("a group header opens the run, and each row opens its own body", { timeout:
 
     // The painted blank rows above and below the header belong to the group: clicking one opens it,
     // rather than expanding the head call on its own.
-    const foldedHeader = rowIndex(rows(pi.screen()), /^▸ 2 reads/);
+    const foldedHeader = rowIndex(rows(pi.screen()), /^▸ Read 2 files/);
     assert.ok(foldedHeader > 0, pi.screen().join("\n"));
     pi.click(3, foldedHeader - 1);
     await pi.waitFor(/✓ read README\.md/);
     assert.ok(
-      rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0,
+      rowIndex(rows(pi.screen()), /^▾ Read 2 files/) >= 0,
       `the pad row expanded the head instead of the group:\n${pi.screen().join("\n")}`,
     );
-    pi.clickText("2 reads");
+    pi.clickText("Read 2 files");
     await pi.waitForGone(/✓ read README\.md/);
 
-    pi.clickText("2 reads");
+    pi.clickText("Read 2 files");
     await pi.waitFor(/✓ read README\.md/);
     await pi.waitFor(/✓ read src\/a\.ts/);
     // The header stays on top while the run is open.
-    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, pi.screen().join("\n"));
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ Read 2 files/) >= 0, pi.screen().join("\n"));
 
     // A member row opens its own body, and closes it again, without folding the run.
     pi.clickText("read src/a.ts");
     await pi.waitFor("TODO: first");
-    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, "the group header went away");
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ Read 2 files/) >= 0, "the group header went away");
     pi.clickText("read src/a.ts");
     await pi.waitForGone("TODO: first");
 
     // The head keeps its own row too, next to the header.
     pi.clickText("read README.md");
     await pi.waitFor("A tiny project.");
-    assert.ok(rowIndex(rows(pi.screen()), /^▾ 2 reads/) >= 0, "the group header went away");
+    assert.ok(rowIndex(rows(pi.screen()), /^▾ Read 2 files/) >= 0, "the group header went away");
 
-    pi.clickText("2 reads");
+    pi.clickText("Read 2 files");
     await pi.waitForGone(/✓ read README\.md/);
     assert.equal(countRows(rows(pi.screen()), /^✓ read src\/a\.ts/), 0, pi.screen().join("\n"));
   });
@@ -375,7 +375,7 @@ test("a run opens as the calls stream and folds after the last result", { timeou
     pi.type("run it\r");
     // The card opens while the second call's arguments are still streaming: the first call already
     // has its row, and the run has not folded for the answer.
-    await pi.waitFor(/▾ 2 reads/);
+    await pi.waitFor(/▾ Reading 2 files/);
     await pi.waitFor(/read README\.md/);
     const during = pi.screen().join("\n");
     assert.ok(!during.includes("Fold done."), `the card waited for the answer:\n${during}`);
@@ -383,7 +383,7 @@ test("a run opens as the calls stream and folds after the last result", { timeou
     await pi.waitFor("Fold done.");
     const folded = pi.screen().join("\n");
     assert.ok(!folded.includes("read README.md"), `the finished run kept a member row:\n${folded}`);
-    assert.equal(countRows(rows(pi.screen()), /^▸ 2 reads\s+\d+\.\ds$/), 1, folded);
+    assert.equal(countRows(rows(pi.screen()), /^▸ Read 2 files\s+\d+\.\ds$/), 1, folded);
   });
 });
 

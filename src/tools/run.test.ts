@@ -161,9 +161,14 @@ test("a call body toggles on its own, inside an expanded group", () => {
   assert.equal(callExpanded("b"), false);
 });
 
-test("the group counts what the calls did, not their tool names", () => {
-  assert.equal(runCountLabel(["read", "read", "grep"]), "2 reads · 1 search");
-  assert.equal(runCountLabel(["ls", "find"]), "1 search · 1 list");
-  assert.equal(runCountLabel(["read", "grep", "find", "ls"]), "1 read · 2 searches · 1 list");
-  assert.equal(runCountLabel(["mcp_docs"]), "1 mcp_docs");
+test("the group header names what the calls did, in first-appearance order", () => {
+  assert.equal(runCountLabel(["read", "read", "grep"], false), "Read 2 files, Searched 1 pattern");
+  assert.equal(runCountLabel(["ls", "find"], false), "Listed 1 dir, Searched 1 pattern");
+  assert.equal(runCountLabel(["read", "grep", "find", "ls"], false), "Read 1 file, Searched 2 patterns, Listed 1 dir");
+  assert.equal(
+    runCountLabel(["read", "grep", "find", "ls"], true),
+    "Reading 1 file, Searching 2 patterns, Listing 1 dir",
+  );
+  assert.equal(runCountLabel(["read", "read"], true), "Reading 2 files");
+  assert.equal(runCountLabel(["mcp_docs"], false), "Ran 1 tool");
 });
