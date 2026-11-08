@@ -6,8 +6,6 @@ import { detectSandbox } from "../../src/btw/sandbox.ts";
 import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
 const DRAWER = /╭─ btw #\d/;
-/** The editor's top border while btw mode is on. */
-const BTW_EDITOR = /╭─ btw ─/;
 
 function rowOf(pi: PiSession, pattern: RegExp): number {
   const row = pi.screen().findIndex((line) => pattern.test(line));
@@ -33,7 +31,7 @@ test("btw mode: ask, follow up, close with esc, reopen a thread from the list", 
 
     pi.type("/btw what does the read tool do?\r");
     await pi.waitFor("side answer one");
-    await pi.waitFor(BTW_EDITOR);
+    await pi.waitFor(DRAWER);
     let screen = pi.screen().join("\n");
     assert.match(screen, /╭─ btw #1 ─+ @turn 1 · main 1 ─╮/, "title and anchor on the drawer's top border");
     assert.ok(screen.includes("what does the read tool do?"), screen);
@@ -57,7 +55,6 @@ test("btw mode: ask, follow up, close with esc, reopen a thread from the list", 
     // Esc on the empty editor closes the drawer; Enter goes to the main session again.
     pi.press("escape");
     await pi.waitForGone(DRAWER);
-    await pi.waitForGone(BTW_EDITOR);
     pi.type("second main question\r");
     await pi.waitFor("main answer two");
 
@@ -98,15 +95,15 @@ test("a running side question shows at once, streams, and esc stops it", { timeo
     // Enter while the answer runs keeps the draft for later.
     pi.type("next question\r");
     await pi.waitFor("A side question is still answering");
-    await pi.waitFor(/│ ?next question/);
+    await pi.waitFor(/❯ ?next question/);
     for (let i = 0; i < "next question".length; i++) pi.press("backspace");
-    await pi.waitForGone(/│ ?next question/);
+    await pi.waitForGone(/❯ ?next question/);
 
     pi.press("escape");
     await pi.waitForGone(/esc stop/);
     await pi.waitFor(/enter ask/);
-    const editor = pi.screen().slice(rowOf(pi, BTW_EDITOR)).join("\n");
-    assert.ok(editor.includes("why is it slow?"), `the stopped question is back in the editor:\n${editor}`);
+    const editor = pi.screen().find((row) => row.includes("❯")) ?? "";
+    assert.ok(editor.includes("why is it slow?"), `the stopped question is back in the editor: ${editor}`);
     assert.ok(!pi.screen().join("\n").includes("END"));
   } finally {
     await pi.close();

@@ -25,8 +25,20 @@ export interface FooterParts {
   branch?: string;
   hints?: string;
   stats: FooterStats;
+  /** The model and thinking level: Pi draws them on the editor, which the block editor no longer has. */
+  identity?: FooterIdentity;
   /** Extension statuses as `[key, text]`, shown on a second line when any exist. */
   statuses?: readonly (readonly [key: string, text: string])[];
+}
+
+/** Pi's thinking level, as `Theme.getThinkingBorderColor` takes it. */
+export type ThinkingLevelName = Parameters<Theme["getThinkingBorderColor"]>[0];
+
+export interface FooterIdentity {
+  model: string;
+  thinking: string;
+  /** Picks Pi's own `thinkingOff`…`thinkingMax` color for the level, never a color of pi-tune's. */
+  level: ThinkingLevelName;
 }
 
 /** Compact token counts exactly like Pi's footer: `999`, `1.5k`, `12k`, `1.2M`. */
@@ -86,6 +98,8 @@ interface LayoutOptions {
   cost: boolean;
   cache: boolean;
   branch: boolean;
+  /** The model and thinking level; it goes before the usage numbers when the row is too narrow. */
+  identity: boolean;
 }
 
 /** Pi's one-line status sanitation: no control characters, no repeated spaces. */
@@ -114,9 +128,17 @@ export function footerLine(parts: FooterParts, width: number, theme: Theme): str
   const usable = Math.max(1, width - 1);
 
   const branchSuffix = parts.branch ? ` (${parts.branch})` : "";
+  const identityText =
+    parts.identity === undefined
+      ? ""
+      : theme.fg("muted", parts.identity.model) +
+        theme.fg("dim", " · ") +
+        theme.getThinkingBorderColor(parts.identity.level)(parts.identity.thinking);
   const build = (layout: LayoutOptions): string | undefined => {
     const left = theme.fg("muted", parts.project + (layout.branch ? branchSuffix : ""));
-    const right = theme.fg("dim", formatStats(parts.stats, { cost: layout.cost, cache: layout.cache }));
+    const stats = theme.fg("dim", formatStats(parts.stats, { cost: layout.cost, cache: layout.cache }));
+    const identity = layout.identity ? identityText : "";
+    const right = identity === "" ? stats : `${stats}  ${identity}`;
     const hints = layout.hints ? (parts.hints ?? "") : "";
     const leftWidth = visibleWidth(left);
     const rightWidth = visibleWidth(right);
@@ -132,11 +154,13 @@ export function footerLine(parts: FooterParts, width: number, theme: Theme): str
   };
 
   const attempts: LayoutOptions[] = [
-    { hints: true, cost: true, cache: true, branch: true },
-    { hints: false, cost: true, cache: true, branch: true },
-    { hints: false, cost: false, cache: true, branch: true },
-    { hints: false, cost: false, cache: false, branch: true },
-    { hints: false, cost: false, cache: false, branch: false },
+    { hints: true, identity: true, cost: true, cache: true, branch: true },
+    { hints: false, identity: true, cost: true, cache: true, branch: true },
+    { hints: false, identity: true, cost: false, cache: true, branch: true },
+    { hints: false, identity: true, cost: false, cache: false, branch: true },
+    { hints: false, identity: true, cost: false, cache: false, branch: false },
+    // The usage numbers win the last columns: they change every turn, while the model does not.
+    { hints: false, identity: false, cost: false, cache: false, branch: false },
   ];
   for (const attempt of attempts) {
     const line = build(attempt);
@@ -144,6 +168,8 @@ export function footerLine(parts: FooterParts, width: number, theme: Theme): str
   }
 
   const left = theme.fg("muted", parts.project);
-  const right = theme.fg("dim", formatStats(parts.stats, { cost: false, cache: false }));
+  const right = [theme.fg("dim", formatStats(parts.stats, { cost: false, cache: false })), identityText]
+    .filter((part) => part !== "")
+    .join("  ");
   return footerLines(truncateToWidth(`${left}  ${right}`, usable), parts.statuses, width, theme);
 }

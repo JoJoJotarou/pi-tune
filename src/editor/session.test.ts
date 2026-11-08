@@ -43,7 +43,6 @@ function harness(config: string | undefined, setup?: (dir: string) => void): Har
   } as unknown as EditorContext;
   const host: EditorHost = {
     settings: () => ({ editorPaddingX: 2, autocompleteMaxVisible: 5 }),
-    thinkingLevel: () => "off",
     agentDir: () => dir,
     now: () => 1_000,
     emitStash: () => {},

@@ -175,3 +175,36 @@ test("footer never exceeds tiny widths", () => {
     assert.ok(visibleWidth(line) <= width, `${width}: ${visibleWidth(line)}`);
   }
 });
+
+test("the model and thinking level sit at the right end, in Pi's level color", () => {
+  const withIdentity: FooterParts = {
+    ...parts,
+    hints: "",
+    identity: { model: "scripted", thinking: "high", level: "high" },
+  };
+  const line = footerLine(withIdentity, 120, theme)[0] ?? "";
+  assert.ok(line.includes(theme.fg("muted", "scripted")), line);
+  assert.ok(line.includes(theme.getThinkingBorderColor("high")("high")), line);
+  assert.equal(visibleWidth(line), 119, "the footer keeps its one free column on the right");
+});
+
+test("the thinking color follows the level Pi was given", () => {
+  const low = footerLine({ ...parts, identity: { model: "scripted", thinking: "low", level: "low" } }, 120, theme)[0];
+  const max = footerLine({ ...parts, identity: { model: "scripted", thinking: "max", level: "max" } }, 120, theme)[0];
+  assert.ok(low?.includes(theme.getThinkingBorderColor("low")("low")), low ?? "");
+  assert.ok(max?.includes(theme.getThinkingBorderColor("max")("max")), max ?? "");
+});
+
+test("the model yields to the usage numbers only when the row cannot hold both", () => {
+  const withIdentity: FooterParts = {
+    ...parts,
+    identity: { model: "scripted", thinking: "high", level: "high" },
+  };
+  const roomy = footerLine(withIdentity, 80, theme)[0] ?? "";
+  assert.ok(roomy.includes("scripted") && roomy.includes("5.3%/1.0M"), roomy);
+
+  const narrow = footerLine(withIdentity, 40, theme)[0] ?? "";
+  assert.ok(visibleWidth(narrow) <= 39, narrow);
+  assert.ok(narrow.includes("5.3%/1.0M"), `usage stays: ${narrow}`);
+  assert.ok(!narrow.includes("scripted"), `the model yields: ${narrow}`);
+});

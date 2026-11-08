@@ -26,17 +26,17 @@ async function clearEditor(pi: PiSession): Promise<void> {
   }
 }
 
-test("the editor is a rounded box with a paste preview", { timeout: 180_000 }, async () => {
+test("the editor is a background block with a paste preview", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, cols: 100, rows: 30 });
   try {
-    // 1. Typing lands inside a rounded box.
+    // 1. Typing lands inside the block, and the footer names the model.
     pi.type("hello");
     await pi.waitFor("hello");
-    await pi.waitFor("╭");
-    await pi.waitFor("╰");
-    const box = pi.screen().find((row) => row.includes("╰"));
-    assert.match(box ?? "", / scripted · \w+ ─╯$/);
-    await pi.shot("editor-rounded");
+    const block = pi.screen().find((row) => row.includes("❯ hello"));
+    assert.match(block ?? "", /^ +❯ hello *$/, "the draft leads with the chevron");
+    assert.ok(!pi.screen().join("\n").includes("╭"), "no box is drawn");
+    await pi.waitFor(/scripted · \w+/);
+    await pi.shot("editor-block");
 
     // 2. A short multi-line paste stays literal and grows the box.
     await clearEditor(pi);
@@ -87,7 +87,8 @@ test("ctrl+s asks before it replaces a held stash", { timeout: 180_000 }, async 
   try {
     pi.type("first draft");
     pi.press("ctrl+s");
-    await pi.waitFor("stashed");
+    // The stash has no border label anymore: the footer hint names the key that restores it.
+    await pi.waitFor("ctrl+s restore");
     assert.ok(!pi.screen().join("\n").includes("first draft"));
 
     pi.type("second draft");
@@ -101,23 +102,23 @@ test("ctrl+s asks before it replaces a held stash", { timeout: 180_000 }, async 
     await pi.waitForGone("second draft");
     pi.press("ctrl+s");
     await pi.waitFor("second draft");
-    await pi.waitForGone("stashed");
+    await pi.waitForGone("ctrl+s restore");
   } finally {
     await pi.close();
   }
 });
 
-test("the rounded box holds at 40 columns", { timeout: 180_000 }, async () => {
+test("the block holds at 40 columns", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, cols: 40, rows: 30 });
   try {
-    pi.type("a narrow terminal still keeps both corners of the box");
-    await pi.waitFor("corners");
+    pi.type("a narrow terminal still keeps the draft readable");
+    await pi.waitFor("readable");
     const rows = pi.screen();
-    const top = rows.find((row) => row.includes("╭"));
-    const bottom = rows.find((row) => row.includes("╰"));
-    assert.match(top ?? "", /^╭─+╮$/);
-    assert.match(bottom ?? "", /^╰─+ .+ ─╯$/);
-    await pi.shot("editor-long-model");
+    const block = rows.filter((row) => row.startsWith(" ❯ ") || row.startsWith("   "));
+    assert.ok(block.length >= 2, rows.join("\n"));
+    assert.ok(!rows.some((row) => /[╭╮╰╯]/.test(row)), "no box at 40 columns");
+    for (const row of rows) assert.ok(row.length <= 40, row);
+    await pi.shot("editor-40-columns");
   } finally {
     await pi.close();
   }

@@ -30,8 +30,6 @@ const SUGGEST_MAX_TOKENS = 1024;
 /** What the editor session reads from the running Pi instance; injected so tests can fake it. */
 export interface EditorHost {
   settings(): { editorPaddingX?: number; autocompleteMaxVisible?: number };
-  /** `pi.getThinkingLevel()`. */
-  thinkingLevel(): string;
   /** `getAgentDir()`: where `pi-tune.json` lives. */
   agentDir(): string;
   now(): number;
@@ -71,8 +69,6 @@ export interface EditorSession {
 export function createEditorSession(host: EditorHost): EditorSession {
   type Registry = EditorContext["modelRegistry"];
 
-  let model = "no model";
-  let thinking = "off";
   let tui: TUI | undefined;
   let editor: TuneEditor | undefined;
   // Session state lives here, not in the editor factory closure: the factory outlives the session that made it.
@@ -92,7 +88,6 @@ export function createEditorSession(host: EditorHost): EditorSession {
   let btwMode = false;
 
   const sync = () => {
-    editor?.setStatus(model, thinking);
     tui?.requestRender();
   };
 
@@ -209,13 +204,11 @@ export function createEditorSession(host: EditorHost): EditorSession {
       editor?.setBtwMode(btwMode);
     },
     modelSelect(event) {
-      model = event.model.id;
       chatModel = event.model;
       suggestion?.setSessionModel(event.model);
       sync();
     },
-    thinkingLevelSelect(event) {
-      thinking = event.level;
+    thinkingLevelSelect() {
       sync();
     },
     agentStart() {
@@ -233,10 +226,8 @@ export function createEditorSession(host: EditorHost): EditorSession {
     start(ctx) {
       suggestion?.discard();
       if (ctx.mode !== "tui") return;
-      model = ctx.model?.id ?? "no model";
       chatModel = ctx.model;
       registry = ctx.modelRegistry;
-      thinking = host.thinkingLevel();
       notify = (message, level) => ctx.ui.notify(message, level);
       suggestPath = join(host.agentDir(), "pi-tune.json");
       const loaded = loadSuggestSettings(suggestPath);
@@ -267,8 +258,6 @@ export function createEditorSession(host: EditorHost): EditorSession {
         tui = editorTui;
         const settings = host.settings();
         const instance = new TuneEditor(editorTui, theme, keybindings, {
-          model,
-          thinking,
           theme: themeOf,
           paddingX: settings.editorPaddingX,
           autocompleteMaxVisible: settings.autocompleteMaxVisible,

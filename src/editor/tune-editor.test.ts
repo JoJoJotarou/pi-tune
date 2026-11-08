@@ -4,10 +4,12 @@ import { type KeybindingsManager, keyText } from "@earendil-works/pi-coding-agen
 import type { EditorTheme, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { CURSOR_MARKER, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { frameEditor, TuneEditor, type TuneEditorOptions } from "./tune-editor.ts";
+import { TuneEditor, type TuneEditorOptions } from "./tune-editor.ts";
 
 const theme = testTheme();
 const plain = (line: string) => stripTerminalSequences(line);
+/** The tool block color Pi's dark theme gives `toolPendingBg`, the block's fill. */
+const blockBg = theme.getBgAnsi("toolPendingBg");
 
 type Options = Partial<TuneEditorOptions> & { paddingX?: number };
 
@@ -19,16 +21,17 @@ function makeEditor(options: Options = {}, matches: (binding: string) => boolean
     matches: (_data: string, binding: string) => matches(binding),
   } as unknown as KeybindingsManager;
   return new TuneEditor(tui, editorTheme, keybindings, {
-    model: "scripted",
-    thinking: "high",
     theme: () => theme,
     ...options,
   });
 }
 
-function lastLine(editor: TuneEditor, width = 60): string {
-  const lines = editor.render(width);
-  return lines[lines.length - 1] ?? "";
+function rendered(editor: TuneEditor, width = 60): string[] {
+  return editor.render(width).map(plain);
+}
+
+function firstContent(editor: TuneEditor, width = 60): string {
+  return rendered(editor, width).find((line) => line.includes("❯")) ?? "";
 }
 
 const pasted = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
@@ -46,34 +49,62 @@ test("small programmatic inserts stay literal", () => {
   assert.equal(editor.getText(), "hello");
 });
 
-test("the editor is a rounded box around its content", () => {
+test("the editor is one background block with a chevron, and no border", () => {
   const editor = makeEditor();
   editor.setText("hello");
-  const lines = editor.render(40).map(plain);
-  assert.equal(lines[0], `╭${"─".repeat(38)}╮`);
-  assert.match(lines[1] ?? "", /^│hello +│$/);
-  assert.match(lines[lines.length - 1] ?? "", /^╰─+ scripted · high ─╯$/);
+  const lines = editor.render(40);
+  assert.equal(lines.length, 3, `half-row edge, the draft, half-row edge:\n${lines.map(plain).join("\n")}`);
+  assert.ok(!lines.some((line) => plain(line).match(/[╭╮╰╯│─]/)), "no box drawing survives");
+  assert.match(plain(lines[1] ?? ""), /^ ❯ hello + $/);
+  assert.ok(lines[1]?.includes(blockBg), "the draft row is filled with the block background");
+  assert.equal(plain(lines[0] ?? ""), "▄".repeat(40), "the row above paints the lower half");
+  assert.equal(plain(lines[2] ?? ""), "▀".repeat(40), "the row below paints the upper half");
 });
 
 test("every editor line is exactly the width it was given", () => {
   const editor = makeEditor();
-  editor.setText("a long line that has to wrap several times over to fill the box ".repeat(4));
+  editor.setText("a long line that has to wrap several times over to fill the block ".repeat(4));
   for (const width of [40, 100]) {
     for (const line of editor.render(width)) assert.equal(visibleWidth(line), width);
   }
 });
 
-test("the frame keeps the cursor marker inside the side borders", () => {
+test("a wrapped draft indents its continuation rows under the text", () => {
+  const editor = makeEditor();
+  editor.setText("alpha beta gamma delta epsilon zeta eta theta iota kappa lambda");
+  const lines = rendered(editor, 40).filter((line) => line.startsWith(" ") || line.startsWith("❯"));
+  assert.ok(lines.length > 1, lines.join("\n"));
+  assert.match(lines[0] ?? "", /^ ❯ alpha/);
+  for (const line of lines.slice(1)) assert.match(line, /^ {3}\S/, line);
+});
+
+test("the block still holds at sixteen columns", () => {
+  const editor = makeEditor();
+  editor.setText("narrow");
+  const line = firstContent(editor, 16);
+  assert.match(line, /^ ❯ narrow/, line);
+  assert.equal(visibleWidth(line), 16);
+});
+
+test("the block keeps the cursor marker inside the gutter", () => {
   const editor = makeEditor();
   editor.focused = true;
   editor.setText("hello");
-  const lines = editor.render(40);
-  const marked = lines.find((line) => line.includes(CURSOR_MARKER));
+  const marked = editor.render(40).find((line) => line.includes(CURSOR_MARKER));
   assert.ok(marked, "no line carries the cursor marker");
-  assert.ok(plain(marked).startsWith("│"));
+  assert.match(plain(marked), /^ ❯ hello/);
 });
 
-test("the working status stays on the top border, inside the corners", () => {
+test("the chevron carries Pi's editor border color, which follows the thinking level", () => {
+  const editor = makeEditor();
+  const magenta = (text: string) => `\x1b[35m${text}\x1b[39m`;
+  (editor as unknown as { borderColor: (text: string) => string }).borderColor = magenta;
+  editor.setText("hello");
+  const block = editor.render(40).find((line) => line.includes("❯")) ?? "";
+  assert.ok(block.includes(magenta("❯")), "the chevron is not painted");
+});
+
+test("the working status moves to its own line above the block", () => {
   const editor = makeEditor();
   type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
   editor.setWorkingStatusIndicator({
@@ -81,16 +112,15 @@ test("the working status stays on the top border, inside the corners", () => {
     renderSpinnerInBorder: () => "⠋",
     dispose() {},
   } as unknown as Indicator);
-  const top = plain(editor.render(40)[0] ?? "");
-  assert.equal(visibleWidth(top), 40);
-  assert.ok(top.startsWith("╭") && top.endsWith("╮"), top);
-  assert.ok(top.includes("⚙ Thinking  ls -la"), top);
+  editor.setText("draft");
+  const lines = rendered(editor, 40);
+  assert.equal(lines.length, 4, lines.join("\n"));
+  assert.equal(lines[0], " ⚙ Thinking  ls -la");
+  assert.match(lines[2] ?? "", /^ ❯ draft/);
 });
 
-test("the working status takes the border color, like the model label", () => {
+test("the status line keeps Pi's own colors instead of the border color", () => {
   const editor = makeEditor();
-  const magenta = (text: string) => `\x1b[35m${text}\x1b[39m`;
-  (editor as unknown as { borderColor: (text: string) => string }).borderColor = magenta;
   type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
   editor.setWorkingStatusIndicator({
     renderInBorder: () => `${theme.fg("text", "Working")}  ${theme.fg("dim", "3.2s · esc to stop")}`,
@@ -98,27 +128,20 @@ test("the working status takes the border color, like the model label", () => {
     dispose() {},
   } as unknown as Indicator);
   const top = editor.render(60)[0] ?? "";
-  assert.ok(top.includes(magenta("Working  3.2s · esc to stop")), JSON.stringify(top));
-  assert.ok(!top.includes(theme.getFgAnsi("text")), "the status keeps none of its own colors");
+  assert.ok(top.includes(theme.fg("text", "Working")), JSON.stringify(top));
 });
 
-test("autocomplete lines below the box are left unwrapped and never wider than the width", () => {
-  const lines = ["──────", "text  ", "──────", "  a completion row that is far too long to fit"];
-  const framed = frameEditor(lines, 20, (text) => text, 2, {});
-  assert.deepEqual(framed.slice(0, 3).map(plain), [
-    `╭${"─".repeat(18)}╮`,
-    `│text${" ".repeat(14)}│`,
-    `╰${"─".repeat(18)}╯`,
-  ]);
-  assert.equal(plain(framed[3] ?? ""), "  a completion row t");
-});
-
-test("a long model id is cut with an ellipsis and both corners survive", () => {
-  const editor = makeEditor({ model: "deepseek-v4.1-flash-preview-0125-extremely-long-model-identifier" });
-  const line = plain(lastLine(editor, 50));
-  assert.equal(visibleWidth(line), 50);
-  assert.ok(line.startsWith("╰") && line.endsWith("╯"), line);
-  assert.match(line, /… ─╯$/);
+test("the status line never exceeds the width it was given", () => {
+  const editor = makeEditor();
+  type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
+  editor.setWorkingStatusIndicator({
+    renderInBorder: () => `Working ${"long status ".repeat(10)}`,
+    renderSpinnerInBorder: () => "",
+    dispose() {},
+  } as unknown as Indicator);
+  for (const width of [40, 20]) {
+    for (const line of editor.render(width)) assert.equal(visibleWidth(line), width);
+  }
 });
 
 test("ctrl+s stashes a draft and restores it with the cursor", () => {
@@ -126,12 +149,10 @@ test("ctrl+s stashes a draft and restores it with the cursor", () => {
   editor.setText("half written");
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "");
-  assert.match(plain(lastLine(editor)), /stashed/);
 
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "half written");
   assert.deepEqual(editor.getCursor(), { line: 0, col: 12 });
-  assert.doesNotMatch(plain(lastLine(editor)), /stashed/);
 });
 
 test("a second ctrl+s asks before replacing the stash", () => {
@@ -143,12 +164,12 @@ test("a second ctrl+s asks before replacing the stash", () => {
 
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "second", "the held stash was replaced without asking");
-  assert.ok(lastLine(editor).includes(theme.fg("warning", "ctrl+s again to replace stash")));
+  assert.ok((editor.render(60)[0] ?? "").includes(` ${theme.fg("warning", "ctrl+s again to replace stash")}`));
 
   now += 1000;
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "");
-  assert.doesNotMatch(plain(lastLine(editor)), /replace stash/);
+  assert.ok(!rendered(editor).some((line) => line.includes("replace stash")));
 
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "second");
@@ -160,15 +181,15 @@ test("any other key cancels the replace prompt", () => {
   editor.handleInput("\x13");
   editor.setText("second");
   editor.handleInput("\x13");
-  assert.match(plain(lastLine(editor)), /replace stash/);
+  assert.ok(rendered(editor).some((line) => line.includes("replace stash")));
 
   editor.handleInput("x");
   assert.equal(editor.getText(), "secondx");
-  assert.doesNotMatch(plain(lastLine(editor)), /replace stash/);
+  assert.ok(!rendered(editor).some((line) => line.includes("replace stash")));
 
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "secondx", "the stash was replaced after the prompt was cancelled");
-  assert.match(plain(lastLine(editor)), /replace stash/);
+  assert.ok(rendered(editor).some((line) => line.includes("replace stash")));
 });
 
 test("the replace prompt expires after three seconds", () => {
@@ -180,10 +201,10 @@ test("the replace prompt expires after three seconds", () => {
   editor.handleInput("\x13");
 
   now += 3001;
-  assert.doesNotMatch(plain(lastLine(editor)), /replace stash/);
+  assert.ok(!rendered(editor).some((line) => line.includes("replace stash")));
   editor.handleInput("\x13");
   assert.equal(editor.getText(), "second");
-  assert.match(plain(lastLine(editor)), /replace stash/);
+  assert.ok(rendered(editor).some((line) => line.includes("replace stash")));
 });
 
 test("the stash reports when it is held, so the footer can name the next ctrl+s", () => {
@@ -198,14 +219,14 @@ test("the stash reports when it is held, so the footer can name the next ctrl+s"
 test("ctrl+c names the second press that exits, for Pi's half-second window", () => {
   let now = 1000;
   const editor = makeEditor({ now: () => now }, (binding) => binding === "app.clear");
-  const border = () => plain(lastLine(editor));
-  assert.doesNotMatch(border(), /again to exit/);
+  const status = () => rendered(editor)[0] ?? "";
+  assert.ok(!status().includes("again to exit"));
 
   editor.handleInput("\x03");
-  assert.ok(border().includes(`${keyText("app.clear")} again to exit`), border());
+  assert.ok(status().includes(`${keyText("app.clear")} again to exit`), status());
 
   now += 501;
-  assert.doesNotMatch(border(), /again to exit/);
+  assert.ok(!status().includes("again to exit"));
 });
 
 test("stashing keeps expanded paste content", () => {
@@ -262,9 +283,9 @@ test("double click on a marker opens the preview", () => {
   const event: TuiMouseEvent = {
     type: "click",
     button: "left",
-    x: 4,
+    x: 8,
     y: 1,
-    screenX: 4,
+    screenX: 8,
     screenY: 1,
     width: 60,
     height: 3,
@@ -277,29 +298,20 @@ test("double click on a marker opens the preview", () => {
   assert.deepEqual(previews, [3]);
 });
 
-test("the bottom border carries model and thinking at every width", () => {
-  const editor = makeEditor();
-  for (const width of [80, 40, 20]) {
-    const line = lastLine(editor, width);
-    assert.equal(visibleWidth(line), width);
-  }
-  assert.match(plain(lastLine(editor, 80)), /scripted · high/);
-});
-
-test("the ghost suggestion overlays the empty editor's content row", () => {
+test("the ghost suggestion overlays the empty editor's block row", () => {
   const editor = makeEditor();
   editor.setSuggestion("run the tests");
-  const lines = editor.render(40).map(plain);
-  assert.equal(lines.length, 3, `the box keeps its size:\n${lines.join("\n")}`);
-  assert.match(lines[1] ?? "", /run the tests/);
+  const lines = rendered(editor, 40);
+  assert.equal(lines.length, 3, `the block keeps its size:\n${lines.join("\n")}`);
+  assert.match(lines[1] ?? "", /^ ❯ +run the tests + $/);
 });
 
 test("the ghost suggestion disappears once the editor has text", () => {
   const editor = makeEditor();
   editor.setSuggestion("run the tests");
   editor.setText("hello");
-  const lines = editor.render(40).map(plain);
-  assert.match(lines[1] ?? "", /^│hello +│$/);
+  const lines = rendered(editor, 40);
+  assert.match(lines[1] ?? "", /^ ❯ hello + $/);
   assert.ok(!lines.some((line) => line.includes("run the tests")));
 });
 
@@ -308,9 +320,9 @@ test("clearing the editor shows the suggestion again until it is discarded", () 
   editor.setSuggestion("run the tests");
   editor.setText("hello");
   editor.setText("");
-  assert.match(plain(editor.render(40)[1] ?? ""), /run the tests/);
+  assert.match(firstContent(editor, 40), /run the tests/);
   editor.setSuggestion(undefined);
-  assert.ok(!plain(editor.render(40)[1] ?? "").includes("run the tests"));
+  assert.ok(!firstContent(editor, 40).includes("run the tests"));
 });
 
 test("tab fills the suggestion without submitting it", () => {
@@ -333,7 +345,7 @@ test("tab does nothing while the suggestion is hidden", () => {
 
 test("the ghost line never exceeds the width it was given", () => {
   const editor = makeEditor();
-  editor.setSuggestion("a suggestion that is far too long for a narrow editor box".repeat(2));
+  editor.setSuggestion("a suggestion that is far too long for a narrow editor block".repeat(2));
   for (const width of [40, 60, 80]) {
     for (const line of editor.render(width)) assert.equal(visibleWidth(line), width);
   }
@@ -381,8 +393,7 @@ test("typing the start of the suggestion shows the rest after the cursor", () =>
   const editor = makeEditor();
   editor.setSuggestion("运行测试并提交");
   editor.setText("运行");
-  const row = plain(editor.render(40)[1] ?? "");
-  assert.match(row, /^│运行 测试并提交 +│$/);
+  assert.match(firstContent(editor, 40), /^ ❯ 运行 测试并提交 + $/);
 });
 
 test("tab or right arrow completes a typed start into the whole suggestion", () => {
@@ -401,9 +412,9 @@ test("a draft that diverges hides the suggestion, clearing it brings the whole l
   const editor = makeEditor();
   editor.setSuggestion("运行测试并提交");
   editor.setText("部署");
-  assert.ok(!plain(editor.render(40)[1] ?? "").includes("提交"));
+  assert.ok(!firstContent(editor, 40).includes("提交"));
   editor.setText("");
-  assert.match(plain(editor.render(40)[1] ?? ""), /运行测试并提交/);
+  assert.match(firstContent(editor, 40), /运行测试并提交/);
 });
 
 test("the rest stays hidden while the cursor is not at the end or the draft has several lines", () => {
@@ -411,11 +422,11 @@ test("the rest stays hidden while the cursor is not at the end or the draft has 
   editor.setSuggestion("运行测试并提交");
   editor.setText("运行");
   editor.handleInput(LEFT);
-  assert.ok(!editor.render(40).map(plain).join("\n").includes("提交"));
+  assert.ok(!rendered(editor, 40).join("\n").includes("提交"));
   editor.handleInput(RIGHT);
   assert.equal(editor.getText(), "运行", "right arrow only moved the cursor");
   editor.setText("运行\n");
-  assert.ok(!editor.render(40).map(plain).join("\n").includes("提交"));
+  assert.ok(!rendered(editor, 40).join("\n").includes("提交"));
 });
 
 test("the rest of a typed suggestion never exceeds the width", () => {
@@ -445,14 +456,14 @@ test("esc on the empty editor dismisses a shown suggestion and tells the owner",
   assert.equal(dismissed, 1, "with a draft, esc is Pi's");
 });
 
-test("btw mode recolors the frame, labels the top border, and keeps the working status", () => {
+test("btw mode tints the block and colors the chevron without naming itself", () => {
   const editor = makeEditor();
   editor.setBtwMode(true);
-  const accent = theme.getFgAnsi("borderAccent");
-  const lines = editor.render(60);
-  assert.ok(lines[0]?.startsWith(`${accent}╭`), JSON.stringify(lines[0]));
-  assert.ok(plain(lines[0] ?? "").startsWith("╭─ btw ─"), plain(lines[0] ?? ""));
-  assert.ok(plain(lines[1] ?? "").startsWith("│"));
+  const block = editor.render(60).find((line) => line.includes("❯")) ?? "";
+  assert.ok(block.includes(theme.getBgAnsi("customMessageBg")), "the block takes the drawer color");
+  assert.ok(block.includes(theme.fg("borderAccent", "❯")), "the chevron takes the drawer color");
+  assert.equal(rendered(editor, 60).length, 3, "the drawer above names the mode, so no label row");
+  assert.ok(!rendered(editor, 60).some((line) => line.includes("btw")));
 
   type Indicator = NonNullable<Parameters<TuneEditor["setWorkingStatusIndicator"]>[0]>;
   editor.setWorkingStatusIndicator({
@@ -460,10 +471,12 @@ test("btw mode recolors the frame, labels the top border, and keeps the working 
     renderSpinnerInBorder: () => "",
     dispose() {},
   } as unknown as Indicator);
-  assert.ok(plain(editor.render(60)[0] ?? "").startsWith("╭─ btw · Working ─"));
+  const withStatus = rendered(editor, 60);
+  assert.equal(withStatus[0], " Working", "the status row carries no btw name");
 
   editor.setBtwMode(false);
-  assert.ok(!plain(editor.render(60)[0] ?? "").includes("btw"));
+  const plainBlock = editor.render(60).find((line) => line.includes("❯")) ?? "";
+  assert.ok(plainBlock.includes(blockBg), "the block is back to the neutral fill");
 });
 
 test("btw mode hides the next-step suggestion and leaves it for the main session", () => {

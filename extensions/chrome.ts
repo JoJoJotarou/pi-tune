@@ -10,6 +10,7 @@ export default function (pi: ExtensionAPI) {
     allTools: () => pi.getAllTools(),
     mcpServers: () => pi.getMcpServers(),
     settings: () => pi.getSettings(),
+    thinkingLevel: () => pi.getThinkingLevel(),
     agentDir: () => getAgentDir(),
     now: () => Date.now(),
     editorFocused: (tui) => editorHasFocus(tui),

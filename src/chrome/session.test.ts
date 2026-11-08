@@ -58,7 +58,7 @@ function required<T>(value: T | undefined, what: string): T {
   return value;
 }
 
-function harness(): Harness {
+function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
   const notified: string[] = [];
   let entries: SessionEntry[] = [];
   let leaf: string | null = null;
@@ -90,13 +90,14 @@ function harness(): Harness {
       getLeafId: () => leaf,
     },
     getContextUsage: () => ({ tokens: 1_000, contextWindow: 200_000, percent: 0.5 }),
-    model: undefined,
+    model: options.model,
   };
   const host: ChromeHost = {
     commands: () => [{ source: "skill" }, { source: "skill" }, { source: "builtin" }],
     allTools: () => [{ name: "read" }, { name: "mcp__docs__fetch" }],
     mcpServers: () => [{ name: "docs" }],
     settings: () => ({}),
+    thinkingLevel: () => "high",
     agentDir: () => "/tmp/pi-tune-session-test-no-such-dir",
     now: () => nowMs,
     editorFocused: () => focus,
@@ -279,4 +280,10 @@ test("a restarted session does not reuse the previous session's totals", () => {
   h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
   h.restart();
   assert.match(plain(h.footer())[0], /↓7 /);
+});
+
+test("the footer names the model and the thinking level Pi reports", () => {
+  const h = harness({ model: { id: "scripted", contextWindow: 200_000 } as ChromeContext["model"] });
+  const line = plain(h.footer())[0];
+  assert.match(line, /scripted · high/);
 });

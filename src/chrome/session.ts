@@ -8,7 +8,7 @@ import {
   VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
-import { type FooterParts, type FooterStats, footerLine, streamRate } from "./footer.ts";
+import { type FooterParts, type FooterStats, footerLine, streamRate, type ThinkingLevelName } from "./footer.ts";
 import { headerLine } from "./header.ts";
 import { formatHints, type HintState, hintFor } from "./hints.ts";
 import { configuredServers, connectedServers, readMcpFile } from "./mcp.ts";
@@ -26,6 +26,8 @@ export interface ChromeHost {
   settings(): { compaction?: { enabled?: boolean } };
   /** `getAgentDir()`: where the user-level `mcp.json` lives. */
   agentDir(): string;
+  /** `pi.getThinkingLevel()`: named in the footer and painted with Pi's own level color. */
+  thinkingLevel(): ThinkingLevelName;
   /** The clock; `Date.now` in the extension. */
   now(): number;
   /** Whether Pi's editor has focus; `editorHasFocus` in the extension (a Pi-internals probe). */
@@ -249,6 +251,10 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               branch: footerData.getGitBranch() ?? undefined,
               hints,
               stats,
+              identity:
+                session.model === undefined
+                  ? undefined
+                  : { model: session.model.id, thinking: host.thinkingLevel(), level: host.thinkingLevel() },
               statuses: Array.from(footerData.getExtensionStatuses().entries()),
             };
             return footerLine(parts, width, theme);

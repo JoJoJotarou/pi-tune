@@ -1,10 +1,4 @@
-import {
-  CustomEditor,
-  type KeybindingsManager,
-  keyText,
-  type Theme,
-  type ThemeColor,
-} from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type KeybindingsManager, keyText, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   type EditorTheme,
   getKeybindings,
@@ -18,8 +12,9 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { readEditorPaste } from "../internals/editor-pastes.ts";
+import { blockBackground } from "../shared/bg.ts";
 import { BTW_BORDER } from "../shared/btw.ts";
-import { frameBottom, frameRow, frameTop } from "../shared/frame.ts";
+import { BLOCK_PADDING, blockContentWidth, blockEdgeRow, blockRows, statusLine } from "./block.ts";
 import { isLargePaste, markerAt, type PasteMarker, removeMarker, replaceMarker } from "./paste.ts";
 import { withGhostSuggestion } from "./suggestion.ts";
 
@@ -28,10 +23,14 @@ const STASH_CONFIRM_MS = 3000;
 const CTRL_C_WINDOW_MS = 500;
 /** Zero-width APC: Pi pads every content line, so the bottom border needs its own tag to stay findable. */
 const BOTTOM_MARK = "\u001b_pi:tune-bottom\u0007";
+/**
+ * The block's background: Pi has no neutral input token, and `toolPendingBg` is its one gray block fill. A btw side
+ * thread tints the block with `customMessageBg`, the color pi-tune's drawer already uses for that thread.
+ */
+const BLOCK_BG = "toolPendingBg";
+const BTW_BG = "customMessageBg";
 
 export interface TuneEditorOptions {
-  model: string;
-  thinking: string;
   /** Full theme for tokens the editor factory does not receive (`warning`). */
   theme: () => Theme;
   paddingX?: number;
@@ -55,22 +54,7 @@ interface Stash {
   col: number;
 }
 
-export interface EditorBorderLabels {
-  /** Title on the top border, e.g. Pi's working status. */
-  top?: string;
-  left?: string;
-  right?: string;
-}
-
-/**
- * The frame helpers take a full `Theme`, but the editor only gets an `EditorTheme`. Border glyphs must keep Pi's
- * own editor border color (the thinking level), so every `fg` call goes through `borderColor`.
- */
-function borderTheme(borderColor: (text: string) => string): Theme {
-  return { fg: (_color: ThemeColor, text: string) => borderColor(text) } as unknown as Theme;
-}
-
-/** Pi's top border carries the working status between dashes; reuse it as the frame's title. */
+/** Pi's top border carries the working status between dashes; lift it out as the block's status line. */
 function topBorderLabel(line: string): string | undefined {
   const plain = stripTerminalSequences(line);
   // Pi pads the status with spaces inside its own color codes, so trim on the plain text, not the styled one.
@@ -83,31 +67,7 @@ function topBorderLabel(line: string): string | undefined {
   return text === "" ? undefined : text;
 }
 
-/**
- * Wrap the editor's own lines in a rounded box. `bottomIndex` is Pi's bottom border: everything after it is the
- * autocomplete list, which stays outside the box.
- */
-export function frameEditor(
-  lines: readonly string[],
-  width: number,
-  borderColor: (text: string) => string,
-  bottomIndex: number,
-  labels: EditorBorderLabels,
-): string[] {
-  if (width < 4) return [...lines];
-  const theme = borderTheme(borderColor);
-  const framed = [frameTop(width, theme, "border", { left: labels.top })];
-  for (let i = 1; i < lines.length; i++) {
-    if (i === bottomIndex) framed.push(frameBottom(width, theme, "border", labels));
-    else if (i > bottomIndex) framed.push(truncateToWidth(lines[i], width, ""));
-    else framed.push(frameRow(lines[i], width, theme, "border", 0));
-  }
-  return framed;
-}
-
 export class TuneEditor extends CustomEditor {
-  private model: string;
-  private thinking: string;
   private readonly themeOf: () => Theme;
   /** Pi resolves app actions through this manager; the parent keeps its copy private. */
   private readonly keybindingsOf: KeybindingsManager;
@@ -120,12 +80,15 @@ export class TuneEditor extends CustomEditor {
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
-  /** End of Pi's double `app.clear` window, while the border names that second press. */
+  /** End of Pi's double `app.clear` window, while the status line names that second press. */
   private ctrlCUntil?: number;
   private ctrlCTimer?: ReturnType<typeof setTimeout>;
-  private framed = false;
+  /** Columns before the draft on the last rendered frame; mouse coordinates are shifted by it. */
+  private blockOffset = 0;
+  /** Rows between our row 0 and Pi's own layout: Pi counts its top border, the block does not draw it. */
+  private rowShift = 0;
   private ghost?: string;
-  /** Enter sends to a btw side thread: the frame takes the drawer's color and the suggestion stays hidden. */
+  /** Enter sends to a btw side thread: the block takes the drawer's color and the suggestion stays hidden. */
   private btw = false;
 
   constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options: TuneEditorOptions) {
@@ -135,8 +98,6 @@ export class TuneEditor extends CustomEditor {
       autocompleteMaxVisible: options.autocompleteMaxVisible,
       embedWorkingStatus: true,
     });
-    this.model = options.model;
-    this.thinking = options.thinking;
     this.themeOf = options.theme;
     this.keybindingsOf = keybindings;
     this.now = options.now ?? (() => Date.now());
@@ -145,11 +106,6 @@ export class TuneEditor extends CustomEditor {
     this.onAcceptSuggestion = options.onAcceptSuggestion;
     this.onDismissSuggestion = options.onDismissSuggestion;
     this.onStashChange = options.onStashChange;
-  }
-
-  setStatus(model: string, thinking: string): void {
-    this.model = model;
-    this.thinking = thinking;
   }
 
   /** Ghost suggestion shown on the empty editor's first content row; Tab fills it. */
@@ -219,8 +175,12 @@ export class TuneEditor extends CustomEditor {
   }
 
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    // The inner editor renders two columns narrower, inside the left border.
-    const result = super.handleMouse(this.framed ? { ...event, x: event.x - 1 } : event);
+    // The draft renders inside the block, after the margin and the gutter, and the block drops Pi's top border,
+    // so a click is shifted by both the gutter and the rows the block added or removed above the draft.
+    const result =
+      this.blockOffset > 0
+        ? super.handleMouse({ ...event, x: event.x - this.blockOffset, y: event.y + this.rowShift })
+        : super.handleMouse(event);
     if (event.clickCount === 2) {
       const marker = this.markerAtCursor();
       if (marker) this.onPreview?.(marker.id);
@@ -243,25 +203,39 @@ export class TuneEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    this.framed = width >= 4;
-    const lines = super.render(this.framed ? width - 2 : width);
-    const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
-    if (!this.framed || bottom < 0) return lines;
-    const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
-    const rest = this.ghostRest();
-    if (rest !== undefined && bottom === 2) {
-      // A one-line draft has exactly one content row between the borders; the rest goes after its cursor.
-      plain[1] = withGhostSuggestion(plain[1], rest, (text) => this.themeOf().fg("dim", text), width - 2);
+    const inner = blockContentWidth(width);
+    this.blockOffset = width - inner;
+    if (inner < 1) {
+      // Too narrow for a gutter: Pi's own editor keeps the draft visible.
+      this.blockOffset = 0;
+      return super.render(width);
     }
-    // The working status takes the border color, like the model label on the bottom border.
-    const border = (text: string) => this.frameColor(text);
-    const status = topBorderLabel(plain[0] ?? "");
-    const top = [...(this.btw ? ["btw"] : []), ...(status === undefined ? [] : [stripTerminalSequences(status)])];
-    return frameEditor(plain, width, border, bottom, {
-      top: top.length === 0 ? undefined : border(top.join(" · ")),
-      left: this.leftLabel(),
-      right: border(`${this.model} · ${this.thinking}`),
-    });
+    const lines = super.render(inner);
+    const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
+    if (bottom < 0) return lines.map((line) => truncateToWidth(line, width, ""));
+    const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
+    const content = plain.slice(1, bottom);
+    const rest = this.ghostRest();
+    if (rest !== undefined && content.length === 1) {
+      // A one-line draft has exactly one content row; the rest of the suggestion goes after its cursor.
+      content[0] = withGhostSuggestion(content[0], rest, (text) => this.themeOf().fg("dim", text), inner);
+    }
+    // The chevron keeps Pi's own editor border color, which follows the thinking level.
+    const paint = blockBackground(this.btw ? BTW_BG : BLOCK_BG, this.themeOf());
+    const above = this.statusLabel(plain[0] ?? "");
+    // Our first content row sits below Pi's top border and the status line, above the block's top edge.
+    this.rowShift = 1 - (above === undefined ? 0 : 1) - BLOCK_PADDING;
+    const theme = this.themeOf();
+    const fill = theme.colors[this.btw ? BTW_BG : BLOCK_BG];
+    // Pi draws the autocomplete list flush left; the block must not push it under the draft.
+    const menu = plain.slice(bottom + 1).map((line) => truncateToWidth(line, width, "", true));
+    return [
+      ...(above === undefined ? [] : [statusLine(above, width)]),
+      blockEdgeRow(width, "top", fill, theme),
+      ...blockRows(content, width, this.frameColor("❯"), paint),
+      blockEdgeRow(width, "bottom", fill, theme),
+      ...menu,
+    ];
   }
 
   protected renderBottomBorder(width: number, hiddenLineCount: number): string {
@@ -283,11 +257,15 @@ export class TuneEditor extends CustomEditor {
     return this.btw ? this.themeOf().fg(BTW_BORDER, text) : this.borderColor(text);
   }
 
-  private leftLabel(): string | undefined {
+  /**
+   * The line above the block: a pi-tune warning first, then Pi's own status. Pi puts its working status and the
+   * hidden-line count in the top border, which the block does not draw. btw mode names nothing here: the drawer
+   * above already says so, and the block itself takes the drawer's color.
+   */
+  private statusLabel(topBorder: string): string | undefined {
     if (this.stashConfirming()) return this.themeOf().fg("warning", "ctrl+s again to replace stash");
     if (this.ctrlCConfirming()) return this.themeOf().fg("warning", `${keyText("app.clear")} again to exit`);
-    if (this.stash) return this.frameColor("stashed");
-    return undefined;
+    return topBorderLabel(topBorder);
   }
 
   private stashConfirming(): boolean {

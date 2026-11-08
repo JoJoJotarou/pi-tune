@@ -15,8 +15,9 @@ test("working line stays Working while a tool runs, without naming it", { timeou
     pi.type("run it\r");
     await pi.waitFor(/to stop/);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
-    // The status is embedded in the editor's top border, not drawn as an extra row.
-    assert.match(statusRow.trim(), /^╭─ \S.*to stop.* ─+╮$/);
+    // The status is its own line above the block, not embedded in a border.
+    assert.match(statusRow.trim(), /^\S.*to stop/);
+    assert.ok(!statusRow.includes("╭"), statusRow);
     assert.match(statusRow, /Working .*to stop/, statusRow);
     assert.equal(statusRow.includes("bash"), false, statusRow);
     await pi.shot("status-tools");

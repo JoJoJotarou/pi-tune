@@ -6,7 +6,6 @@ import { BTW_MODE_CHANNEL, EDITOR_READY_CHANNEL, EDITOR_STASH_CHANNEL } from "..
 export default function (pi: ExtensionAPI) {
   const session = createEditorSession({
     settings: () => pi.getSettings(),
-    thinkingLevel: () => pi.getThinkingLevel(),
     agentDir: () => getAgentDir(),
     now: () => Date.now(),
     emitStash: (held) => pi.events.emit(EDITOR_STASH_CHANNEL, held),

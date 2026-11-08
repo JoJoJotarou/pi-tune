@@ -36,7 +36,7 @@ test("the ghost suggestion fills on tab and hides while typing", { timeout: 120_
 
     // Tab fills the editor without submitting it.
     pi.press("tab");
-    await pi.waitFor(new RegExp(`│${GHOST} +│`));
+    await pi.waitFor(new RegExp(`❯ ${GHOST}`));
     await pi.shot("suggestion-filled");
     pi.type("x");
     await pi.waitFor(`${GHOST}x`);
@@ -52,9 +52,9 @@ test("typing the start of the suggestion keeps the rest and right arrow complete
     await pi.waitFor(GHOST);
     pi.type("Run the");
     // The fake cursor sits between the typed start and the rest.
-    await pi.waitFor(/│Run the {2}test suite and report failures +│/);
+    await pi.waitFor(/❯ Run the {2}test suite and report failures/);
     pi.press("right");
-    await pi.waitFor(new RegExp(`│${GHOST} +│`));
+    await pi.waitFor(new RegExp(`❯ ${GHOST}`));
   });
 });
 
