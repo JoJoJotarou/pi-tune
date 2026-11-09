@@ -11,8 +11,6 @@ export interface FooterStats {
   output: number;
   cacheRead: number;
   cacheWrite: number;
-  /** Cache hit rate of the latest assistant message, percent. */
-  cacheHitPercent?: number;
   cost: number;
   /** Estimated tokens currently in the context window, or null when unknown. */
   contextTokens: number | null;
@@ -212,9 +210,9 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const pill = (content: string): string => theme.bg("toolPendingBg", ` ${content} `);
 
   const total = stats.input + stats.cacheRead + stats.cacheWrite + stats.output;
-  // The cache hit rate belongs to the latest request, not the session: the word keeps it from reading as a share
-  // of the token total next to it.
-  const hit = stats.cacheHitPercent == null ? "" : `${muted(`${Math.round(stats.cacheHitPercent)}%`)}${dim(" cached")}`;
+  // Every percentage a pill prints divides the numbers printed beside it, so this is the cache's share of `total`
+  // rather than the latest request's hit rate: two axes on one row invite arithmetic that means nothing.
+  const hit = total > 0 ? `${muted(`${Math.round((stats.cacheRead / total) * 100)}%`)}${dim(" cached")}` : "";
   const cost = formatCost(stats.cost);
   const tokenIcon = `${accent("≡")} ${muted(`${compactNumber(total)} tok`)}`;
   const tokenFull = total > 0 ? pill(join(tokenIcon, hit, cost === "" ? "" : muted(cost))) : "";

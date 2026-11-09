@@ -7,7 +7,6 @@ export interface UsageTotals {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
-  cacheHitPercent?: number;
 }
 
 export function addUsage(totals: UsageTotals, usage: Usage): void {
@@ -18,7 +17,7 @@ export function addUsage(totals: UsageTotals, usage: Usage): void {
   totals.cost += usage.cost.total;
 }
 
-/** Pi's footer totals: every usage record in the session, plus the latest assistant cache hit rate. */
+/** Pi's footer totals: every usage record in the session. */
 export function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
   const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   for (const entry of entries) {
@@ -28,8 +27,6 @@ export function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
       const message = entry.message;
       if (message.role === "assistant") {
         addUsage(totals, message.usage);
-        const prompt = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
-        totals.cacheHitPercent = prompt > 0 ? (message.usage.cacheRead / prompt) * 100 : undefined;
       } else if (message.role === "toolResult" && message.usage) {
         addUsage(totals, message.usage);
       }

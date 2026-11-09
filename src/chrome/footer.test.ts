@@ -22,7 +22,6 @@ const stats: FooterStats = {
   output: 18_000,
   cacheRead: 1_600_000,
   cacheWrite: 12_000,
-  cacheHitPercent: 99.5,
   cost: 0.123,
   contextTokens: 53_000,
   contextPercent: 5.3,
@@ -82,7 +81,7 @@ test("the footer has an identity row and a pill row", () => {
 
   assert.match(lines[1], /\/ commands/);
   assert.match(lines[1], /≡ 1\.7M tok/);
-  assert.match(lines[1], /100% cached/);
+  assert.match(lines[1], /96% cached/);
   assert.match(lines[1], /\$0\.12/);
   assert.match(lines[1], /↯ 48 tok\/s/);
   assert.match(lines[1], /◔ 5\.3% \(53k\/1\.0M\)/);
@@ -93,14 +92,14 @@ test("the footer has an identity row and a pill row", () => {
 test("key hints yield before any pill, so the readings survive the narrowing", () => {
   const medium = plain(footerLine(parts, 80, theme))[1];
   assert.doesNotMatch(medium, /commands/, "the hints go before a pill does");
-  assert.match(medium, /≡ 1\.7M tok · 100% cached · \$0\.12/, medium);
+  assert.match(medium, /≡ 1\.7M tok · 96% cached · \$0\.12/, medium);
   assert.match(medium, /↯ 48 tok\/s/, medium);
   assert.match(medium, /◔ 5\.3% \(53k\/1\.0M\)/, medium);
 
   // Below that the pills yield in their own order: cost, the context reading, then speed.
   const narrow = plain(footerLine(parts, 40, theme))[1];
   assert.doesNotMatch(narrow, /commands|\$/, narrow);
-  assert.match(narrow, /≡ 1\.7M tok · 100% cached/, narrow);
+  assert.match(narrow, /≡ 1\.7M tok · 96% cached/, narrow);
   assert.doesNotMatch(narrow, /↯/, "speed yields before the token and context pills");
   assert.match(narrow, /◔ 5\.3%/, narrow);
   assert.ok(visibleWidth(narrow) <= 40);
@@ -174,6 +173,18 @@ test("the identity row draws the cwd relative to home", () => {
   assert.ok(!line.includes(homedir()), line);
 });
 
+test("the cache rate is a share of the token total printed beside it", () => {
+  // 1.6M cache reads out of 1.665M tokens in total: the percentage divides the numbers on the same row.
+  const line = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1] ?? "";
+  assert.match(line, /≡ 1\.7M tok · 96% cached/, line);
+
+  const cold = { ...parts, stats: { ...stats, cacheRead: 0 }, hints: "" };
+  assert.match(plain(footerLine(cold, 120, theme))[1] ?? "", /≡ 65k tok · 0% cached/);
+
+  const empty = { ...parts, stats: { ...stats, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, hints: "" };
+  assert.doesNotMatch(plain(footerLine(empty, 120, theme))[1] ?? "", /≡/, "no tokens, no share to print");
+});
+
 test("the cost is grouped, and a sub-cent session is not free", () => {
   assert.equal(formatCost(0), "");
   assert.equal(formatCost(0.001), "<$0.01");
@@ -186,10 +197,10 @@ test("the cost is grouped, and a sub-cent session is not free", () => {
 
 test("the cost rides in the token pill and leaves with it", () => {
   const wide = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1] ?? "";
-  assert.match(wide, /≡ 1\.7M tok · 100% cached · \$0\.12/, wide);
+  assert.match(wide, /≡ 1\.7M tok · 96% cached · \$0\.12/, wide);
 
   const narrow = plain(footerLine({ ...parts, hints: "" }, 66, theme))[1] ?? "";
-  assert.match(narrow, /≡ 1\.7M tok · 100% cached/, narrow);
+  assert.match(narrow, /≡ 1\.7M tok · 96% cached/, narrow);
   assert.doesNotMatch(narrow, /\$/, narrow);
 });
 

@@ -62,7 +62,12 @@ editor's top border.
 |---|---|---|
 | Left | `project（项目）`, `branch（分支）` and `git counts（仓库计数）` | `pi-tune · ⎇ main ↑2 ↓1 +128 −9` |
 | Center | `key hints（按键提示）` | `/ commands · @ files · ! shell` |
-| Right | `stats（用量统计）` | `≡ 380k tok · 91% cached · $0.42` |
+| Right | `stats（用量统计）` | `≡ 380k tok · 81% cached · $0.42` |
+
+Every percentage in the footer divides the numbers printed beside it: `81% cached` is the cache's share of the
+`380k` tokens on the same pill, and `4.5% (45k/1.0M)` is the context reading over its own window. Neither mixes a
+single request with the session total, because the two have different denominators and reading one against the
+other produces arithmetic that means nothing.
 
 `git counts（仓库计数）` follow the branch: `↑` commits a push sends, `↓` commits a pull brings in, `+` and `−`
 the lines the index and the working tree add and remove over `HEAD`. A zero count stays off the row, and so does
