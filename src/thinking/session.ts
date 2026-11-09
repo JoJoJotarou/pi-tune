@@ -1,3 +1,4 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type {
   AssistantMessageComponent,
   ExtensionContext,
@@ -6,21 +7,31 @@ import type {
   MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import { assistantMessages, newestAssistantMessage } from "../internals/transcript-components.ts";
+import {
+  assistantMessages,
+  assistantMessageTimestamp,
+  newestAssistantMessage,
+} from "../internals/transcript-components.ts";
 import { buildThoughtLabel } from "./label.ts";
 import { buildThinkingWindow } from "./window.ts";
+
+/** Custom session entry holding a measured thinking time, so a reload or a resumed session can restore it. */
+const TIMING_ENTRY = "pi-tune-thinking";
 
 /** What the thinking session reads from the running Pi instance; injected so tests can fake it. */
 export interface ThinkingHost {
   now(): number;
   /** Whether ANSI styling is on: `TERM !== "dumb" && !NO_COLOR` in the extension. */
   colorEnabled(): boolean;
+  /** Pi's `pi.appendEntry`: durable session data that never reaches the model. */
+  appendEntry(customType: string, data: unknown): void;
 }
 
 /** The part of Pi's `ExtensionContext` the thinking session uses. */
 export interface ThinkingContext {
   mode: ExtensionContext["mode"];
   ui: Pick<ExtensionContext["ui"], "setHiddenThinkingLabel" | "setWidget" | "notify">;
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries">;
 }
 
 export interface ThinkingSession {
@@ -45,6 +56,12 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
   let foldFailed = false;
   /** The drawn transcript is folded once per session, on the first frame that pc draws the widget. */
   let historyFolded = false;
+  /** Whether the message being streamed held a thinking block, which is what a recorded time belongs to. */
+  let messageHadThinking = false;
+  /** Measured time by message timestamp, hydrated from the session so a rebuilt transcript keeps its labels. */
+  const recordedTimes = new Map<number, number>();
+  /** Set once a message timestamp no longer reads: the labels lose their times, the fold keeps working. */
+  let timesUnavailable = false;
 
   function fold(message: AssistantMessageComponent, label: string): void {
     // No repaint request: pi draws a frame after every event, and a forced full redraw here would re-render the
@@ -72,9 +89,22 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
     fold(message, buildThoughtLabel(messageThinkingMs));
   }
 
+  /** The recorded time this message carries, if the session still has one for it. */
+  function recordedLabel(message: AssistantMessageComponent): string {
+    if (timesUnavailable) return buildThoughtLabel(undefined);
+    const timestamp = assistantMessageTimestamp(message);
+    if (timestamp === undefined) return buildThoughtLabel(undefined);
+    if (timestamp instanceof Error) {
+      timesUnavailable = true;
+      notify?.(`pi-tune thinking time unavailable: ${timestamp.message}`, "warning");
+      return buildThoughtLabel(undefined);
+    }
+    return buildThoughtLabel(recordedTimes.get(timestamp));
+  }
+
   /**
-   * Fold the transcript already drawn: a reload, and a resumed session, rebuild every block from the setting, and the
-   * blocks in them have settled long before. Their measured runs are gone, so they fold without a time.
+   * Fold the transcript already drawn: a reload, and a resumed session, rebuild every block from the setting. A block
+   * whose run was measured carries that time in the session, so it folds to the same label it had.
    */
   function foldDrawnMessages(): void {
     const screen = tui;
@@ -85,7 +115,13 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       reportFailure(messages);
       return;
     }
-    for (const message of messages) fold(message, buildThoughtLabel(undefined));
+    for (const message of messages) fold(message, recordedLabel(message));
+  }
+
+  /** Keep the measured time in the session: a reload and a resumed session have no run to time again. */
+  function recordThinkingTime(message: AssistantMessage): void {
+    if (!messageHadThinking || messageThinkingMs === undefined) return;
+    host.appendEntry(TIMING_ENTRY, { timestamp: message.timestamp, ms: messageThinkingMs });
   }
 
   /** Close one run and add it to the message total; a clock that went backwards leaves the total unmeasured. */
@@ -109,7 +145,16 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       tui = undefined;
       foldFailed = false;
       historyFolded = false;
+      messageHadThinking = false;
+      recordedTimes.clear();
+      timesUnavailable = false;
       notify = undefined;
+      for (const entry of ctx.sessionManager.getEntries()) {
+        if (entry.type !== "custom" || entry.customType !== TIMING_ENTRY) continue;
+        const data = entry.data as { timestamp?: unknown; ms?: unknown } | undefined;
+        if (typeof data?.timestamp !== "number" || typeof data.ms !== "number") continue;
+        recordedTimes.set(data.timestamp, data.ms);
+      }
       if (ctx.mode !== "tui") return;
       notify = (message, level) => ctx.ui.notify(message, level);
       // Blocks already in the transcript cannot be measured any more, so they keep this label.
@@ -127,6 +172,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       switch (update.type) {
         case "thinking_start": {
           thinkingStreaming = true;
+          messageHadThinking = true;
           runs.set(contentIndexOf(update), host.now());
           break;
         }
@@ -146,10 +192,12 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
         if (runs.size > 0) messageThinkingMs = undefined;
         runs.clear();
         foldSettledThinking();
+        recordThinkingTime(event.message);
       }
       runs.clear();
       thinkingStreaming = false;
       messageThinkingMs = 0;
+      messageHadThinking = false;
     },
     transformThinking(markdown, context) {
       if (context.messageType !== "assistant-thinking") return markdown;

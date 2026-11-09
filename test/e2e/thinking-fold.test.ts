@@ -1,7 +1,10 @@
 /**
  * The fold is state on `AssistantMessageComponent`, so it only holds while pi keeps that component. These tests pin
  * what each transcript event does to it: a relayout keeps the fold, and a reload rebuilds the transcript, so the
- * session folds what it finds again — without the measured time, which only the live run knew.
+ * session folds what it finds again and reads the measured time back from the session entry the run recorded.
+ *
+ * A resumed session takes the same path but cannot be scripted here: the harness gives every pi its own temporary
+ * agent directory, so a second process never sees the first one's session file.
  *
  * Compaction cannot be scripted here: pi refuses to compact a session as small as a scenario ("Nothing to compact")
  * and a real one would need a context near the model window. It rebuilds the transcript the way a reload does.
@@ -61,28 +64,23 @@ test("a folded block survives a resize and still opens", { timeout: 180_000 }, a
   });
 });
 
-test("a reload folds the rebuilt transcript without a measured time", { timeout: 180_000 }, async () => {
+test("a reload restores the folded label from the session", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, tune: true, settings: { hideThinkingBlock: true } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
     await pi.waitFor("First answer.");
     await pi.settle();
-    assert.equal(foldedLabels(rows(pi.screen())).length, 1, `folded after the run:\n${pi.screen().join("\n")}`);
+    const measured = foldedLabels(rows(pi.screen()));
+    assert.equal(measured.length, 1, `folded after the run:\n${pi.screen().join("\n")}`);
 
     pi.type("/reload\r");
     await pi.waitFor(/Reloaded/);
     await pi.waitFor("First answer.");
     await pi.settle();
 
-    // The rebuilt transcript is folded again, but its measured run is gone, so it claims no time and no stale number
-    // is left behind.
+    // The run kept its measured time in the session, so the rebuilt transcript folds to the very same label.
     const reloaded = rows(pi.screen());
-    assert.equal(foldedLabels(reloaded).length, 0, `no stale duration label:\n${reloaded.join("\n")}`);
-    assert.equal(
-      reloaded.filter((line) => line.trim() === "◆ Thought").length,
-      1,
-      `the block is folded again:\n${reloaded.join("\n")}`,
-    );
+    assert.deepEqual(foldedLabels(reloaded), measured, `the recorded time comes back:\n${reloaded.join("\n")}`);
     assert.equal(reloaded.filter((line) => line.includes(OPEN_LABEL)).length, 0, reloaded.join("\n"));
     assert.deepEqual(visibleThinking(reloaded), []);
     await pi.shot("thinking-fold-reloaded");

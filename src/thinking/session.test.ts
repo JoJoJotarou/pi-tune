@@ -6,6 +6,7 @@ import {
   type MarkdownTransformContext,
   type MessageEndEvent,
   type MessageUpdateEvent,
+  type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
@@ -13,6 +14,9 @@ import { createThinkingSession, type ThinkingContext, type ThinkingHost, type Th
 
 // The component styles its rows through pi's global theme.
 initTheme("dark");
+
+/** The timestamp pi stamps on the drawn message; a recorded thinking time is keyed by it. */
+const MESSAGE_TIMESTAMP = 1_700_000_000_000;
 
 interface Harness {
   session: ThinkingSession;
@@ -27,6 +31,10 @@ interface Harness {
   bind(tree?: TUI): void;
   labels: string[];
   warnings: string[];
+  /** Custom session entries the session asked pi to keep. */
+  appended: { customType: string; data: unknown }[];
+  /** Session entries pi would replay at start. */
+  entries: SessionEntry[];
   now(ms: number): void;
 }
 
@@ -36,6 +44,7 @@ function harness(): Harness {
   const warnings: string[] = [];
   const message = new AssistantMessageComponent({
     role: "assistant",
+    timestamp: MESSAGE_TIMESTAMP,
     content: [
       { type: "thinking", thinking: "plan the answer" },
       { type: "text", text: "done" },
@@ -44,6 +53,8 @@ function harness(): Harness {
   // A fresh session starts empty; a rebuilt one already holds its messages.
   const transcript = { children: [] as unknown[] } as unknown as TUI;
   let widget: ((tui: TUI, theme: unknown) => unknown) | undefined;
+  const appended: { customType: string; data: unknown }[] = [];
+  const entries: SessionEntry[] = [];
   const ctx: ThinkingContext = {
     mode: "tui",
     ui: {
@@ -54,8 +65,13 @@ function harness(): Harness {
       },
       notify: (text, level) => warnings.push(`${level}: ${text}`),
     },
+    sessionManager: { getEntries: () => entries },
   };
-  const host: ThinkingHost = { now: () => nowMs, colorEnabled: () => false };
+  const host: ThinkingHost = {
+    now: () => nowMs,
+    colorEnabled: () => false,
+    appendEntry: (customType, data) => appended.push({ customType, data }),
+  };
   return {
     session: createThinkingSession(host),
     ctx,
@@ -72,6 +88,8 @@ function harness(): Harness {
     bind: (tree = transcript) => widget?.(tree, testTheme()),
     labels,
     warnings,
+    appended,
+    entries,
     now: (ms) => {
       nowMs = ms;
     },
@@ -93,7 +111,10 @@ function thinkingEvent(
 }
 
 function assistantEnd(): MessageEndEvent {
-  return { type: "message_end", message: { role: "assistant", content: [] } } as unknown as MessageEndEvent;
+  return {
+    type: "message_end",
+    message: { role: "assistant", timestamp: MESSAGE_TIMESTAMP, content: [] },
+  } as unknown as MessageEndEvent;
 }
 
 function thinkingContext(width = 80): MarkdownTransformContext {
@@ -125,6 +146,53 @@ test("a rebuilt transcript is folded without a time", () => {
 
   assert.equal(h.rows()[0], "◆ Thought");
   assert.ok(!h.rows().includes("plan the answer"), `history folds:\n${h.rows().join("\n")}`);
+});
+
+test("a measured run is written into the session", () => {
+  const h = harness();
+  start(h);
+  h.draw();
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(1_400);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan the answer"));
+  h.session.messageEnd(assistantEnd());
+
+  assert.deepEqual(h.appended, [{ customType: "pi-tune-thinking", data: { timestamp: MESSAGE_TIMESTAMP, ms: 400 } }]);
+});
+
+test("a message without thinking records nothing", () => {
+  const h = harness();
+  start(h);
+  h.draw();
+  h.session.messageEnd(assistantEnd());
+
+  assert.deepEqual(h.appended, []);
+});
+
+test("a recorded time comes back on a rebuilt transcript", () => {
+  const h = harness();
+  h.entries.push({
+    type: "custom",
+    customType: "pi-tune-thinking",
+    data: { timestamp: MESSAGE_TIMESTAMP, ms: 3_400 },
+  } as unknown as SessionEntry);
+  h.draw();
+  start(h);
+
+  assert.equal(h.rows()[0], "◆ Thought for 3.4s");
+});
+
+test("a time recorded for another message leaves the label without one", () => {
+  const h = harness();
+  h.entries.push({
+    type: "custom",
+    customType: "pi-tune-thinking",
+    data: { timestamp: MESSAGE_TIMESTAMP + 1, ms: 3_400 },
+  } as unknown as SessionEntry);
+  h.draw();
+  start(h);
+
+  assert.equal(h.rows()[0], "◆ Thought");
 });
 
 test("an opened block is pi's own markdown, untouched", () => {

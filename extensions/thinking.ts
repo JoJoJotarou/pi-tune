@@ -5,6 +5,7 @@ export default (pi: ExtensionAPI) => {
   const session = createThinkingSession({
     now: () => Date.now(),
     colorEnabled: () => process.env.TERM !== "dumb" && !process.env.NO_COLOR,
+    appendEntry: (customType, data) => pi.appendEntry(customType, data),
   });
 
   pi.registerMarkdownTransformer((markdown, context) => session.transformThinking(markdown, context));
