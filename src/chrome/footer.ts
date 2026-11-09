@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
+import type { GitState } from "./git.ts";
 
 const HOME = homedir();
 
@@ -29,6 +30,8 @@ export interface FooterParts {
   /** The cwd in full, drawn instead of `project` when the identity row can take it. */
   cwd?: string;
   branch?: string;
+  /** The repository counts drawn after the branch: ahead/behind, then the line diff. */
+  git?: GitState;
   hints?: string;
   stats: FooterStats;
   /** The model and thinking level: Pi draws them on the editor, which the block editor no longer has. */
@@ -131,35 +134,59 @@ function elideMiddle(text: string, width: number): string {
   return sliceByColumn(text, 0, left) + "…" + sliceByColumn(text, visibleWidth(text) - right, right);
 }
 
+/** `↑2 ↓1 +12 −3`: a push, a pull, the lines added and the lines removed. A zero count stays off the row. */
+function gitText(git: GitState, theme: Theme): string {
+  const parts: string[] = [];
+  if (git.ahead > 0) parts.push(theme.fg("muted", `↑${git.ahead}`));
+  if (git.behind > 0) parts.push(theme.fg("muted", `↓${git.behind}`));
+  if (git.added > 0) parts.push(theme.fg("success", `+${git.added}`));
+  if (git.deleted > 0) parts.push(theme.fg("error", `−${git.deleted}`));
+  return parts.join(" ");
+}
+
 /**
- * Row 1: cwd/branch left, model and thinking level right. The cwd is its home-relative path while the row can take
- * it and its project name once it cannot; the branch yields its middle before the row falls back to the shorter name.
+ * Row 1: cwd and branch left, model and thinking level right. The cwd is its home-relative path while the row can
+ * take it and its project name once it cannot; the branch yields its middle, and the git counts leave entirely,
+ * before the row falls back to the shorter name.
  */
 function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
   const tinted = (text: string): string => theme.fg("muted", text);
   const path = parts.cwd === undefined ? undefined : tildePath(parts.cwd, HOME);
   const names = path !== undefined && path !== parts.project ? [path, parts.project] : [parts.project];
-  const labelled = (name: string): string => (parts.branch ? `${name} ⎇ ${parts.branch}` : name);
+  const git = parts.git === undefined ? "" : gitText(parts.git, theme);
+  // The counts size the work, the branch names it: the counts are the first part of the label to go.
+  const tails = git === "" ? [""] : [` ${git}`, ""];
+  const labelled = (name: string, tail: string): string =>
+    parts.branch ? `${name} · ⎇ ${parts.branch}${tail}` : `${name}${tail}`;
   const candidates: (string | undefined)[] = [];
-  // The model stays on the row as long as any name leaves room for it.
+  // The git counts outrank the longer name: a shorter name is tried before the counts are given up, because the
+  // counts are what the row cannot learn any other way.
   if (right !== "") {
-    for (const name of names) {
-      candidates.push(justify(tinted(labelled(name)), right, usable));
-      // ` ⎇ ` takes the three columns the parentheses did, so the branch keeps the same budget.
-      const budget = usable - 2 - visibleWidth(right) - visibleWidth(name) - 3;
-      if (parts.branch && budget >= 4) {
-        candidates.push(justify(tinted(`${name} ⎇ ${elideMiddle(parts.branch, budget)}`), right, usable));
+    for (const tail of tails) {
+      for (const name of names) {
+        candidates.push(justify(tinted(labelled(name, tail)), right, usable));
+        // ` · ⎇ ` takes five columns and the tail takes its own before the branch gets any.
+        const budget = usable - 2 - visibleWidth(right) - visibleWidth(name) - 5 - visibleWidth(tail);
+        if (parts.branch && budget >= 4) {
+          candidates.push(justify(tinted(`${name} · ⎇ ${elideMiddle(parts.branch, budget)}${tail}`), right, usable));
+        }
       }
-      candidates.push(justify(tinted(name), right, usable));
     }
+    for (const name of names) candidates.push(justify(tinted(name), right, usable));
   }
   // Without the model, only an uncut name beats the shorter one: a cut path names nothing.
+  for (const tail of tails) {
+    for (const name of names) {
+      if (visibleWidth(labelled(name, tail)) <= usable) {
+        candidates.push(justify(tinted(labelled(name, tail)), "", usable));
+      }
+    }
+  }
   for (const name of names) {
-    if (visibleWidth(labelled(name)) <= usable) candidates.push(justify(tinted(labelled(name)), "", usable));
     if (visibleWidth(name) <= usable) candidates.push(justify(tinted(name), "", usable));
   }
   const line = candidates.find((candidate): candidate is string => candidate !== undefined);
-  return truncateToWidth(line ?? tinted(labelled(parts.project)), usable);
+  return truncateToWidth(line ?? tinted(labelled(parts.project, tails[0] ?? "")), usable);
 }
 
 /**
@@ -179,7 +206,7 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   // of the token total next to it.
   const hit = stats.cacheHitPercent == null ? "" : `${muted(`${Math.round(stats.cacheHitPercent)}%`)}${dim(" cached")}`;
   const cost = stats.cost > 0 ? `$${stats.cost.toFixed(2)}` : "";
-  const tokenIcon = `${accent("∑")} ${muted(`${compactNumber(total)} tok`)}`;
+  const tokenIcon = `${accent("≡")} ${muted(`${compactNumber(total)} tok`)}`;
   const tokenFull = total > 0 ? pill(join(tokenIcon, hit, cost === "" ? "" : muted(cost))) : "";
   const tokenCompact = total > 0 ? pill(join(tokenIcon, hit)) : "";
   const tokenMini = total > 0 ? pill(tokenIcon) : "";

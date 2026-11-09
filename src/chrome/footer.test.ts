@@ -75,12 +75,12 @@ test("context readings keep one decimal below ten percent", () => {
 test("the footer has an identity row and a pill row", () => {
   const lines = plain(footerLine(parts, 120, theme));
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /pi-tune ⎇ feat\/m4-chrome/);
+  assert.match(lines[0], /pi-tune · ⎇ feat\/m4-chrome/);
   assert.match(lines[0], /scripted · high/);
   assert.doesNotMatch(lines[0], /tok|%/);
 
   assert.match(lines[1], /\/ commands/);
-  assert.match(lines[1], /∑ 1\.7M tok/);
+  assert.match(lines[1], /≡ 1\.7M tok/);
   assert.match(lines[1], /100% cached/);
   assert.match(lines[1], /\$0\.12/);
   assert.match(lines[1], /↯ 48 tok\/s/);
@@ -92,14 +92,14 @@ test("the footer has an identity row and a pill row", () => {
 test("key hints yield before any pill, so the readings survive the narrowing", () => {
   const medium = plain(footerLine(parts, 80, theme))[1];
   assert.doesNotMatch(medium, /commands/, "the hints go before a pill does");
-  assert.match(medium, /∑ 1\.7M tok · 100% cached · \$0\.12/, medium);
+  assert.match(medium, /≡ 1\.7M tok · 100% cached · \$0\.12/, medium);
   assert.match(medium, /↯ 48 tok\/s/, medium);
   assert.match(medium, /◔ 5\.3% \(53k\/1\.0M\)/, medium);
 
   // Below that the pills yield in their own order: cost, the context reading, then speed.
   const narrow = plain(footerLine(parts, 40, theme))[1];
   assert.doesNotMatch(narrow, /commands|\$/, narrow);
-  assert.match(narrow, /∑ 1\.7M tok · 100% cached/, narrow);
+  assert.match(narrow, /≡ 1\.7M tok · 100% cached/, narrow);
   assert.doesNotMatch(narrow, /↯/, "speed yields before the token and context pills");
   assert.match(narrow, /◔ 5\.3%/, narrow);
   assert.ok(visibleWidth(narrow) <= 40);
@@ -116,7 +116,7 @@ test("the context reading shows the used and total tokens", () => {
 
 test("the branch yields its middle before the model leaves the identity row", () => {
   const narrow = plain(footerLine({ ...parts, hints: "" }, 40, theme))[0];
-  assert.match(narrow, /pi-tune ⎇ feat\/m…chrome/);
+  assert.match(narrow, /pi-tune · ⎇ feat\/…hrome/);
   assert.match(narrow, /scripted · high/);
 
   const tiny = plain(footerLine({ ...parts, hints: "" }, 20, theme))[0];
@@ -130,6 +130,34 @@ test("the identity row falls back to the project alone", () => {
   assert.doesNotMatch(line, /\(|⎇/);
 });
 
+const git = { ahead: 2, behind: 1, added: 6, deleted: 1 };
+
+test("the identity row draws the git counts and the line diff after the branch", () => {
+  const line = plain(footerLine({ ...parts, git, hints: "" }, 120, theme))[0];
+  assert.match(line, /pi-tune · ⎇ feat\/m4-chrome ↑2 ↓1 \+6 −1/, line);
+  assert.match(line, /scripted · high/, line);
+});
+
+test("a zero git count stays off the row", () => {
+  const clean = { ...parts, git: { ahead: 0, behind: 0, added: 0, deleted: 0 }, hints: "" };
+  assert.match(plain(footerLine(clean, 120, theme))[0], /pi-tune · ⎇ feat\/m4-chrome\s+scripted · high/);
+
+  const behindOnly = { ...parts, git: { ahead: 0, behind: 3, added: 2, deleted: 0 }, hints: "" };
+  const line = plain(footerLine(behindOnly, 120, theme))[0] ?? "";
+  assert.match(line, /feat\/m4-chrome ↓3 \+2 /, line);
+  assert.doesNotMatch(line, /↑|−/, line);
+});
+
+test("the git counts leave before the branch does", () => {
+  const narrow = plain(footerLine({ ...parts, git, hints: "" }, 50, theme))[0] ?? "";
+  assert.match(narrow, /↑2 ↓1 \+6 −1/, narrow);
+  assert.match(narrow, /feat…rome/, narrow);
+
+  const tighter = plain(footerLine({ ...parts, git, hints: "" }, 40, theme))[0] ?? "";
+  assert.doesNotMatch(tighter, /↑|↓|\+|−/, tighter);
+  assert.match(tighter, /pi-tune · ⎇ feat\/…hrome/, tighter);
+});
+
 test("tildePath spends the row on the path instead of the home directory", () => {
   assert.equal(tildePath("/Users/me/proj", "/Users/me"), "~/proj");
   assert.equal(tildePath("/Users/me", "/Users/me"), "~");
@@ -141,7 +169,7 @@ test("tildePath spends the row on the path instead of the home directory", () =>
 test("the identity row draws the cwd relative to home", () => {
   const path = `${homedir()}/Developer/pi-tune`;
   const line = plain(footerLine({ ...parts, cwd: path, hints: "" }, 160, theme))[0];
-  assert.match(line, /~\/Developer\/pi-tune ⎇ feat\/m4-chrome/, line);
+  assert.match(line, /~\/Developer\/pi-tune · ⎇ feat\/m4-chrome/, line);
   assert.ok(!line.includes(homedir()), line);
 });
 
@@ -149,7 +177,7 @@ const cwd = "/Users/me/Developer/github/personal/pi-tune";
 
 test("the identity row draws the full path while it fits", () => {
   const wide = plain(footerLine({ ...parts, cwd, hints: "" }, 160, theme))[0];
-  assert.match(wide, new RegExp(`${cwd} ⎇ feat/m4-chrome`), wide);
+  assert.match(wide, new RegExp(`${cwd} · ⎇ feat/m4-chrome`), wide);
   assert.match(wide, /scripted · high/, wide);
 
   // The branch goes before the path does: the path plus the model still fits here.
@@ -162,7 +190,7 @@ test("the identity row draws the full path while it fits", () => {
 test("the identity row falls back to the project name when the path does not fit", () => {
   const narrow = plain(footerLine({ ...parts, cwd, hints: "" }, 40, theme))[0];
   assert.doesNotMatch(narrow, /Users/, narrow);
-  assert.match(narrow, /pi-tune ⎇ feat\/m…chrome/, narrow);
+  assert.match(narrow, /pi-tune · ⎇ feat\/…hrome/, narrow);
   assert.match(narrow, /scripted · high/, narrow);
 
   const tiny = plain(footerLine({ ...parts, cwd, hints: "" }, 20, theme))[0];
@@ -172,9 +200,9 @@ test("the identity row falls back to the project name when the path does not fit
 test("a session without identity still draws both rows", () => {
   const lines = plain(footerLine({ ...parts, identity: undefined }, 120, theme));
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /pi-tune ⎇ feat\/m4-chrome/);
+  assert.match(lines[0], /pi-tune · ⎇ feat\/m4-chrome/);
   assert.doesNotMatch(lines[0], /scripted/);
-  assert.match(lines[1], /∑/);
+  assert.match(lines[1], /≡/);
 });
 
 test("extension statuses take a dim third line sorted by key", () => {

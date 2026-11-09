@@ -9,10 +9,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 import { type FooterParts, type FooterStats, footerLine, streamRate, type ThinkingLevelName } from "./footer.ts";
+import type { GitState } from "./git.ts";
 import { headerLine } from "./header.ts";
 import { formatHints, type HintState, hintFor } from "./hints.ts";
 import { configuredServers, connectedServers, readMcpFile } from "./mcp.ts";
 import { sessionUsage, type UsageTotals } from "./usage.ts";
+
+/** How long a repository reading stays fresh, in milliseconds: the footer asks git again at most this often. */
+const GIT_TTL_MS = 2000;
 
 /** What the chrome session reads from the running Pi instance; injected so tests can fake it. */
 export interface ChromeHost {
@@ -30,6 +34,8 @@ export interface ChromeHost {
   thinkingLevel(): ThinkingLevelName;
   /** The clock; `Date.now` in the extension. */
   now(): number;
+  /** Reads the repository for the footer; `probeGitState(runGit, …)` in the extension. */
+  gitState(cwd: string, signal: AbortSignal): Promise<GitState | undefined>;
   /** Whether Pi's editor has focus; `editorHasFocus` in the extension (a Pi-internals probe). */
   editorFocused(tui: TUI): boolean | Error;
 }
@@ -107,6 +113,15 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
    * entry, so the footer rereads them only when the leaf moves, not on every frame.
    */
   let usageCache: { leaf: string | null; totals: UsageTotals } | undefined;
+  /**
+   * The last repository reading and when it started. The footer draws the last one while a newer one is in flight,
+   * so no frame waits on git and no frame starts a second git while one is running.
+   */
+  let git: GitState | undefined;
+  let gitReadAt = 0;
+  let gitPending = false;
+  let gitAbort: AbortController | undefined;
+  let gitWarned = false;
 
   function reset(): void {
     running = false;
@@ -120,10 +135,42 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
     requestStartedAt = undefined;
     ttft = undefined;
     usageCache = undefined;
+    git = undefined;
+    gitReadAt = 0;
+    gitPending = false;
+    gitAbort?.abort();
+    gitAbort = undefined;
+    gitWarned = false;
   }
 
   function render(): void {
     tui?.requestRender();
+  }
+
+  /** At most one repository reading per `GIT_TTL_MS`, never overlapping, never blocking a frame. */
+  function refreshGit(cwd: string): void {
+    if (gitPending || host.now() - gitReadAt < GIT_TTL_MS) return;
+    gitPending = true;
+    gitReadAt = host.now();
+    const abort = new AbortController();
+    gitAbort = abort;
+    host.gitState(cwd, abort.signal).then(
+      (state) => {
+        if (abort.signal.aborted) return;
+        git = state;
+        gitPending = false;
+        render();
+      },
+      (error: unknown) => {
+        if (abort.signal.aborted) return;
+        gitPending = false;
+        // A failed reading keeps the last one; say so once, then leave the row alone.
+        if (gitWarned) return;
+        gitWarned = true;
+        const reason = error instanceof Error ? error.message : String(error);
+        current?.ui.notify(`pi-tune chrome: ${reason} The footer keeps the last git reading.`, "warning");
+      },
+    );
   }
 
   return {
@@ -245,10 +292,12 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               session.ui.notify(`pi-tune chrome: ${focused.message} Key hints stay visible.`, "warning");
             }
             const hints = focused === false ? "" : formatHints(hintFor(state), theme);
+            refreshGit(session.cwd);
             const parts: FooterParts = {
               project: basename(session.cwd),
               cwd: session.cwd,
               branch: footerData.getGitBranch() ?? undefined,
+              git,
               hints,
               stats,
               identity:

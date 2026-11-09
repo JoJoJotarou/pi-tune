@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { gitRunner, probeGitState } from "../src/chrome/git.ts";
 import { createChromeSession } from "../src/chrome/session.ts";
 import { editorHasFocus } from "../src/internals/focus.ts";
 import { BTW_MODE_CHANNEL, EDITOR_READY_CHANNEL, EDITOR_STASH_CHANNEL } from "../src/shared/channels.ts";
@@ -13,6 +14,7 @@ export default function (pi: ExtensionAPI) {
     thinkingLevel: () => pi.getThinkingLevel(),
     agentDir: () => getAgentDir(),
     now: () => Date.now(),
+    gitState: (cwd, signal) => probeGitState(gitRunner(cwd), signal),
     editorFocused: (tui) => editorHasFocus(tui),
   });
 

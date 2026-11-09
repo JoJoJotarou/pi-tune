@@ -60,9 +60,15 @@ editor's top border.
 
 | Part | Name | Example |
 |---|---|---|
-| Left | `project（项目）` and `branch（分支）` | `pi-tune ⎇ main` |
+| Left | `project（项目）`, `branch（分支）` and `git counts（仓库计数）` | `pi-tune · ⎇ main ↑2 ↓1 +128 −9` |
 | Center | `key hints（按键提示）` | `/ commands · @ files · ! shell` |
-| Right | `stats（用量统计）` | `∑ 380k tok · 91% cached · $0.42` |
+| Right | `stats（用量统计）` | `≡ 380k tok · 91% cached · $0.42` |
+
+`git counts（仓库计数）` follow the branch: `↑` commits a push sends, `↓` commits a pull brings in, `+` and `−`
+the lines the index and the working tree add and remove over `HEAD`. A zero count stays off the row, and so does
+the whole segment outside a repository. It is read by one `git status --porcelain=v2 --branch` and, only when a
+tracked file changed, two `git diff --numstat` (`src/chrome/git.ts`); the footer draws the last reading while a
+newer one is in flight and asks for a frame when it lands, at most every two seconds.
 
 `key hints（按键提示）` follow the editor state (`src/chrome/hints.ts`): an empty draft shows
 `/ commands · @ files · ! shell`, plus `ctrl+s restore` when a draft is stashed; a draft with text shows
@@ -73,6 +79,9 @@ editor keeps the three prefixes. A btw drawer keeps only `@ files`; a dialog-foc
 pill set, so narrowing drops them before it drops a field. Past that the pills yield in their own order: cost,
 `TTFT`, speed, the context reading, the cache rate, then the token total. A 100-column terminal therefore shows
 the readings alone, and the hints return once the row can take them next to all of them.
+
+On the identity row the same rule holds in its own order: the `git counts（仓库计数）` leave first, then the branch
+loses its middle, then the cwd falls back from its home-relative path to the `project（项目）` name.
 
 ## Names not to use
 

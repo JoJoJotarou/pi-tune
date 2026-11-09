@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import type { GitState } from "./git.ts";
 import { type ChromeContext, type ChromeHost, type ChromeSession, createChromeSession } from "./session.ts";
 
 const theme = testTheme("dark");
@@ -44,6 +45,13 @@ interface Harness {
   entryReads(): number;
   setEditorText(text: string): void;
   setFocus(focus: boolean | Error): void;
+  /** Swaps the repository reading the fake git returns. */
+  setGit(state: GitState | undefined): void;
+  setGitError(error: Error): void;
+  /** How many times the session asked git for the repository state. */
+  gitReads(): number;
+  /** Lets the pending repository reading settle. */
+  flush(): Promise<void>;
   now(ms: number): void;
   restart(): void;
   header(width?: number): string[];
@@ -66,6 +74,9 @@ function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
   let editorText = "";
   let focus: boolean | Error = true;
   let nowMs = 10_000;
+  let gitReads = 0;
+  let gitState: GitState | undefined = { ahead: 2, behind: 1, added: 6, deleted: 1 };
+  let gitError: Error | undefined;
   let headerFactory: Parameters<ChromeContext["ui"]["setHeader"]>[0];
   let footerFactory: Parameters<ChromeContext["ui"]["setFooter"]>[0];
 
@@ -100,6 +111,11 @@ function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
     thinkingLevel: () => "high",
     agentDir: () => "/tmp/pi-tune-session-test-no-such-dir",
     now: () => nowMs,
+    gitState: async () => {
+      gitReads += 1;
+      if (gitError) throw gitError;
+      return gitState;
+    },
     editorFocused: () => focus,
   };
 
@@ -139,6 +155,14 @@ function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
     setFocus: (value) => {
       focus = value;
     },
+    setGit: (state) => {
+      gitState = state;
+    },
+    setGitError: (error) => {
+      gitError = error;
+    },
+    gitReads: () => gitReads,
+    flush: () => new Promise((resolve) => setImmediate(resolve)),
     now: (ms) => {
       nowMs = ms;
     },
@@ -165,8 +189,8 @@ test("start renders the header counts and the footer line", () => {
   assert.match(header, /myproj/);
 
   const footer = plain(h.footer());
-  assert.match(footer[0], /myproj ⎇ feat\/x/);
-  assert.match(footer[1], /∑ 150 tok/);
+  assert.match(footer[0], /myproj · ⎇ feat\/x/);
+  assert.match(footer[1], /≡ 150 tok/);
   assert.match(footer[1], /◔ 0\.5% \(1\.0k\/200k\)/);
   assert.match(footer[1], /commands/);
   assert.equal(footer[2], "1 thread");
@@ -189,7 +213,7 @@ test("a focused dialog hides the key hints", () => {
   h.setFocus(false);
   const rows = plain(h.footer());
   assert.doesNotMatch(rows[1], /commands/);
-  assert.match(rows[0], /myproj ⎇ feat\/x/);
+  assert.match(rows[0], /myproj · ⎇ feat\/x/);
   assert.deepEqual(h.notified, []);
 });
 
@@ -260,29 +284,93 @@ test("shutdown clears the session and a restart starts fresh", () => {
 test("the footer rereads the entries only after an append", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /∑ 150 tok/);
+  assert.match(plain(h.footer())[1], /≡ 150 tok/);
   h.footer();
   h.footer();
   assert.equal(h.entryReads(), 1);
 
   h.append({ type: "usage", usage: usage(30) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /∑ 280 tok/);
+  assert.match(plain(h.footer())[1], /≡ 280 tok/);
   assert.equal(h.entryReads(), 2);
 });
 
 test("a restarted session does not reuse the previous session's totals", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /∑ 150 tok/);
+  assert.match(plain(h.footer())[1], /≡ 150 tok/);
 
   h.session.shutdown();
   h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
   h.restart();
-  assert.match(plain(h.footer())[1], /∑ 107 tok/);
+  assert.match(plain(h.footer())[1], /≡ 107 tok/);
 });
 
 test("the footer names the model and the thinking level Pi reports", () => {
   const h = harness({ model: { id: "scripted", contextWindow: 200_000 } as ChromeContext["model"] });
   const line = plain(h.footer())[0];
   assert.match(line, /scripted · high/);
+});
+
+test("the footer draws the branch counts and the line diff after the branch", async () => {
+  const h = harness();
+  h.footer();
+  await h.flush();
+  const line = plain(h.footer())[0];
+  assert.match(line, /myproj · ⎇ feat\/x ↑2 ↓1 \+6 −1/, line);
+});
+
+test("a clean repository leaves the counts off the row", async () => {
+  const h = harness();
+  h.setGit({ ahead: 0, behind: 0, added: 0, deleted: 0 });
+  h.footer();
+  await h.flush();
+  const line = plain(h.footer())[0];
+  assert.match(line, /myproj · ⎇ feat\/x/, line);
+  assert.doesNotMatch(line, /↑|↓|\+|−/, line);
+});
+
+test("the repository is read once per interval, not once per frame", async () => {
+  const h = harness();
+  h.footer();
+  await h.flush();
+  h.footer();
+  h.footer();
+  assert.equal(h.gitReads(), 1);
+
+  // Two seconds later the reading has expired, so the next frame asks git again.
+  h.now(12_000);
+  h.footer();
+  await h.flush();
+  assert.equal(h.gitReads(), 2);
+});
+
+test("a failed repository reading warns once and keeps the last one", async () => {
+  const h = harness();
+  h.footer();
+  await h.flush();
+  h.setGitError(new Error("git exploded"));
+  h.now(12_000);
+  h.footer();
+  await h.flush();
+  assert.equal(h.notified.length, 1);
+  assert.match(h.notified[0] ?? "", /git exploded/);
+  assert.match(plain(h.footer())[0], /↑2 ↓1/, "the last reading stays on the row");
+
+  h.now(14_000);
+  h.footer();
+  await h.flush();
+  assert.equal(h.notified.length, 1, "one warning per session");
+});
+
+test("a restart drops the old reading and asks git again", async () => {
+  const h = harness();
+  h.footer();
+  await h.flush();
+  assert.equal(h.gitReads(), 1);
+
+  h.session.shutdown();
+  h.restart();
+  h.footer();
+  await h.flush();
+  assert.equal(h.gitReads(), 2);
 });
