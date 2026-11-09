@@ -10,6 +10,7 @@ import {
   footerLine,
   formatContextPercent,
   formatContextReading,
+  formatCost,
   streamRate,
   tildePath,
 } from "./footer.ts";
@@ -171,6 +172,25 @@ test("the identity row draws the cwd relative to home", () => {
   const line = plain(footerLine({ ...parts, cwd: path, hints: "" }, 160, theme))[0];
   assert.match(line, /~\/Developer\/pi-tune · ⎇ feat\/m4-chrome/, line);
   assert.ok(!line.includes(homedir()), line);
+});
+
+test("the cost is grouped, and a sub-cent session is not free", () => {
+  assert.equal(formatCost(0), "");
+  assert.equal(formatCost(0.001), "<$0.01");
+  assert.equal(formatCost(0.01), "$0.01");
+  assert.equal(formatCost(0.42), "$0.42");
+  assert.equal(formatCost(3.5), "$3.50");
+  assert.equal(formatCost(1234.567), "$1,234.57");
+  assert.equal(formatCost(1_234_567.891), "$1,234,567.89");
+});
+
+test("the cost rides in the token pill and leaves with it", () => {
+  const wide = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1] ?? "";
+  assert.match(wide, /≡ 1\.7M tok · 100% cached · \$0\.12/, wide);
+
+  const narrow = plain(footerLine({ ...parts, hints: "" }, 66, theme))[1] ?? "";
+  assert.match(narrow, /≡ 1\.7M tok · 100% cached/, narrow);
+  assert.doesNotMatch(narrow, /\$/, narrow);
 });
 
 const cwd = "/Users/me/Developer/github/personal/pi-tune";

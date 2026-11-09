@@ -83,6 +83,16 @@ export function formatContextReading(stats: FooterStats): string {
   return `${percent} (${tokens}/${compactNumber(stats.contextWindow)})`;
 }
 
+/** Two decimals with thousands grouped, because a session that costs four figures should not push the row out. */
+const COST_FORMAT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** `$0.42`, `$1,234.57`, and `<$0.01` for a cost that rounds to zero but was not free. Nothing at zero. */
+export function formatCost(cost: number): string {
+  if (!(cost > 0)) return "";
+  if (cost < 0.01) return "<$0.01";
+  return `$${COST_FORMAT.format(cost)}`;
+}
+
 /** Pi's one-line status sanitation: no control characters, no repeated spaces. */
 function sanitizeStatusText(text: string): string {
   return text
@@ -205,7 +215,7 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   // The cache hit rate belongs to the latest request, not the session: the word keeps it from reading as a share
   // of the token total next to it.
   const hit = stats.cacheHitPercent == null ? "" : `${muted(`${Math.round(stats.cacheHitPercent)}%`)}${dim(" cached")}`;
-  const cost = stats.cost > 0 ? `$${stats.cost.toFixed(2)}` : "";
+  const cost = formatCost(stats.cost);
   const tokenIcon = `${accent("≡")} ${muted(`${compactNumber(total)} tok`)}`;
   const tokenFull = total > 0 ? pill(join(tokenIcon, hit, cost === "" ? "" : muted(cost))) : "";
   const tokenCompact = total > 0 ? pill(join(tokenIcon, hit)) : "";
