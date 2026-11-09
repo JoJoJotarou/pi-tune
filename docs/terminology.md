@@ -60,22 +60,25 @@ editor's top border.
 
 | Part | Name | Example |
 |---|---|---|
-| Left | `project（项目）`, `branch（分支）` and `git counts（仓库计数）` | `pi-tune · ⎇ main ↑2 ↓1 +128 −9` |
+| Left | `project（项目）`, session name, `branch（分支）` and `git counts（仓库计数）` | `pi-tune · footer pass · ⎇ main ↑2 ↓1 +128 −9` |
 | Center | `key hints（按键提示）` | `/ commands · @ files · ! shell` |
-| Right | `stats（用量统计）` | `≡ 27M tok · 119 req · 26M cached · 300k out · $12.34` |
+| Right | `stats（用量统计）` | `↯ 74 tok/s · 91% hit · 1.8s TTFT    ≡ $12.34 · ↑1.2M ↓300k R26M W400k    ◔ 32% (315k/1.0M) auto` |
 
 `stats（用量统计）` is three groups, each answering one question, and none of them borrows a number from another:
 
 | Group | Question | Fields |
 |---|---|---|
-| `session（会话）` | what has this session spent? | `≡` total tokens, `req` assistant requests, `cached` cache-read tokens, `out` output tokens, `$` cost |
-| `turn（当轮）` | how did the latest request go? | `↯` tokens per second, `N% hit` of that request's prompt, `TTFT`, `out` tokens of that reply |
-| `context（上下文）` | how full is the window right now? | `◔` percent and the reading it divides, `(used/window)` |
+| `turn（当轮）` | how did the latest request go? | `↯` tokens per second, `N% hit` of that request's prompt, `TTFT` |
+| `session（会话）` | what has this session spent? | `≡` cost, then Pi's own spelling of the token counts: `↑` input, `↓` output, `R` cache reads, `W` cache writes |
+| `context（上下文）` | how full is the window right now? | `◔` percent, the reading it divides `(used/window)`, and `auto` while Pi compacts on its own |
 
 A percentage only ever divides the numbers printed beside it. `91% hit` therefore lives in `turn`, whose numbers all
-come from the one request, while `session（会话）` prints counts instead of a share: reading a single request
-against the session total produces arithmetic that means nothing (`91%` of `27M` is not a number the session had).
-`session（会话）` adds up: `cached` plus `out` plus the freshly billed input is exactly the `tok` total.
+come from the one request, while `session（会话）` prints counts instead of a share. It prints no summed total either:
+every request sends the whole context again, so a sum counts the same cached prompt once per request and dwarfs the
+context it came from (seven requests over a 27k context add up to 160k). A zero count stays off the row. Each turn field
+reads value first, unit second (`74 tok/s`, `91% hit`, `1.8s TTFT`). The turn group sits leftmost because its numbers move the most: a change
+in its width only moves its own left edge. Without a rate yet, the turn group still shows its hit rate and TTFT; a
+session that has neither tokens nor cost shows no session group.
 
 `git counts（仓库计数）` follow the branch: `↑` commits a push sends, `↓` commits a pull brings in, `+` and `−`
 the lines the index and the working tree add and remove over `HEAD`. A zero count stays off the row, and so does
@@ -88,14 +91,16 @@ newer one is in flight and asks for a frame when it lands, at most every two sec
 `@ files · ctrl+s stash`. During a run, text in the editor switches them to steer / follow-up, while an empty
 editor keeps the three prefixes. A btw drawer keeps only `@ files`; a dialog-focused editor hides them.
 
-`key hints（按键提示）` rank below every reading in `stats（用量统计）`: they share the row only with the complete
-pill set, so narrowing drops them before it drops a field. Past that the row loses one field per rung: the turn
-group's `out`, then its `N% hit`, then `TTFT`, then the session group's `cached` and `out` counts, then the turn
-pill itself, then `req`, then `$`, then the token total, then the context reading. A 100-column terminal therefore
-shows the readings alone, and the hints return once the row can take them next to all of them.
+Narrowing drops one field per rung, always in this order: `TTFT`, then `W`, then `R`, then the `key hints（按键提示）`,
+then `auto`, then the `(used/window)` reading, then `N% hit`, then the turn group's rate (and with it the group), then
+`↓`, then `↑`, then the cost. The context percent never leaves. Inside each group the fields are written in the reverse of that order,
+so a group always loses its last field. The rung is chosen as if the rate were `9999 tok/s`, so a rate gaining a digit
+mid-stream never moves the row to another rung.
 
-On the identity row the same rule holds in its own order: the `git counts（仓库计数）` leave first, then the branch
-loses its middle, then the cwd falls back from its home-relative path to the `project（项目）` name.
+On the identity row the same rule holds in its own order: the `(provider)` before the model leaves first (Pi names it
+only while more than one provider is available), then the session name, which outlasts the longer path, then the
+`git counts（仓库计数）`, then the branch loses its middle, then the cwd falls back from its home-relative path to the
+`project（项目）` name.
 
 ## Names not to use
 

@@ -23,12 +23,13 @@ const stats: FooterStats = {
   cacheRead: 1_600_000,
   cacheWrite: 12_000,
   cost: 0.123,
-  requests: 119,
-  lastRequest: { output: 640, cacheHitPercent: 91 },
+  cacheHitPercent: 91,
   contextTokens: 53_000,
   contextPercent: 5.3,
   contextWindow: 1_000_000,
   rate: 48,
+  ttftMs: 1800,
+  autoCompact: true,
 };
 
 const parts: FooterParts = {
@@ -36,7 +37,7 @@ const parts: FooterParts = {
   branch: "feat/m4-chrome",
   hints: "/ commands · @ files · ! shell · ctrl+s stash",
   stats,
-  identity: { model: "scripted", thinking: "high", level: "high" },
+  identity: { provider: "faux", model: "scripted", thinking: "high", level: "high" },
 };
 
 function plain(lines: readonly string[]): string[] {
@@ -75,53 +76,108 @@ test("context readings keep one decimal below ten percent", () => {
 });
 
 test("the footer has an identity row and a pill row", () => {
-  const lines = plain(footerLine(parts, 120, theme));
+  const lines = plain(footerLine({ ...parts, hints: "" }, 120, theme));
   assert.equal(lines.length, 2);
   assert.match(lines[0], /pi-tune · ⎇ feat\/m4-chrome/);
-  assert.match(lines[0], /scripted · high/);
+  assert.match(lines[0], /\(faux\) scripted · high/);
   assert.doesNotMatch(lines[0], /tok|%/);
 
-  // The three groups, each answering one question: the session's bill, the latest request, the window right now.
-  assert.match(lines[1], /≡ 1\.7M tok · 119 req · 1\.6M cached · 18k out · \$0\.12/, lines[1]);
-  assert.match(lines[1], /↯ 48 tok\/s · 91% hit · 640 out/, lines[1]);
-  assert.match(lines[1], /◔ 5\.3% \(53k\/1\.0M\)/, lines[1]);
+  // The three groups, each answering one question: the latest request, the session's bill, the window right now.
+  assert.match(
+    lines[1],
+    /↯ 48 tok\/s · 91% hit · 1\.8s TTFT {4}≡ \$0\.12 · ↑35k ↓18k R1\.6M W12k {4}◔ 5\.3% \(53k\/1\.0M\) auto/,
+    lines[1],
+  );
   for (const line of lines) assert.ok(visibleWidth(line) <= 120, `${visibleWidth(line)}: ${line}`);
   assert.equal(visibleWidth(lines[0]), 120, "the identity row fills the width");
 });
 
-test("key hints yield before any pill, so the readings survive the narrowing", () => {
-  const wide = plain(footerLine(parts, 200, theme))[1] ?? "";
-  assert.match(wide, /\/ commands · @ files/, wide);
-  assert.match(wide, /119 req · 1\.6M cached · 18k out/, wide);
+/** Which readings a row shows, so a rung can be compared with the next one. */
+function fieldsOf(row: string): string[] {
+  const fields: [string, RegExp][] = [
+    ["speed", /tok\/s/],
+    ["hit", /% hit/],
+    ["ttft", /TTFT/],
+    ["cost", /\$/],
+    ["input", /↑\d/],
+    ["output", /↓\d/],
+    ["cacheRead", /R\d/],
+    ["cacheWrite", /W\d/],
+    ["percent", /◔ \S+%/],
+    ["reading", /\(\d+k\/1\.0M\)/],
+    ["auto", /auto/],
+    ["hints", /commands/],
+  ];
+  return fields.filter(([, pattern]) => pattern.test(row)).map(([name]) => name);
+}
 
-  const medium = plain(footerLine(parts, 120, theme))[1] ?? "";
-  assert.doesNotMatch(medium, /commands/, "the hints go before a pill does");
-  assert.match(medium, /≡ 1\.7M tok · 119 req · 1\.6M cached · 18k out · \$0\.12/, medium);
-
-  // Then the fields go one rung at a time: the turn's extras, the cumulative details, the turn pill.
-  const narrow = plain(footerLine(parts, 80, theme))[1] ?? "";
-  assert.match(narrow, /≡ 1\.7M tok · 119 req · \$0\.12/, narrow);
-  assert.match(narrow, /↯ 48 tok\/s {4}◔/, narrow);
-
-  const tighter = plain(footerLine(parts, 50, theme))[1] ?? "";
-  assert.match(tighter, /≡ 1\.7M tok · \$0\.12/, tighter);
-  assert.doesNotMatch(tighter, /↯|req/, tighter);
-
-  const tiny = plain(footerLine(parts, 20, theme))[1] ?? "";
-  assert.doesNotMatch(tiny, /tok/);
-  assert.match(tiny, /◔ 5\.3%/);
-  assert.ok(visibleWidth(tiny) <= 20);
+test("narrowing drops one field at a time, in one fixed order", () => {
+  const order = [
+    "ttft",
+    "cacheWrite",
+    "cacheRead",
+    "hints",
+    "auto",
+    "reading",
+    "hit",
+    "speed",
+    "output",
+    "input",
+    "cost",
+  ];
+  let previous = fieldsOf(plain(footerLine(parts, 240, theme))[1] ?? "");
+  assert.deepEqual(previous.sort(), [...order, "percent"].sort(), "the widest row shows every field");
+  const seen: string[] = [];
+  for (let width = 239; width >= 8; width--) {
+    const row = plain(footerLine(parts, width, theme))[1] ?? "";
+    assert.ok(visibleWidth(row) <= width, `${width}: ${row}`);
+    const fields = fieldsOf(row);
+    const gone = previous.filter((field) => !fields.includes(field));
+    assert.ok(
+      fields.every((field) => previous.includes(field)),
+      `${width}: ${fields} gained a field over ${previous}`,
+    );
+    seen.push(...gone);
+    previous = fields;
+  }
+  assert.deepEqual(seen, order, "the percent stays at any width");
 });
 
-test("the hit rate belongs to the latest request, so it rides with the turn's numbers", () => {
-  // 91% sits next to the output count of the same request, not next to the session total.
-  const line = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1] ?? "";
-  assert.match(line, /↯ 48 tok\/s · 91% hit · 640 out/, line);
-  assert.match(line, /≡ 1\.7M tok · 119 req · 1\.6M cached · 18k out/, line);
+test("key hints outlast the TTFT only", () => {
+  const row = plain(footerLine(parts, 120, theme))[1] ?? "";
+  assert.match(row, /\/ commands · @ files/, row);
+  assert.doesNotMatch(row, /TTFT/, row);
+  assert.match(row, /↯ 48 tok\/s · 91% hit/, row);
+});
 
-  // No share of the session total is printed, so nothing invites "91% of 1.7M".
-  assert.doesNotMatch(line, /\d+% cached/, line);
-  assert.doesNotMatch(line, /1\.7M tok · \d+%/, line);
+test("a pill always loses its last field", () => {
+  const narrow = plain(footerLine({ ...parts, hints: "" }, 50, theme))[1] ?? "";
+  assert.match(narrow, /↯ 48 tok\/s {4}≡ \$0\.12 · ↑35k ↓18k {4}◔ 5\.3%/, narrow);
+  const tighter = plain(footerLine({ ...parts, hints: "" }, 25, theme))[1] ?? "";
+  assert.match(tighter, /≡ \$0\.12 {4}◔ 5\.3%/, tighter);
+});
+
+test("a faster rate never moves the row to another rung", () => {
+  for (let width = 40; width <= 200; width++) {
+    const slow = fieldsOf(plain(footerLine({ ...parts, stats: { ...stats, rate: 7 } }, width, theme))[1] ?? "");
+    const fast = fieldsOf(plain(footerLine({ ...parts, stats: { ...stats, rate: 2400 } }, width, theme))[1] ?? "");
+    assert.deepEqual(fast, slow, `${width} columns`);
+  }
+});
+
+test("the turn pill draws without a rate", () => {
+  const row = plain(footerLine({ ...parts, hints: "", stats: { ...stats, rate: undefined } }, 120, theme))[1] ?? "";
+  assert.match(row, /↯ 91% hit · 1\.8s TTFT/, row);
+});
+
+test("the session pill spells usage the way Pi's footer does, without a summed total", () => {
+  const row = plain(footerLine({ ...parts, hints: "" }, 240, theme))[1] ?? "";
+  assert.match(row, /≡ \$0\.12 · ↑35k ↓18k R1\.6M W12k /, row);
+  assert.doesNotMatch(row, /req|cached|\d tok(?!\/s)/, row);
+
+  const noCache = { ...parts, hints: "", stats: { ...stats, cacheRead: 0, cacheWrite: 0 } };
+  const plainRow = plain(footerLine(noCache, 240, theme))[1] ?? "";
+  assert.match(plainRow, /≡ \$0\.12 · ↑35k ↓18k {4}◔/, plainRow);
 });
 
 test("the context reading shows the used and total tokens", () => {
@@ -142,7 +198,7 @@ test("the branch yields its middle before the model leaves the identity row", ()
 test("the identity row falls back to the project alone", () => {
   const line = plain(footerLine({ ...parts, branch: undefined, hints: "" }, 40, theme))[0];
   assert.match(line, /^pi-tune/);
-  assert.doesNotMatch(line, /\(|⎇/);
+  assert.doesNotMatch(line, /⎇/);
 });
 
 const git = { ahead: 2, behind: 1, added: 6, deleted: 1 };
@@ -155,7 +211,7 @@ test("the identity row draws the git counts and the line diff after the branch",
 
 test("a zero git count stays off the row", () => {
   const clean = { ...parts, git: { ahead: 0, behind: 0, added: 0, deleted: 0 }, hints: "" };
-  assert.match(plain(footerLine(clean, 120, theme))[0], /pi-tune · ⎇ feat\/m4-chrome\s+scripted · high/);
+  assert.match(plain(footerLine(clean, 120, theme))[0], /pi-tune · ⎇ feat\/m4-chrome\s+\(faux\) scripted · high/);
 
   const behindOnly = { ...parts, git: { ahead: 0, behind: 3, added: 2, deleted: 0 }, hints: "" };
   const line = plain(footerLine(behindOnly, 120, theme))[0] ?? "";
@@ -188,9 +244,16 @@ test("the identity row draws the cwd relative to home", () => {
   assert.ok(!line.includes(homedir()), line);
 });
 
-test("a session with no tokens prints no cumulative pill", () => {
-  const empty = { ...parts, stats: { ...stats, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, hints: "" };
+test("a session with no tokens and no cost prints no session pill", () => {
+  const empty = { ...parts, stats: { ...stats, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, hints: "" };
   assert.doesNotMatch(plain(footerLine(empty, 120, theme))[1] ?? "", /≡/);
+  const free = { ...parts, stats: { ...stats, cost: 0 }, hints: "" };
+  assert.match(plain(footerLine(free, 120, theme))[1] ?? "", /≡ ↑35k ↓18k R1\.6M W12k {4}◔/);
+});
+
+test("the context pill says auto only while Pi compacts on its own", () => {
+  const off = plain(footerLine({ ...parts, hints: "", stats: { ...stats, autoCompact: false } }, 120, theme))[1] ?? "";
+  assert.match(off, /◔ 5\.3% \(53k\/1\.0M\) $/, off);
 });
 
 test("the cost is grouped, and a sub-cent session is not free", () => {
@@ -203,17 +266,10 @@ test("the cost is grouped, and a sub-cent session is not free", () => {
   assert.equal(formatCost(1_234_567.891), "$1,234,567.89");
 });
 
-test("the cost rides in the cumulative pill and leaves it last", () => {
-  const wide = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1] ?? "";
-  assert.match(wide, /18k out · \$0\.12/, wide);
-
-  // 50 columns has already dropped the request count, the cache and output counts, and the turn pill.
-  const narrow = plain(footerLine({ ...parts, hints: "" }, 50, theme))[1] ?? "";
-  assert.match(narrow, /≡ 1\.7M tok · \$0\.12/, narrow);
-
-  const tighter = plain(footerLine({ ...parts, hints: "" }, 40, theme))[1] ?? "";
-  assert.doesNotMatch(tighter, /\$/, tighter);
-  assert.match(tighter, /≡ 1\.7M tok/, tighter);
+test("the cost leads the session pill and leaves it last", () => {
+  const narrow = plain(footerLine({ ...parts, hints: "" }, 25, theme))[1] ?? "";
+  assert.match(narrow, /≡ \$0\.12 {4}◔/, narrow);
+  assert.doesNotMatch(narrow, /↑/, narrow);
 });
 
 const cwd = "/Users/me/Developer/github/personal/pi-tune";
@@ -290,8 +346,36 @@ test("footer never exceeds tiny widths", () => {
 });
 
 test("the thinking color follows the level Pi was given", () => {
-  const low = footerLine({ ...parts, identity: { model: "scripted", thinking: "low", level: "low" } }, 120, theme)[0];
-  const max = footerLine({ ...parts, identity: { model: "scripted", thinking: "max", level: "max" } }, 120, theme)[0];
+  const at = (level: "low" | "max") => ({ ...parts, identity: { model: "scripted", thinking: level, level } });
+  const low = footerLine(at("low"), 120, theme)[0];
+  const max = footerLine(at("max"), 120, theme)[0];
   assert.ok(low?.includes(theme.getThinkingBorderColor("low")("low")), low ?? "");
   assert.ok(max?.includes(theme.getThinkingBorderColor("max")("max")), max ?? "");
+});
+
+test("the session name follows the cwd and outlasts the provider and the path", () => {
+  const named = { ...parts, cwd, session: "refactor footer", git, hints: "" };
+  const wide = plain(footerLine(named, 160, theme))[0] ?? "";
+  assert.match(wide, new RegExp(`${cwd} · refactor footer · ⎇ feat/m4-chrome ↑2 ↓1 \\+6 −1`), wide);
+  assert.match(wide, /\(faux\) scripted · high/, wide);
+
+  const medium = plain(footerLine(named, 100, theme))[0] ?? "";
+  assert.doesNotMatch(medium, /\(faux\)/, medium);
+  assert.match(medium, /refactor footer/, medium);
+
+  const narrow = plain(footerLine(named, 80, theme))[0] ?? "";
+  assert.match(narrow, /^pi-tune · refactor footer · ⎇ feat\/m4-chrome ↑2/, narrow);
+
+  const tight = plain(footerLine(named, 50, theme))[0] ?? "";
+  assert.doesNotMatch(tight, /refactor/, tight);
+  for (const width of [20, 40, 50, 80, 100, 160]) {
+    assert.equal(visibleWidth(footerLine(named, width, theme)[0] ?? ""), width, `${width} columns`);
+  }
+});
+
+test("a single provider is not named", () => {
+  const single = { ...parts, identity: { model: "scripted", thinking: "high", level: "high" as const }, hints: "" };
+  const line = plain(footerLine(single, 120, theme))[0] ?? "";
+  assert.doesNotMatch(line, /\(/, line);
+  assert.match(line, /scripted · high/, line);
 });

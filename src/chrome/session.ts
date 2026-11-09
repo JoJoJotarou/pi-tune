@@ -47,7 +47,7 @@ export interface ChromeContext {
   isProjectTrusted(): boolean;
   getContextUsage(): ContextUsage | undefined;
   ui: Pick<ExtensionContext["ui"], "notify" | "getEditorText" | "setHeader" | "setFooter">;
-  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries" | "getLeafId">;
+  sessionManager: Pick<ExtensionContext["sessionManager"], "getEntries" | "getLeafId" | "getSessionName">;
 }
 
 export interface ChromeSession {
@@ -268,8 +268,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               cacheRead: usage.cacheRead,
               cacheWrite: usage.cacheWrite,
               cost: usage.cost,
-              requests: usage.requests,
-              lastRequest: usage.last,
+              cacheHitPercent: usage.cacheHitPercent,
               contextTokens: context?.tokens ?? null,
               contextPercent: context?.percent ?? null,
               contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
@@ -278,6 +277,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
                   ? undefined
                   : streamRate(streamOutputTokens, streamStartedAt, host.now())) ?? rate,
               ttftMs: ttft,
+              autoCompact: host.settings().compaction?.enabled !== false,
             };
             const state: HintState = {
               draft: session.ui.getEditorText().trim() ? "text" : "empty",
@@ -297,6 +297,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
             const parts: FooterParts = {
               project: basename(session.cwd),
               cwd: session.cwd,
+              session: session.sessionManager.getSessionName(),
               branch: footerData.getGitBranch() ?? undefined,
               git,
               hints,
@@ -304,7 +305,12 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               identity:
                 session.model === undefined
                   ? undefined
-                  : { model: session.model.id, thinking: host.thinkingLevel(), level: host.thinkingLevel() },
+                  : {
+                      provider: footerData.getAvailableProviderCount() > 1 ? session.model.provider : undefined,
+                      model: session.model.id,
+                      thinking: host.thinkingLevel(),
+                      level: host.thinkingLevel(),
+                    },
               statuses: Array.from(footerData.getExtensionStatuses().entries()),
             };
             return footerLine(parts, width, theme);

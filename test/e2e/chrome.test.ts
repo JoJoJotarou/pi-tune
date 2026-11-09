@@ -104,7 +104,8 @@ test("busy chrome shows steer and follow-up only while text is typed", { timeout
 });
 
 test("footer shows the live token rate while a message streams", { timeout: 180_000 }, async () => {
-  const pi = await startPi({ scenario: scenario(30), cols: 100, rows: 30 });
+  // TTFT is the first field narrowing drops, so the row needs room for every field.
+  const pi = await startPi({ scenario: scenario(30), cols: 140, rows: 30 });
   try {
     pi.type("write\r");
     await pi.waitFor(/tok\/s/, 60_000);
@@ -112,7 +113,7 @@ test("footer shows the live token rate while a message streams", { timeout: 180_
     assert.ok(footer.includes("%"), footer);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     assert.equal(statusRow.includes("tok/s"), false, statusRow);
-    assert.match(footer, /TTFT \d/, footer);
+    assert.match(footer, /\ds TTFT/, footer);
     await pi.shot("footer-rate");
   } finally {
     await pi.close();

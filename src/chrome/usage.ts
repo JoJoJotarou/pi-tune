@@ -7,10 +7,7 @@ export interface UsageTotals {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
-  /** Assistant messages that reported usage: one API request each. */
-  requests: number;
-  /** The latest request on its own, which the per-turn pill draws. */
-  last?: { output: number; cacheHitPercent: number };
+  cacheHitPercent?: number;
 }
 
 export function addUsage(totals: UsageTotals, usage: Usage): void {
@@ -21,9 +18,9 @@ export function addUsage(totals: UsageTotals, usage: Usage): void {
   totals.cost += usage.cost.total;
 }
 
-/** Pi's footer totals: every usage record in the session, plus the latest request on its own. */
+/** Pi's footer totals: every usage record in the session, plus the latest assistant cache hit rate. */
 export function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
-  const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, requests: 0 };
+  const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
   for (const entry of entries) {
     if (entry.type === "usage") {
       addUsage(totals, entry.usage);
@@ -31,13 +28,8 @@ export function sessionUsage(entries: readonly SessionEntry[]): UsageTotals {
       const message = entry.message;
       if (message.role === "assistant") {
         addUsage(totals, message.usage);
-        // A `usage` entry can bill work without a message (a cache warm), so only messages count as requests.
-        totals.requests += 1;
         const prompt = message.usage.input + message.usage.cacheRead + message.usage.cacheWrite;
-        totals.last = {
-          output: message.usage.output,
-          cacheHitPercent: prompt > 0 ? (message.usage.cacheRead / prompt) * 100 : 0,
-        };
+        totals.cacheHitPercent = prompt > 0 ? (message.usage.cacheRead / prompt) * 100 : undefined;
       } else if (message.role === "toolResult" && message.usage) {
         addUsage(totals, message.usage);
       }

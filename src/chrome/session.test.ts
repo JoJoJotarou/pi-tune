@@ -66,7 +66,13 @@ function required<T>(value: T | undefined, what: string): T {
   return value;
 }
 
-function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
+interface HarnessOptions {
+  model?: ChromeContext["model"];
+  sessionName?: string;
+  settings?: ReturnType<ChromeHost["settings"]>;
+}
+
+function harness(options: HarnessOptions = {}): Harness {
   const notified: string[] = [];
   let entries: SessionEntry[] = [];
   let leaf: string | null = null;
@@ -99,6 +105,7 @@ function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
         return entries;
       },
       getLeafId: () => leaf,
+      getSessionName: () => options.sessionName,
     },
     getContextUsage: () => ({ tokens: 1_000, contextWindow: 200_000, percent: 0.5 }),
     model: options.model,
@@ -107,7 +114,7 @@ function harness(options: { model?: ChromeContext["model"] } = {}): Harness {
     commands: () => [{ source: "skill" }, { source: "skill" }, { source: "builtin" }],
     allTools: () => [{ name: "read" }, { name: "mcp__docs__fetch" }],
     mcpServers: () => [{ name: "docs" }],
-    settings: () => ({}),
+    settings: () => options.settings ?? {},
     thinkingLevel: () => "high",
     agentDir: () => "/tmp/pi-tune-session-test-no-such-dir",
     now: () => nowMs,
@@ -190,7 +197,7 @@ test("start renders the header counts and the footer line", () => {
 
   const footer = plain(h.footer());
   assert.match(footer[0], /myproj · ⎇ feat\/x/);
-  assert.match(footer[1], /≡ 150 tok/);
+  assert.match(footer[1], /↑100 ↓50/);
   assert.match(footer[1], /◔ 0\.5% \(1\.0k\/200k\)/);
   assert.match(footer[1], /commands/);
   assert.equal(footer[2], "1 thread");
@@ -237,7 +244,7 @@ test("ttft and the rate come from the stream clock", () => {
   h.now(15_000);
   const streaming = plain(h.footer())[1];
   assert.match(streaming, /4 tok\/s/);
-  assert.match(streaming, /TTFT 2\.5s/);
+  assert.match(streaming, /2\.5s TTFT/);
 
   h.now(17_000);
   h.session.messageEnd(streamEnd(40));
@@ -284,31 +291,40 @@ test("shutdown clears the session and a restart starts fresh", () => {
 test("the footer rereads the entries only after an append", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /≡ 150 tok/);
+  assert.match(plain(h.footer())[1], /↑100 ↓50/);
   h.footer();
   h.footer();
   assert.equal(h.entryReads(), 1);
 
   h.append({ type: "usage", usage: usage(30) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /≡ 280 tok/);
+  assert.match(plain(h.footer())[1], /↑200 ↓80/);
   assert.equal(h.entryReads(), 2);
 });
 
 test("a restarted session does not reuse the previous session's totals", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /≡ 150 tok/);
+  assert.match(plain(h.footer())[1], /↑100 ↓50/);
 
   h.session.shutdown();
   h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
   h.restart();
-  assert.match(plain(h.footer())[1], /≡ 107 tok/);
+  assert.match(plain(h.footer())[1], /↑100 ↓7 /);
 });
 
-test("the footer names the model and the thinking level Pi reports", () => {
-  const h = harness({ model: { id: "scripted", contextWindow: 200_000 } as ChromeContext["model"] });
+test("the footer names the provider, the model and the thinking level Pi reports", () => {
+  const h = harness({ model: { provider: "faux", id: "scripted", contextWindow: 200_000 } as ChromeContext["model"] });
   const line = plain(h.footer())[0];
-  assert.match(line, /scripted · high/);
+  assert.match(line, /\(faux\) scripted · high/);
+});
+
+test("the footer draws the session name and whether Pi compacts on its own", () => {
+  const named = harness({ sessionName: "footer pass" });
+  assert.match(plain(named.footer())[0], /myproj · footer pass · ⎇ feat\/x/);
+  assert.match(plain(named.footer())[1], /◔ 0\.5% \(1\.0k\/200k\) auto/);
+
+  const manual = harness({ settings: { compaction: { enabled: false } } });
+  assert.doesNotMatch(plain(manual.footer())[1], /auto/);
 });
 
 test("the footer draws the branch counts and the line diff after the branch", async () => {

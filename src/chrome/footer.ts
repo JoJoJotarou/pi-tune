@@ -12,10 +12,8 @@ export interface FooterStats {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
-  /** Assistant messages that reported usage: the request count the cumulative pill prints. */
-  requests: number;
-  /** Output tokens and cache hit rate of the latest request, which the turn pill prints. */
-  lastRequest?: { output: number; cacheHitPercent: number };
+  /** Cache hit rate of the latest request's prompt, which the turn pill prints. */
+  cacheHitPercent?: number;
   /** Estimated tokens currently in the context window, or null when unknown. */
   contextTokens: number | null;
   contextPercent: number | null;
@@ -24,6 +22,8 @@ export interface FooterStats {
   rate?: number;
   /** Wait of the latest model request for its first token, in milliseconds. */
   ttftMs?: number;
+  /** Pi's `compaction.enabled`: the context pill says `auto` while a full window compacts itself. */
+  autoCompact: boolean;
 }
 
 export interface FooterParts {
@@ -31,6 +31,8 @@ export interface FooterParts {
   project: string;
   /** The cwd in full, drawn instead of `project` when the identity row can take it. */
   cwd?: string;
+  /** The session's display name (`/name`), drawn right after the cwd. */
+  session?: string;
   branch?: string;
   /** The repository counts drawn after the branch: ahead/behind, then the line diff. */
   git?: GitState;
@@ -46,6 +48,8 @@ export interface FooterParts {
 export type ThinkingLevelName = Parameters<Theme["getThinkingBorderColor"]>[0];
 
 export interface FooterIdentity {
+  /** Drawn as `(provider)` before the model, the way Pi's own footer does while more than one provider is available. */
+  provider?: string;
   model: string;
   thinking: string;
   /** Picks Pi's own `thinkingOff`…`thinkingMax` color for the level, never a color of pi-tune's. */
@@ -112,9 +116,10 @@ function statusLines(statuses: FooterParts["statuses"], width: number, theme: Th
   return [truncateToWidth(theme.fg("dim", text), width, theme.fg("dim", "..."))];
 }
 
-function identityText(parts: FooterParts, theme: Theme): string {
+function identityText(parts: FooterParts, theme: Theme, provider: boolean): string {
   if (parts.identity === undefined) return "";
   return (
+    (provider && parts.identity.provider ? theme.fg("dim", `(${parts.identity.provider}) `) : "") +
     theme.fg("muted", parts.identity.model) +
     theme.fg("dim", " · ") +
     theme.getThinkingBorderColor(parts.identity.level)(parts.identity.thinking)
@@ -157,21 +162,33 @@ function gitText(git: GitState, theme: Theme): string {
 }
 
 /**
- * Row 1: cwd and branch left, model and thinking level right. The git counts stay while any spelling of the name
- * and branch can carry them: the path first, then the branch elided, then the project name; once no spelling fits,
- * the counts go and the path comes back. Without counts the cwd is its home-relative path while the row can take it
- * and its project name once it cannot.
+ * Row 1: cwd, session name and branch left, provider, model and thinking level right. The provider goes first, then
+ * the session name, which outlasts the longer path. Past that the git counts stay while any spelling of the name and
+ * branch can carry them: the path first, then the branch elided, then the project name; once no spelling fits, the
+ * counts go and the path comes back. Without counts the cwd is its home-relative path while the row can take it and
+ * its project name once it cannot.
  */
-function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
+function identityRow(parts: FooterParts, usable: number, theme: Theme): string {
   const tinted = (text: string): string => theme.fg("muted", text);
+  const right = identityText(parts, theme, false);
   const path = parts.cwd === undefined ? undefined : tildePath(parts.cwd, HOME);
   const names = path !== undefined && path !== parts.project ? [path, parts.project] : [parts.project];
   const git = parts.git === undefined ? "" : gitText(parts.git, theme);
   // The counts size the work, the branch names it: the counts are the first part of the label to go.
   const tails = git === "" ? [""] : [` ${git}`, ""];
-  const labelled = (name: string, tail: string): string =>
-    parts.branch ? `${name} · ⎇ ${parts.branch}${tail}` : `${name}${tail}`;
+  const labelled = (name: string, tail: string, session = ""): string =>
+    `${name}${session}${parts.branch ? ` · ⎇ ${parts.branch}` : ""}${tail}`;
   const candidates: (string | undefined)[] = [];
+  const session = parts.session ? ` · ${parts.session}` : "";
+  // `justify` pads a row without a right side to any length, so these candidates measure it themselves.
+  const fit = (left: string, side: string): string | undefined =>
+    side === "" && visibleWidth(left) > usable ? undefined : justify(left, side, usable);
+  if (parts.identity !== undefined) {
+    candidates.push(fit(tinted(labelled(names[0], tails[0], session)), identityText(parts, theme, true)));
+  }
+  if (session !== "") {
+    for (const name of names) candidates.push(fit(tinted(labelled(name, tails[0], session)), right));
+  }
   // The git counts outrank the longer name: a shorter name is tried before the counts are given up, because the
   // counts are what the row cannot learn any other way.
   if (right !== "") {
@@ -202,117 +219,120 @@ function identityRow(parts: FooterParts, right: string, usable: number, theme: T
   return truncateToWidth(line ?? tinted(labelled(parts.project, "")), usable);
 }
 
+type Field =
+  | "speed"
+  | "hit"
+  | "ttft"
+  | "cost"
+  | "input"
+  | "output"
+  | "cacheRead"
+  | "cacheWrite"
+  | "percent"
+  | "reading"
+  | "auto"
+  | "hints";
+
+/**
+ * What narrowing removes, one field per rung. Inside each pill the fields are written in this order's reverse, so a
+ * pill always loses its last field. `percent` never leaves: how full the window is matters at any width.
+ */
+const DROP_ORDER: readonly Field[] = [
+  "ttft",
+  "cacheWrite",
+  "cacheRead",
+  "hints",
+  "auto",
+  "reading",
+  "hit",
+  "speed",
+  "output",
+  "input",
+  "cost",
+];
+
+/** The widest rate the row plans for, so a rate gaining a digit mid-stream cannot flip the row to another rung. */
+const WIDEST_RATE = "9999 tok/s";
+
 /**
  * Row 2: key hints left, the three reading groups right. Each group answers one question and never borrows a
- * number from another: the cumulative group sums the whole session, the turn group describes the latest request,
- * and the context group measures the window right now.
+ * number from another: the turn group describes the latest request, the session group sums what the session spent,
+ * and the context group measures the window right now. The turn group sits leftmost because its numbers move the
+ * most: a change in its width only moves its own left edge, never the pills beside it.
  */
 function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const stats = parts.stats;
   const muted = (text: string) => theme.fg("muted", text);
   const dim = (text: string) => theme.fg("dim", text);
   const accent = (text: string) => theme.fg("accent", text);
-  const join = (...items: string[]): string => items.filter((item) => item !== "").join(` ${dim("·")} `);
-  const pill = (content: string): string => theme.bg("toolPendingBg", ` ${content} `);
-  const counted = (count: number, unit: string): string => `${muted(compactNumber(count))}${dim(` ${unit}`)}`;
+  const valued = (value: string, unit: string): string => `${muted(value)}${dim(` ${unit}`)}`;
 
-  // Cumulative: what the session has spent. No percentage, so nothing on this pill implies a share of anything.
-  const total = stats.input + stats.cacheRead + stats.cacheWrite + stats.output;
-  const cost = formatCost(stats.cost);
-  const tokenIcon = `${accent("≡")} ${muted(`${compactNumber(total)} tok`)}`;
-  // The breakdown adds up to `total` and repeats none of it: cache reads and output are the two buckets that
-  // explain why a total this large cost so little, and what is left is the input the provider billed in full.
-  // A zero stays off the row, the way the git counts do.
-  const counts = [
-    stats.requests > 0 ? counted(stats.requests, "req") : "",
-    stats.cacheRead > 0 ? counted(stats.cacheRead, "cached") : "",
-    stats.output > 0 ? counted(stats.output, "out") : "",
-  ];
-  const tokens =
-    total > 0
-      ? [
-          pill(join(tokenIcon, ...counts, cost === "" ? "" : muted(cost))),
-          pill(join(tokenIcon, counted(stats.requests, "req"), cost === "" ? "" : muted(cost))),
-          pill(join(tokenIcon, cost === "" ? "" : muted(cost))),
-          pill(tokenIcon),
-          "",
-        ]
-      : [""];
-
-  // Turn: the latest request on its own. Every number here comes from that one request.
-  const rate =
-    stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0 ? `${Math.round(stats.rate)} tok/s` : "";
-  const ttft = stats.ttftMs != null ? `TTFT ${formatDuration(stats.ttftMs)}` : "";
-  const last = stats.lastRequest;
-  const hit = last === undefined ? "" : `${muted(`${Math.round(last.cacheHitPercent)}%`)}${dim(" hit")}`;
-  const out = last === undefined || last.output === 0 ? "" : counted(last.output, "out");
-  const speed = rate === "" ? "" : `${accent("↯")} ${muted(rate)}`;
-  const turn =
-    rate === ""
-      ? [""]
-      : [
-          pill(join(speed, hit, ttft === "" ? "" : muted(ttft), out)),
-          pill(join(speed, hit, ttft === "" ? "" : muted(ttft))),
-          pill(join(speed, hit)),
-          pill(speed),
-          "",
-        ];
-
-  // Context: how full the window is right now, and the reading the percentage divides.
+  const rate = stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0 ? Math.round(stats.rate) : undefined;
+  // Pi's own footer spelling: `↑` input, `↓` output, `R` cache reads, `W` cache writes. A zero stays off the row.
+  const count = (mark: string, tokens: number): string | undefined =>
+    tokens > 0 ? `${dim(mark)}${muted(compactNumber(tokens))}` : undefined;
   const percent = stats.contextPercent;
   const contextColor: "dim" | "text" | "warning" | "error" =
     percent == null ? "dim" : percent >= 90 ? "error" : percent >= 70 ? "warning" : "text";
-  const contextLabel = formatContextPercent(percent);
   const used = stats.contextTokens == null ? "?" : compactNumber(stats.contextTokens);
-  const context = [
-    pill(
-      `${accent("◔")} ${theme.fg(contextColor, contextLabel)} ${dim(`(${used}/${compactNumber(stats.contextWindow)})`)}`,
-    ),
-    pill(`${accent("◔")} ${theme.fg(contextColor, contextLabel)}`),
+
+  const text: Partial<Record<Field, string>> = {
+    speed: rate === undefined ? undefined : valued(String(rate), "tok/s"),
+    hit: stats.cacheHitPercent == null ? undefined : valued(`${Math.round(stats.cacheHitPercent)}%`, "hit"),
+    ttft: stats.ttftMs == null ? undefined : valued(formatDuration(stats.ttftMs), "TTFT"),
+    cost: formatCost(stats.cost) === "" ? undefined : muted(formatCost(stats.cost)),
+    input: count("↑", stats.input),
+    output: count("↓", stats.output),
+    cacheRead: count("R", stats.cacheRead),
+    cacheWrite: count("W", stats.cacheWrite),
+    percent: theme.fg(contextColor, formatContextPercent(percent)),
+    reading: dim(`(${used}/${compactNumber(stats.contextWindow)})`),
+    auto: stats.autoCompact ? dim("auto") : undefined,
+    hints: parts.hints === "" ? undefined : parts.hints,
+  };
+  // A pill is a list of groups: groups part with ` · `, the fields inside one group with a space.
+  const pills: readonly (readonly [icon: string, groups: readonly (readonly Field[])[]])[] = [
+    ["↯", [["speed"], ["hit"], ["ttft"]]],
+    ["≡", [["cost"], ["input", "output", "cacheRead", "cacheWrite"]]],
+    ["◔", [["percent", "reading", "auto"]]],
   ];
 
-  // Each rung is one field cheaper than the rung above it: the turn's extras go first, then the cumulative
-  // details, then the turn pill itself, then the context reading, and the token total last.
-  const groups = [tokens, turn, context];
-  const rungs: readonly (readonly [number, number, number])[] = [
-    [0, 0, 0],
-    [0, 1, 0],
-    [0, 2, 0],
-    [0, 3, 0],
-    [1, 3, 0],
-    [1, 4, 0],
-    [2, 4, 0],
-    [3, 4, 0],
-    [4, 4, 0],
-    [4, 4, 1],
-  ];
-  const at = (rung: readonly [number, number, number]): string[] =>
-    rung.map((index, group) => groups[group]?.[index] ?? "").filter((entry) => entry !== "");
-  // A key hint shares the row only with the complete set: it is the first thing to go, before any reading does.
-  const hints = parts.hints ?? "";
-  for (const withHints of [true, false]) {
-    if (withHints && hints === "") continue;
-    for (const rung of withHints ? rungs.slice(0, 1) : rungs) {
-      const pills = at(rung).join("  ");
-      if (pills === "") continue;
-      const left = withHints ? hints : "";
-      const gap = left === "" ? 0 : 2;
-      if (visibleWidth(left) + visibleWidth(pills) + gap > usable) continue;
-      const row =
-        left === ""
-          ? " ".repeat(usable - visibleWidth(pills)) + pills
-          : left + " ".repeat(usable - visibleWidth(left) - visibleWidth(pills)) + pills;
-      return truncateToWidth(row, usable);
-    }
+  const draw = (shown: (field: Field) => string | undefined): string =>
+    pills
+      .map(([icon, groups]) => {
+        const values = groups
+          .map((fields) => fields.map(shown).filter((value): value is string => value !== undefined))
+          .filter((group) => group.length > 0)
+          .map((group) => group.join(" "));
+        return values.length === 0
+          ? ""
+          : theme.bg("toolPendingBg", ` ${accent(icon)} ${values.join(` ${dim("·")} `)} `);
+      })
+      .filter((pill) => pill !== "")
+      .join("  ");
+
+  for (let rung = 0; rung <= DROP_ORDER.length; rung++) {
+    const dropped = new Set(DROP_ORDER.slice(0, rung));
+    const shown = (field: Field): string | undefined => (dropped.has(field) ? undefined : text[field]);
+    const planned = (field: Field): string | undefined =>
+      field === "speed" && shown(field) !== undefined ? WIDEST_RATE : shown(field);
+    const left = shown("hints") ?? "";
+    const gap = left === "" ? 0 : 2;
+    if (visibleWidth(left) + gap + visibleWidth(draw(planned)) > usable) continue;
+    const right = draw(shown);
+    return left + " ".repeat(Math.max(0, usable - visibleWidth(left) - visibleWidth(right))) + right;
   }
-  return truncateToWidth(hints === "" ? " ".repeat(usable) : hints, usable);
+  return truncateToWidth(
+    draw((field) => (field === "percent" ? text.percent : undefined)),
+    usable,
+  );
 }
 
 export function footerLine(parts: FooterParts, width: number, theme: Theme): string[] {
   if (width <= 0) return [""];
   // The input block spans the full width, so the footer does too: its right edge lines up with the block.
   const usable = Math.max(1, width);
-  const row1 = identityRow(parts, identityText(parts, theme), usable, theme);
+  const row1 = identityRow(parts, usable, theme);
   const row2 = pillRow(parts, usable, theme);
   return [row1, row2, ...statusLines(parts.statuses, width, theme)];
 }
