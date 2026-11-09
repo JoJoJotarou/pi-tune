@@ -62,12 +62,20 @@ editor's top border.
 |---|---|---|
 | Left | `project（项目）`, `branch（分支）` and `git counts（仓库计数）` | `pi-tune · ⎇ main ↑2 ↓1 +128 −9` |
 | Center | `key hints（按键提示）` | `/ commands · @ files · ! shell` |
-| Right | `stats（用量统计）` | `≡ 380k tok · 81% cached · $0.42` |
+| Right | `stats（用量统计）` | `≡ 27M tok · 119 req · 26M cached · 300k out · $12.34` |
 
-Every percentage in the footer divides the numbers printed beside it: `81% cached` is the cache's share of the
-`380k` tokens on the same pill, and `4.5% (45k/1.0M)` is the context reading over its own window. Neither mixes a
-single request with the session total, because the two have different denominators and reading one against the
-other produces arithmetic that means nothing.
+`stats（用量统计）` is three groups, each answering one question, and none of them borrows a number from another:
+
+| Group | Question | Fields |
+|---|---|---|
+| `session（会话）` | what has this session spent? | `≡` total tokens, `req` assistant requests, `cached` cache-read tokens, `out` output tokens, `$` cost |
+| `turn（当轮）` | how did the latest request go? | `↯` tokens per second, `N% hit` of that request's prompt, `TTFT`, `out` tokens of that reply |
+| `context（上下文）` | how full is the window right now? | `◔` percent and the reading it divides, `(used/window)` |
+
+A percentage only ever divides the numbers printed beside it. `91% hit` therefore lives in `turn`, whose numbers all
+come from the one request, while `session（会话）` prints counts instead of a share: reading a single request
+against the session total produces arithmetic that means nothing (`91%` of `27M` is not a number the session had).
+`session（会话）` adds up: `cached` plus `out` plus the freshly billed input is exactly the `tok` total.
 
 `git counts（仓库计数）` follow the branch: `↑` commits a push sends, `↓` commits a pull brings in, `+` and `−`
 the lines the index and the working tree add and remove over `HEAD`. A zero count stays off the row, and so does
@@ -81,9 +89,10 @@ newer one is in flight and asks for a frame when it lands, at most every two sec
 editor keeps the three prefixes. A btw drawer keeps only `@ files`; a dialog-focused editor hides them.
 
 `key hints（按键提示）` rank below every reading in `stats（用量统计）`: they share the row only with the complete
-pill set, so narrowing drops them before it drops a field. Past that the pills yield in their own order: cost,
-`TTFT`, speed, the context reading, the cache rate, then the token total. A 100-column terminal therefore shows
-the readings alone, and the hints return once the row can take them next to all of them.
+pill set, so narrowing drops them before it drops a field. Past that the row loses one field per rung: the turn
+group's `out`, then its `N% hit`, then `TTFT`, then the session group's `cached` and `out` counts, then the turn
+pill itself, then `req`, then `$`, then the token total, then the context reading. A 100-column terminal therefore
+shows the readings alone, and the hints return once the row can take them next to all of them.
 
 On the identity row the same rule holds in its own order: the `git counts（仓库计数）` leave first, then the branch
 loses its middle, then the cwd falls back from its home-relative path to the `project（项目）` name.

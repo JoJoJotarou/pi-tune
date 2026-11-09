@@ -12,6 +12,10 @@ export interface FooterStats {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
+  /** Assistant messages that reported usage: the request count the cumulative pill prints. */
+  requests: number;
+  /** Output tokens and cache hit rate of the latest request, which the turn pill prints. */
+  lastRequest?: { output: number; cacheHitPercent: number };
   /** Estimated tokens currently in the context window, or null when unknown. */
   contextTokens: number | null;
   contextPercent: number | null;
@@ -199,8 +203,9 @@ function identityRow(parts: FooterParts, right: string, usable: number, theme: T
 }
 
 /**
- * Row 2: key hints left, the DSH-style token, speed, and context pills right. A key hint is the lowest rank: it
- * shares the row only with the complete pill set, so a narrower terminal loses the hints before any reading.
+ * Row 2: key hints left, the three reading groups right. Each group answers one question and never borrows a
+ * number from another: the cumulative group sums the whole session, the turn group describes the latest request,
+ * and the context group measures the window right now.
  */
 function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const stats = parts.stats;
@@ -209,54 +214,87 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const accent = (text: string) => theme.fg("accent", text);
   const join = (...items: string[]): string => items.filter((item) => item !== "").join(` ${dim("·")} `);
   const pill = (content: string): string => theme.bg("toolPendingBg", ` ${content} `);
+  const counted = (count: number, unit: string): string => `${muted(compactNumber(count))}${dim(` ${unit}`)}`;
 
+  // Cumulative: what the session has spent. No percentage, so nothing on this pill implies a share of anything.
   const total = stats.input + stats.cacheRead + stats.cacheWrite + stats.output;
-  // Every percentage a pill prints divides the numbers printed beside it, so this is the cache's share of `total`
-  // rather than the latest request's hit rate: two axes on one row invite arithmetic that means nothing.
-  const hit = total > 0 ? `${muted(`${Math.round((stats.cacheRead / total) * 100)}%`)}${dim(" cached")}` : "";
   const cost = formatCost(stats.cost);
   const tokenIcon = `${accent("≡")} ${muted(`${compactNumber(total)} tok`)}`;
-  const tokenFull = total > 0 ? pill(join(tokenIcon, hit, cost === "" ? "" : muted(cost))) : "";
-  const tokenCompact = total > 0 ? pill(join(tokenIcon, hit)) : "";
-  const tokenMini = total > 0 ? pill(tokenIcon) : "";
+  // The breakdown adds up to `total` and repeats none of it: cache reads and output are the two buckets that
+  // explain why a total this large cost so little, and what is left is the input the provider billed in full.
+  // A zero stays off the row, the way the git counts do.
+  const counts = [
+    stats.requests > 0 ? counted(stats.requests, "req") : "",
+    stats.cacheRead > 0 ? counted(stats.cacheRead, "cached") : "",
+    stats.output > 0 ? counted(stats.output, "out") : "",
+  ];
+  const tokens =
+    total > 0
+      ? [
+          pill(join(tokenIcon, ...counts, cost === "" ? "" : muted(cost))),
+          pill(join(tokenIcon, counted(stats.requests, "req"), cost === "" ? "" : muted(cost))),
+          pill(join(tokenIcon, cost === "" ? "" : muted(cost))),
+          pill(tokenIcon),
+          "",
+        ]
+      : [""];
 
+  // Turn: the latest request on its own. Every number here comes from that one request.
   const rate =
     stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0 ? `${Math.round(stats.rate)} tok/s` : "";
   const ttft = stats.ttftMs != null ? `TTFT ${formatDuration(stats.ttftMs)}` : "";
-  const speedFull = rate === "" ? "" : pill(join(`${accent("↯")} ${muted(rate)}`, ttft === "" ? "" : muted(ttft)));
-  const speedCompact = rate === "" ? "" : pill(`${accent("↯")} ${muted(rate)}`);
+  const last = stats.lastRequest;
+  const hit = last === undefined ? "" : `${muted(`${Math.round(last.cacheHitPercent)}%`)}${dim(" hit")}`;
+  const out = last === undefined || last.output === 0 ? "" : counted(last.output, "out");
+  const speed = rate === "" ? "" : `${accent("↯")} ${muted(rate)}`;
+  const turn =
+    rate === ""
+      ? [""]
+      : [
+          pill(join(speed, hit, ttft === "" ? "" : muted(ttft), out)),
+          pill(join(speed, hit, ttft === "" ? "" : muted(ttft))),
+          pill(join(speed, hit)),
+          pill(speed),
+          "",
+        ];
 
+  // Context: how full the window is right now, and the reading the percentage divides.
   const percent = stats.contextPercent;
   const contextColor: "dim" | "text" | "warning" | "error" =
     percent == null ? "dim" : percent >= 90 ? "error" : percent >= 70 ? "warning" : "text";
   const contextLabel = formatContextPercent(percent);
   const used = stats.contextTokens == null ? "?" : compactNumber(stats.contextTokens);
-  const contextFull = pill(
-    `${accent("◔")} ${theme.fg(contextColor, contextLabel)} ${dim(`(${used}/${compactNumber(stats.contextWindow)})`)}`,
-  );
-  const contextCompact = pill(`${accent("◔")} ${theme.fg(contextColor, contextLabel)}`);
-
-  const sets: (readonly string[])[] = [
-    [tokenFull, speedFull, contextFull],
-    [tokenCompact, speedFull, contextFull],
-    [tokenCompact, speedCompact, contextFull],
-    [tokenCompact, speedCompact, contextCompact],
-    // Tokens and context stay; speed is the transient field, so it yields before either.
-    [tokenCompact, contextFull],
-    [tokenCompact, contextCompact],
-    [tokenMini, contextCompact],
-    [speedCompact, contextCompact],
-    [contextCompact],
+  const context = [
+    pill(
+      `${accent("◔")} ${theme.fg(contextColor, contextLabel)} ${dim(`(${used}/${compactNumber(stats.contextWindow)})`)}`,
+    ),
+    pill(`${accent("◔")} ${theme.fg(contextColor, contextLabel)}`),
   ];
+
+  // Each rung is one field cheaper than the rung above it: the turn's extras go first, then the cumulative
+  // details, then the turn pill itself, then the context reading, and the token total last.
+  const groups = [tokens, turn, context];
+  const rungs: readonly (readonly [number, number, number])[] = [
+    [0, 0, 0],
+    [0, 1, 0],
+    [0, 2, 0],
+    [0, 3, 0],
+    [1, 3, 0],
+    [1, 4, 0],
+    [2, 4, 0],
+    [3, 4, 0],
+    [4, 4, 0],
+    [4, 4, 1],
+  ];
+  const at = (rung: readonly [number, number, number]): string[] =>
+    rung.map((index, group) => groups[group]?.[index] ?? "").filter((entry) => entry !== "");
   // A key hint shares the row only with the complete set: it is the first thing to go, before any reading does.
-  const complete = sets.slice(0, 1);
   const hints = parts.hints ?? "";
   for (const withHints of [true, false]) {
     if (withHints && hints === "") continue;
-    for (const set of withHints ? complete : sets) {
-      const groups = set.filter((group) => group !== "");
-      if (groups.length === 0) continue;
-      const pills = groups.join("  ");
+    for (const rung of withHints ? rungs.slice(0, 1) : rungs) {
+      const pills = at(rung).join("  ");
+      if (pills === "") continue;
       const left = withHints ? hints : "";
       const gap = left === "" ? 0 : 2;
       if (visibleWidth(left) + visibleWidth(pills) + gap > usable) continue;

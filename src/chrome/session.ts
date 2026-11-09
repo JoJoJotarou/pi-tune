@@ -268,6 +268,8 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               cacheRead: usage.cacheRead,
               cacheWrite: usage.cacheWrite,
               cost: usage.cost,
+              requests: usage.requests,
+              lastRequest: usage.last,
               contextTokens: context?.tokens ?? null,
               contextPercent: context?.percent ?? null,
               contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
