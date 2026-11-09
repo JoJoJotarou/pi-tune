@@ -126,6 +126,30 @@ test("the identity row falls back to the project alone", () => {
   assert.doesNotMatch(line, /\(/);
 });
 
+const cwd = "/Users/me/Developer/github/personal/pi-tune";
+
+test("the identity row draws the full path while it fits", () => {
+  const wide = plain(footerLine({ ...parts, cwd, hints: "" }, 160, theme))[0];
+  assert.match(wide, new RegExp(`${cwd} \\(feat/m4-chrome\\)`), wide);
+  assert.match(wide, /scripted · high/, wide);
+
+  // The branch goes before the path does: the path plus the model still fits here.
+  const medium = plain(footerLine({ ...parts, cwd, hints: "" }, 70, theme))[0];
+  assert.match(medium, new RegExp(cwd), medium);
+  assert.doesNotMatch(medium, /feat/, medium);
+  assert.match(medium, /scripted · high/, medium);
+});
+
+test("the identity row falls back to the project name when the path does not fit", () => {
+  const narrow = plain(footerLine({ ...parts, cwd, hints: "" }, 40, theme))[0];
+  assert.doesNotMatch(narrow, /Users/, narrow);
+  assert.match(narrow, /pi-tune \(feat\/m…chrome\)/, narrow);
+  assert.match(narrow, /scripted · high/, narrow);
+
+  const tiny = plain(footerLine({ ...parts, cwd, hints: "" }, 20, theme))[0];
+  assert.equal(tiny.trimEnd(), "pi-tune");
+});
+
 test("a session without identity still draws both rows", () => {
   const lines = plain(footerLine({ ...parts, identity: undefined }, 120, theme));
   assert.equal(lines.length, 2);

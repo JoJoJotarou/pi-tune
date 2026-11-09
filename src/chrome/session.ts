@@ -247,6 +247,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
             const hints = focused === false ? "" : formatHints(hintFor(state), theme);
             const parts: FooterParts = {
               project: basename(session.cwd),
+              cwd: session.cwd,
               branch: footerData.getGitBranch() ?? undefined,
               hints,
               stats,

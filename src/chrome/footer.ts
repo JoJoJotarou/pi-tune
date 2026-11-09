@@ -21,8 +21,10 @@ export interface FooterStats {
 }
 
 export interface FooterParts {
-  /** Cwd basename, never the full path. */
+  /** Cwd basename: the fallback name when the full path does not fit the identity row. */
   project: string;
+  /** The cwd in full, drawn instead of `project` when the identity row can take it. */
+  cwd?: string;
   branch?: string;
   hints?: string;
   stats: FooterStats;
@@ -119,23 +121,33 @@ function elideMiddle(text: string, width: number): string {
   return sliceByColumn(text, 0, left) + "…" + sliceByColumn(text, visibleWidth(text) - right, right);
 }
 
-/** Row 1: project/branch left, model and thinking level right; the branch yields its middle first. */
+/**
+ * Row 1: cwd/branch left, model and thinking level right. The cwd is its full path while the row can take it and
+ * its project name once it cannot; the branch yields its middle before the row falls back to the shorter name.
+ */
 function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
-  const project = theme.fg("muted", parts.project);
-  const full = theme.fg("muted", parts.project + (parts.branch ? ` (${parts.branch})` : ""));
-  if (right === "") return truncateToWidth(justify(full, "", usable) ?? full, usable);
-  const candidates: (string | undefined)[] = [justify(full, right, usable)];
-  if (parts.branch && right !== "") {
-    const budget = usable - 2 - visibleWidth(right) - visibleWidth(project) - 3;
-    if (budget >= 4) {
-      const branch = elideMiddle(parts.branch, budget);
-      candidates.push(justify(theme.fg("muted", `${parts.project} (${branch})`), right, usable));
+  const tinted = (text: string): string => theme.fg("muted", text);
+  const names = parts.cwd !== undefined && parts.cwd !== parts.project ? [parts.cwd, parts.project] : [parts.project];
+  const labelled = (name: string): string => (parts.branch ? `${name} (${parts.branch})` : name);
+  const candidates: (string | undefined)[] = [];
+  // The model stays on the row as long as any name leaves room for it.
+  if (right !== "") {
+    for (const name of names) {
+      candidates.push(justify(tinted(labelled(name)), right, usable));
+      const budget = usable - 2 - visibleWidth(right) - visibleWidth(name) - 3;
+      if (parts.branch && budget >= 4) {
+        candidates.push(justify(tinted(`${name} (${elideMiddle(parts.branch, budget)})`), right, usable));
+      }
+      candidates.push(justify(tinted(name), right, usable));
     }
   }
-  candidates.push(justify(project, right, usable));
-  candidates.push(justify(full, "", usable));
+  // Without the model, only an uncut name beats the shorter one: a cut path names nothing.
+  for (const name of names) {
+    if (visibleWidth(labelled(name)) <= usable) candidates.push(justify(tinted(labelled(name)), "", usable));
+    if (visibleWidth(name) <= usable) candidates.push(justify(tinted(name), "", usable));
+  }
   const line = candidates.find((candidate): candidate is string => candidate !== undefined);
-  return truncateToWidth(line ?? (right === "" ? project : `${project}  ${right}`), usable);
+  return truncateToWidth(line ?? tinted(labelled(parts.project)), usable);
 }
 
 /** Row 2: key hints left, the DSH-style token, speed, and context pills right. */
