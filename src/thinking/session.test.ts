@@ -1,37 +1,76 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type {
-  MarkdownTransformContext,
-  MessageEndEvent,
-  MessageUpdateEvent,
-  SessionEntry,
+import {
+  AssistantMessageComponent,
+  initTheme,
+  type MarkdownTransformContext,
+  type MessageEndEvent,
+  type MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
+import { testTheme } from "../../test/theme.ts";
 import { createThinkingSession, type ThinkingContext, type ThinkingHost, type ThinkingSession } from "./session.ts";
+
+// The component styles its rows through pi's global theme.
+initTheme("dark");
 
 interface Harness {
   session: ThinkingSession;
   ctx: ThinkingContext;
+  /** The component pi draws for the newest assistant message. */
+  message: AssistantMessageComponent;
+  /** What the reader sees for that message, thinking fold included. */
+  rows(): string[];
+  /** The tree pi is drawing this component in. */
+  tui: TUI;
+  /** Hand pi's next frame another tree, as a rebuilt transcript would. */
+  bind(tree: TUI): void;
   labels: string[];
-  entries: SessionEntry[];
+  warnings: string[];
   now(ms: number): void;
 }
 
 function harness(): Harness {
-  const labels: string[] = [];
-  const entries: SessionEntry[] = [];
   let nowMs = 1_000;
+  const labels: string[] = [];
+  const warnings: string[] = [];
+  const message = new AssistantMessageComponent({
+    role: "assistant",
+    content: [
+      { type: "thinking", thinking: "plan the answer" },
+      { type: "text", text: "done" },
+    ],
+  } as never);
+  const tui = { children: [message] } as unknown as TUI;
+  let widget: ((tui: TUI, theme: unknown) => unknown) | undefined;
   const ctx: ThinkingContext = {
     mode: "tui",
-    ui: { setHiddenThinkingLabel: (label) => labels.push(label ?? "") },
-    sessionManager: { getEntries: () => entries },
+    ui: {
+      setHiddenThinkingLabel: (label) => labels.push(label ?? ""),
+      setWidget: (_key, content) => {
+        if (typeof content !== "function") return;
+        widget = content as unknown as (tui: TUI, theme: unknown) => unknown;
+        // Pi calls the factory on its next frame, and the tree it hands over is live.
+        widget(tui, testTheme());
+      },
+      notify: (text, level) => warnings.push(`${level}: ${text}`),
+    },
   };
   const host: ThinkingHost = { now: () => nowMs, colorEnabled: () => false };
   return {
     session: createThinkingSession(host),
     ctx,
+    message,
+    rows: () =>
+      message
+        .render(80)
+        .map((row) => stripTerminalSequences(row).trimEnd())
+        .filter((row) => row.trim() !== "")
+        .map((row) => row.trimStart()),
+    tui,
+    bind: (tree) => widget?.(tree, testTheme()),
     labels,
-    entries,
+    warnings,
     now: (ms) => {
       nowMs = ms;
     },
@@ -39,64 +78,140 @@ function harness(): Harness {
 }
 
 function thinkingEvent(
-  type: "thinking_start" | "thinking_delta" | "thinking_end" | "text_start" | "toolcall_start",
-  fields: { contentIndex?: number; delta?: string; content?: string } = {},
+  type: "thinking_start" | "thinking_end" | "thinking_delta" | "text_start",
+  contentIndex = 0,
+  content?: string,
 ): MessageUpdateEvent {
-  return {
-    type: "message_update",
-    assistantMessageEvent: { type, ...fields },
-  } as MessageUpdateEvent;
+  return { type: "message_update", assistantMessageEvent: { type, contentIndex, content } } as MessageUpdateEvent;
 }
 
-function assistantEnd(content: { type: string; thinking?: string }[], durationMs?: number): MessageEndEvent {
-  return {
-    type: "message_end",
-    message: { role: "assistant", content, durationMs },
-  } as MessageEndEvent;
+function assistantEnd(): MessageEndEvent {
+  return { type: "message_end", message: { role: "assistant", content: [] } } as unknown as MessageEndEvent;
 }
 
-function transform(session: ThinkingSession, markdown: string, width = 80): string {
-  const context: MarkdownTransformContext = {
-    messageType: "assistant-thinking",
-    isStreaming: false,
-    availableWidth: width,
-  };
-  return stripTerminalSequences(session.transformThinking(markdown, context));
+function thinkingContext(width = 80): MarkdownTransformContext {
+  return { messageType: "assistant-thinking", isStreaming: false, availableWidth: width };
 }
 
-test("a run without thinking_end keeps the rolling window until message_end", () => {
+function transform(session: ThinkingSession, markdown: string): string {
+  return stripTerminalSequences(session.transformThinking(markdown, thinkingContext()));
+}
+
+test("a streamed block rolls in one row, then folds to its measured time", () => {
   const h = harness();
   h.session.start(h.ctx);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "plan the answer" }));
-  h.now(3_200);
-  h.session.messageUpdate(thinkingEvent("text_start", { contentIndex: 1 }));
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  assert.match(transform(h.session, "plan the answer"), /^◆ Thinking · /);
 
-  assert.match(transform(h.session, "plan the answer"), /^◆ Thinking/);
+  h.now(1_400);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan the answer"));
 
-  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "text" }]));
-  assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 2.2s (4 tokens)");
+  assert.equal(h.rows()[0], "◆ Thought for 0.4s");
+  assert.ok(!h.rows().includes("plan the answer"), `the folded block hides its text:\n${h.rows().join("\n")}`);
 });
 
-test("a late thinking_end never shows a stale summary first", () => {
+test("an opened block is pi's own markdown, untouched", () => {
   const h = harness();
   h.session.start(h.ctx);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "plan the answer" }));
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan the answer"));
+
+  const markdown = "## plan\n\n- step `one`\n- step two";
+  assert.equal(transform(h.session, markdown), markdown);
+});
+
+test("two thinking blocks in one message fold to their total", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", 0));
   h.now(1_500);
-  h.session.messageUpdate(thinkingEvent("toolcall_start", { contentIndex: 1 }));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "first"));
+  h.now(2_000);
+  h.session.messageUpdate(thinkingEvent("thinking_start", 1));
+  h.now(3_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 1, "second"));
 
-  // DeepSeek-style backends send thinking_end only at the end of the message; the run is not
-  // final yet, so no duration may be claimed.
-  assert.match(transform(h.session, "plan the answer"), /^◆ Thinking/);
-  assert.doesNotMatch(transform(h.session, "plan the answer"), /Thought for/);
+  assert.equal(h.rows()[0], "◆ Thought for 1.5s");
+});
 
-  h.now(2_200);
-  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "plan the answer" }));
-  assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 1.2s (4 tokens)");
+test("a block that never ends claims no time", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(4_000);
+  h.session.messageEnd(assistantEnd());
 
-  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "toolCall" }]));
-  assert.equal(transform(h.session, "plan the answer"), "◆ Thought for 1.2s (4 tokens)");
+  assert.equal(h.rows()[0], "◆ Thought");
+  assert.doesNotMatch(h.rows()[0], /for/);
+});
+
+test("one unmeasured block leaves the whole message unmeasured", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start", 0));
+  h.now(1_500);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "measured"));
+  h.session.messageUpdate(thinkingEvent("thinking_start", 1));
+  h.session.messageEnd(assistantEnd());
+
+  assert.equal(h.rows()[0], "◆ Thought");
+});
+
+test("a clock that goes backwards claims no time", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(500);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
+
+  assert.equal(h.rows()[0], "◆ Thought");
+});
+
+test("start labels history and resets the message being streamed", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(2_500);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "stale"));
+
+  h.session.start(h.ctx);
+  assert.deepEqual(h.labels, ["◆ Thinking · click to expand", "◆ Thinking · click to expand"]);
+
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(3_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "fresh"));
+  assert.equal(h.rows()[0], "◆ Thought for 0.5s");
+});
+
+test("the fold waits for the message to be drawn, then applies to it", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.bind({ children: [], requestRender() {} } as unknown as TUI);
+
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(1_500);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
+  assert.deepEqual(h.warnings, [], "a transcript without the message yet is not breakage");
+  assert.ok(h.rows().includes("plan the answer"), h.rows().join("\n"));
+
+  h.bind(h.tui);
+  h.session.messageEnd(assistantEnd());
+  assert.equal(h.rows()[0], "◆ Thought for 0.5s");
+});
+
+test("a moved transcript shape warns once and stops folding", () => {
+  const h = harness();
+  h.session.start(h.ctx);
+  h.bind({ children: [h.message, { not: "a component" }], requestRender() {} } as unknown as TUI);
+
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan again"));
+
+  assert.equal(h.warnings.length, 1, h.warnings.join("\n"));
+  assert.match(h.warnings[0], /fold disabled/);
+  assert.ok(h.rows().includes("plan the answer"), `the block stays as pi drew it:\n${h.rows().join("\n")}`);
 });
 
 test("other markdown passes through untouched", () => {
@@ -105,99 +220,12 @@ test("other markdown passes through untouched", () => {
   assert.equal(h.session.transformThinking("# plain", context), "# plain");
 });
 
-test("while streaming, the rolling window shows instead of a summary", () => {
+test("print mode never touches the TUI", () => {
   const h = harness();
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "steer the plan" }));
+  h.session.start({ ...h.ctx, mode: "print" });
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
 
-  const line = transform(h.session, "steer the plan");
-  assert.match(line, /^◆ Thinking/);
-  assert.match(line, /steer/);
-  assert.doesNotMatch(line, /Thought for/);
-});
-
-test("start resets the timing table and hydrates from the session entries", () => {
-  const h = harness();
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "stale" }));
-  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "stale" }));
-  assert.match(transform(h.session, "stale"), /Thought for/);
-
-  h.entries.push({
-    type: "message",
-    message: { role: "assistant", durationMs: 5_000, content: [{ type: "thinking", thinking: " hydrate me " }] },
-  } as SessionEntry);
-  h.session.start(h.ctx);
-  assert.deepEqual(h.labels, ["◆ Thinking · click to expand"]);
-  assert.equal(transform(h.session, "hydrate me"), "◆ Thought for 5.0s (3 tokens)");
-  assert.doesNotMatch(transform(h.session, "stale"), /Thought for/);
-});
-
-test("message_end seeds joined groups with the response duration", () => {
-  const h = harness();
-  h.session.start(h.ctx);
-  h.session.messageEnd(
-    assistantEnd(
-      [
-        { type: "thinking", thinking: "first part" },
-        { type: "thinking", thinking: "second part" },
-      ],
-      6_000,
-    ),
-  );
-  assert.equal(transform(h.session, "first part\n\nsecond part"), "◆ Thought for 6.0s (6 tokens)");
-});
-
-test("message_end keeps a measured run instead of the whole reply's duration", () => {
-  const h = harness();
-  h.session.start(h.ctx);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.session.messageUpdate(thinkingEvent("thinking_delta", { contentIndex: 0, delta: "plan the answer" }));
-  h.now(3_200);
-  h.session.messageUpdate(thinkingEvent("text_start", { contentIndex: 1 }));
-  h.session.messageEnd(assistantEnd([{ type: "thinking", thinking: "plan the answer" }, { type: "text" }], 20_000));
-
-  assert.match(transform(h.session, "plan the answer"), /Thought for 2\.2s/);
-});
-
-test("message_end sums the measured runs of a joined group", () => {
-  const h = harness();
-  h.session.start(h.ctx);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.now(2_000);
-  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "first part" }));
-  h.now(2_500);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 1 }));
-  h.now(4_000);
-  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 1, content: "second part" }));
-  h.session.messageEnd(
-    assistantEnd(
-      [
-        { type: "thinking", thinking: "first part" },
-        { type: "thinking", thinking: "second part" },
-      ],
-      20_000,
-    ),
-  );
-
-  assert.match(transform(h.session, "first part\n\nsecond part"), /Thought for 2\.5s/);
-});
-
-test("a group with an unmeasured run falls back to the whole reply's duration", () => {
-  const h = harness();
-  h.session.start(h.ctx);
-  h.session.messageUpdate(thinkingEvent("thinking_start", { contentIndex: 0 }));
-  h.now(2_000);
-  h.session.messageUpdate(thinkingEvent("thinking_end", { contentIndex: 0, content: "first part" }));
-  h.session.messageEnd(
-    assistantEnd(
-      [
-        { type: "thinking", thinking: "first part" },
-        { type: "thinking", thinking: "second part" },
-      ],
-      6_000,
-    ),
-  );
-
-  assert.match(transform(h.session, "first part\n\nsecond part"), /Thought for 6\.0s/);
+  assert.deepEqual(h.labels, []);
+  assert.deepEqual(h.warnings, []);
 });

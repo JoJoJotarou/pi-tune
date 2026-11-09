@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
-const LABEL = "◆ Thinking · click to expand";
+const OPEN_LABEL = "◆ Thinking · click to expand";
 
 const firstLines = [
   "Read the first request carefully.",
@@ -46,9 +46,12 @@ function countRows(lines: string[], text: string): number {
   return lines.filter((line) => line.includes(text)).length;
 }
 
-function assertHidden(lines: string[], why: string): void {
-  assert.equal(countRows(lines, LABEL), 2, `both labels expected (${why}):\n${lines.join("\n")}`);
-  assert.equal(countRows(lines, "ctrl+t"), 0, `the label carries no key hint (${why}):\n${lines.join("\n")}`);
+/** The rows a settled block folds to, with their measured time. */
+function foldedLabels(lines: string[]): string[] {
+  return lines.filter((line) => /◆ Thought for \d/.test(line));
+}
+
+function assertNoThinkingText(lines: string[], why: string): void {
   for (const thinking of [...firstLines, ...secondLines]) {
     assert.ok(!lines.some((line) => line.includes(thinking)), `thinking line is visible (${why}): ${thinking}`);
   }
@@ -62,56 +65,61 @@ async function closeAfter(pi: PiSession, body: () => Promise<void>): Promise<voi
   }
 }
 
-test("thinking follows pi's hidden switch", { timeout: 180_000 }, async () => {
+test("every settled block folds to its measured time and opens to pi's text", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, tune: true, settings: { hideThinkingBlock: true } });
   await closeAfter(pi, async () => {
     pi.type("one\r");
     await pi.waitFor("First answer.");
     pi.type("two\r");
     await pi.waitFor("Second answer.");
+    await pi.settle();
 
-    assertHidden(rows(pi.screen()), "after both turns");
-    await pi.shot("thinking-hidden");
+    const folded = rows(pi.screen());
+    assert.equal(foldedLabels(folded).length, 2, `both blocks folded:\n${folded.join("\n")}`);
+    assert.equal(countRows(folded, OPEN_LABEL), 0, `the measured label replaces the open hint:\n${folded.join("\n")}`);
+    assertNoThinkingText(folded, "after both turns");
+    await pi.shot("thinking-folded");
 
-    pi.clickText(LABEL, 1);
-    await pi.waitFor(/◆ Thought for \d/);
-    let lines = rows(pi.screen());
-    assert.equal(countRows(lines, "◆ Thought"), 1, `one summary expected:\n${lines.join("\n")}`);
-    assert.equal(countRows(lines, LABEL), 1, `second run stays hidden:\n${lines.join("\n")}`);
-    for (const thinking of secondLines) {
-      assert.ok(!lines.some((line) => line.includes(thinking)), `second run leaked a line: ${thinking}`);
+    pi.clickText("◆ Thought for", 1);
+    await pi.waitFor(firstLines[0]);
+    const opened = rows(pi.screen());
+    for (const thinking of firstLines) {
+      assert.ok(
+        opened.some((line) => line.includes(thinking)),
+        `the opened block shows pi's text: ${thinking}`,
+      );
     }
+    for (const thinking of secondLines) {
+      assert.ok(!opened.some((line) => line.includes(thinking)), `the other block stays folded: ${thinking}`);
+    }
+    assert.equal(foldedLabels(opened).length, 1, `one block is open now:\n${opened.join("\n")}`);
     await pi.shot("thinking-one-open");
 
     pi.press("ctrl+t");
-    await pi.waitForGone(LABEL);
-    lines = rows(pi.screen());
-    assert.equal(countRows(lines, LABEL), 0, `ctrl+t shows both runs:\n${lines.join("\n")}`);
-    assert.ok(countRows(lines, "◆ Thought") === 2, `both headers expected:\n${lines.join("\n")}`);
-
+    await pi.waitFor(secondLines[0]);
+    assert.equal(foldedLabels(rows(pi.screen())).length, 0, "ctrl+t opens every block");
     pi.press("ctrl+t");
-    await pi.waitFor(LABEL);
-    assertHidden(rows(pi.screen()), "after ctrl+t twice");
-
-    pi.press("ctrl+o");
-    await new Promise((done) => setTimeout(done, 1000));
-    assertHidden(rows(pi.screen()), "after ctrl+o");
+    await pi.waitForGone(secondLines[0]);
+    await pi.waitForGone(firstLines[0]);
+    const refolded = rows(pi.screen());
+    assert.equal(foldedLabels(refolded).length, 2, `ctrl+t folds every block again:\n${refolded.join("\n")}`);
   });
 });
 
-test("the summary keeps the measured thinking time, not the whole reply's", { timeout: 180_000 }, async () => {
+test("the label keeps the measured thinking time, not the whole reply's", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: measuredScenario, tune: true, settings: { hideThinkingBlock: false } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
     // The status area appends `Worked for` once the run settles, so message_end has been handled by then.
     await pi.waitFor(/Worked for/);
-    const summary = rows(pi.screen()).find((line) => line.startsWith("◆ Thought for"));
-    assert.ok(summary, `summary expected:\n${pi.screen().join("\n")}`);
-    assert.doesNotMatch(summary, /Thought for 9\.0s/);
+    await pi.settle();
+    const label = foldedLabels(rows(pi.screen()))[0];
+    assert.ok(label, `folded label expected:\n${pi.screen().join("\n")}`);
+    assert.doesNotMatch(label, /Thought for 9\.0s/);
   });
 });
 
-test("a streaming visible run shows one rolling row then the summary", { timeout: 180_000 }, async () => {
+test("a streaming run shows one rolling row, then folds to pi's text", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: streamingScenario, tune: true, settings: { hideThinkingBlock: false } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
@@ -120,10 +128,15 @@ test("a streaming visible run shows one rolling row then the summary", { timeout
     const streaming = rows(pi.screen()).filter((row) => row.includes("◆ Thinking · "));
     assert.equal(streaming.length, 1, `one rolling row expected:\n${pi.screen().join("\n")}`);
     assert.ok(streaming[0].length > "◆ Thinking · ".length, `the row carries the newest words: ${streaming[0]}`);
+
     await pi.waitFor("All set.");
+    await pi.settle();
     const lines = rows(pi.screen());
-    assert.equal(countRows(lines, "◆ Thought"), 1, `finished summary expected:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, "◆ Thinking · "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
-    assert.equal(countRows(lines, LABEL), 0, `hidden label must not appear:\n${lines.join("\n")}`);
+    assert.equal(foldedLabels(lines).length, 1, `folded label expected:\n${lines.join("\n")}`);
+
+    pi.clickText("◆ Thought for");
+    await pi.waitFor(firstLines[0]);
+    await pi.shot("thinking-open");
   });
 });

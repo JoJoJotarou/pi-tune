@@ -40,7 +40,7 @@ line. Labels use the `English（中文）` names from the tables.
 | `user message（用户消息）` | The blue-grey block holding your prompt | `UserMessageComponent` |
 | `assistant message（助手消息）` | The whole record: text, thinking blocks and tool calls | `AssistantMessageComponent` |
 | `assistant text（助手正文）` | The Markdown body of an assistant message | `registerMarkdownTransformer("assistant")` |
-| `thinking block（思考块）` | Reasoning text; folded it reads `Thinking...` | `registerMarkdownTransformer("assistant-thinking")`, `ctrl+t`, `hideThinkingBlock` |
+| `thinking block（思考块）` | Reasoning text; a settled block folds to `◆ Thought for 3.4s` | `registerMarkdownTransformer("assistant-thinking")`, `ctrl+t`, `hideThinkingBlock` |
 | `tool call（工具调用）` | One block for an invocation plus its result | `ToolExecutionComponent`, `registerToolRenderer` |
 | `tool result（工具结果）` | The result inside a tool call block | built-in tool renderers |
 | `tool output（工具输出）` | The full output once a tool call is expanded | `ctrl+o`, `app.tools.expand` |
@@ -52,7 +52,7 @@ line. Labels use the `English（中文）` names from the tables.
 | `steering message（插话消息）` | Queued with `enter` during a run; enters after the current turn | `steer()`, `pendingMessagesContainer` |
 | `follow-up message（后续消息）` | Queued with `alt+enter`; enters after the run | `followUp()` |
 
-pi-tune folds `tool call（工具调用）` to one line and `thinking block（思考块）` to `◆ Thinking · click to expand`;
+pi-tune folds `tool call（工具调用）` to one line and a settled `thinking block（思考块）` to `◆ Thought for 3.4s`;
 `ctrl+o` and `ctrl+t` expand them. While a run is active, `working line（工作状态行）` shows the phase in the
 editor's top border.
 

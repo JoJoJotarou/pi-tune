@@ -1,16 +1,15 @@
 /**
- * Spike for the thinking redesign: fold a thinking block when it settles (`thinking_end`) by calling the public
- * methods on its `AssistantMessageComponent`, then check the fold survives a terminal resize.
+ * The fold is state on `AssistantMessageComponent`, so it only holds while pi keeps that component. These tests pin
+ * what each transcript event does to it: a relayout keeps the fold, a reload rebuilds the transcript and resets it.
  *
- * `tune: false` keeps pi-tune out of the way: with its markdown transformer loaded the thinking text never reaches
- * the screen, so "the block is folded" and "the block shows its text" would not be distinguishable.
+ * Compaction cannot be scripted here: pi refuses to compact a session as small as a scenario ("Nothing to compact")
+ * and a real one would need a context near the model window. It rebuilds the transcript the way a reload does.
  */
 import assert from "node:assert/strict";
-import { join } from "node:path";
 import test from "node:test";
-import { type Scenario, startPi } from "./harness.ts";
+import { type PiSession, type Scenario, startPi } from "./harness.ts";
 
-const FOLD_LABEL = "◆ Spike fold";
+const OPEN_LABEL = "◆ Thinking · click to expand";
 
 const thinkingLines = ["Read the first request carefully.", "Find the smallest change.", "Check the surrounding code."];
 
@@ -23,47 +22,66 @@ function rows(screen: string[]): string[] {
   return screen.map((row) => row.trim());
 }
 
-function visible(lines: string[], text: string): boolean {
-  return lines.some((line) => line.includes(text));
+function foldedLabels(lines: string[]): string[] {
+  return lines.filter((line) => /◆ Thought for \d/.test(line));
 }
 
-test("a fold applied at thinking_end survives a resize", { timeout: 180_000 }, async () => {
-  const pi = await startPi({
-    scenario,
-    tune: false,
-    extensions: [join(import.meta.dirname, "fold-spike.ts")],
-    settings: { hideThinkingBlock: false },
-  });
+function visibleThinking(lines: string[]): string[] {
+  return thinkingLines.filter((thinking) => lines.some((line) => line.includes(thinking)));
+}
+
+async function closeAfter(pi: PiSession, body: () => Promise<void>): Promise<void> {
   try {
-    pi.type("go\r");
-    await pi.waitFor("First answer.");
-    await pi.settle();
-
-    let lines = rows(pi.screen());
-    assert.ok(visible(lines, FOLD_LABEL), `the block folded at thinking_end:\n${pi.screen().join("\n")}`);
-    for (const thinking of thinkingLines) {
-      assert.ok(!visible(lines, thinking), `the folded block hides its text: ${thinking}`);
-    }
-    await pi.shot("fold-spike-folded");
-
-    await pi.resize(80, 30);
-    lines = rows(pi.screen());
-    assert.equal(lines.length, 30, "the screen reads the new height");
-
-    const survived = visible(lines, FOLD_LABEL);
-    const leaked = thinkingLines.filter((thinking) => visible(lines, thinking));
-    await pi.shot("fold-spike-resized");
-    assert.ok(
-      survived && leaked.length === 0,
-      `the fold ${survived ? "survived" : "was lost"} the resize; visible thinking lines: ${JSON.stringify(leaked)}\n${pi.screen().join("\n")}`,
-    );
-
-    // The folded component still answers a click after the resize, and shows pi's own text when open.
-    pi.clickText(FOLD_LABEL);
-    await pi.waitForGone(FOLD_LABEL);
-    await pi.waitFor(thinkingLines[0]);
-    await pi.shot("fold-spike-opened");
+    await body();
   } finally {
     await pi.close();
   }
+}
+
+test("a folded block survives a resize and still opens", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true, settings: { hideThinkingBlock: false } });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.settle();
+    assert.equal(foldedLabels(rows(pi.screen())).length, 1, `folded after the run:\n${pi.screen().join("\n")}`);
+    assert.deepEqual(visibleThinking(rows(pi.screen())), []);
+
+    await pi.resize(80, 30);
+    assert.equal(rows(pi.screen()).length, 30, "the screen reads the new height");
+    const resized = rows(pi.screen());
+    assert.equal(foldedLabels(resized).length, 1, `still folded after the resize:\n${resized.join("\n")}`);
+    assert.deepEqual(visibleThinking(resized), []);
+    await pi.shot("thinking-fold-resized");
+
+    pi.clickText("◆ Thought for");
+    await pi.waitFor(thinkingLines[0]);
+    assert.equal(foldedLabels(rows(pi.screen())).length, 0, "the click opens pi's own text");
+  });
+});
+
+test("a reload rebuilds the transcript in the configured state", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario, tune: true, settings: { hideThinkingBlock: true } });
+  await closeAfter(pi, async () => {
+    pi.type("go\r");
+    await pi.waitFor("First answer.");
+    await pi.settle();
+    assert.equal(foldedLabels(rows(pi.screen())).length, 1, `folded after the run:\n${pi.screen().join("\n")}`);
+
+    pi.type("/reload\r");
+    await pi.waitFor(/Reloaded/);
+    await pi.waitFor("First answer.");
+    await pi.settle();
+
+    // The rebuilt components start from the setting, so the measured label is gone rather than stale.
+    const reloaded = rows(pi.screen());
+    assert.equal(foldedLabels(reloaded).length, 0, `no stale duration label:\n${reloaded.join("\n")}`);
+    assert.equal(
+      reloaded.filter((line) => line.includes(OPEN_LABEL)).length,
+      1,
+      `the block is back to pi's hidden label:\n${reloaded.join("\n")}`,
+    );
+    assert.deepEqual(visibleThinking(reloaded), []);
+    await pi.shot("thinking-fold-reloaded");
+  });
 });
