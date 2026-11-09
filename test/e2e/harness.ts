@@ -40,10 +40,18 @@ export interface StartOptions {
   skills?: boolean;
   /** Leave `--no-session` out, so Pi saves the session under `<agent dir>/sessions`. */
   session?: boolean;
+  /** Continue the most recent session in `rootDir` (`pi --continue`). */
+  continue?: boolean;
+  /** Reuse a root from an earlier run instead of a fresh temp dir; its agent dir and project dir come along. */
+  rootDir?: string;
+  /** Leave the root on disk at close, so a second run can continue the session. */
+  keepRoot?: boolean;
 }
 
 export interface PiSession {
   readonly projectDir: string;
+  /** The temp root holding this run's agent dir, project dir and sessions. */
+  readonly rootDir: string;
   type(text: string): void;
   press(key: string): void;
   paste(text: string): void;
@@ -125,7 +133,8 @@ function linkTools(binDir: string): void {
     ["rg", ["rg"]],
   ] as const) {
     const tool = findTool([...candidates]);
-    if (tool) symlinkSync(tool, join(binDir, name));
+    // A reused root already links these.
+    if (tool && !existsSync(join(binDir, name))) symlinkSync(tool, join(binDir, name));
   }
 }
 
@@ -144,7 +153,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
   let rows = options.rows ?? 40;
   ensureSpawnHelper();
 
-  const root = mkdtempSync(join(tmpdir(), "pi-tune-e2e-"));
+  const root = options.rootDir ?? mkdtempSync(join(tmpdir(), "pi-tune-e2e-"));
   const agentDir = join(root, "agent");
   const projectDir = join(root, "project");
   const binDir = join(agentDir, "bin");
@@ -172,6 +181,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     piCli,
     "--offline",
     ...(options.session ? [] : ["--no-session"]),
+    ...(options.continue ? ["--continue"] : []),
     "--no-extensions",
     ...(options.skills ? [] : ["--no-skills"]),
     "--no-context-files",
@@ -255,6 +265,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
 
   const session: PiSession = {
     projectDir,
+    rootDir: root,
     type(text) {
       pty.write(text);
     },
@@ -330,7 +341,7 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
         pty.kill();
       } finally {
         term.dispose();
-        rmSync(root, { recursive: true, force: true });
+        if (!options.keepRoot) rmSync(root, { recursive: true, force: true });
       }
     },
   };

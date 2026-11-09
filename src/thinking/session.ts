@@ -4,12 +4,14 @@ import type {
   ExtensionContext,
   MarkdownTransformContext,
   MessageEndEvent,
+  MessageStartEvent,
   MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import {
   assistantMessages,
-  assistantMessageTimestamp,
+  type DrawnMessage,
+  drawnMessage,
   newestAssistantMessage,
 } from "../internals/transcript-components.ts";
 import { buildThoughtLabel } from "./label.ts";
@@ -36,6 +38,8 @@ export interface ThinkingContext {
 
 export interface ThinkingSession {
   start(ctx: ThinkingContext): void;
+  /** Pi started a message; an assistant one is the run the transcript is streaming into. */
+  messageStart(event: MessageStartEvent): void;
   messageUpdate(event: MessageUpdateEvent): void;
   messageEnd(event: MessageEndEvent): void;
   /** The registered markdown transformer's body; Pi calls it for every markdown it renders. */
@@ -58,6 +62,8 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
   let historyFolded = false;
   /** Whether the message being streamed held a thinking block, which is what a recorded time belongs to. */
   let messageHadThinking = false;
+  /** Whether a run is streaming: the drawn transcript is left alone while it is, so no block folds mid-run. */
+  let runActive = false;
   /** Measured time by message timestamp, hydrated from the session so a rebuilt transcript keeps its labels. */
   const recordedTimes = new Map<number, number>();
   /** Set once a message timestamp no longer reads: the labels lose their times, the fold keeps working. */
@@ -89,38 +95,49 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
     fold(message, buildThoughtLabel(messageThinkingMs));
   }
 
-  /** The recorded time this message carries, if the session still has one for it. */
-  function recordedLabel(message: AssistantMessageComponent): string {
+  /** The recorded time a drawn message carries, if the session still has one for it. */
+  function recordedLabel(drawn: DrawnMessage): string {
     if (timesUnavailable) return buildThoughtLabel(undefined);
-    const timestamp = assistantMessageTimestamp(message);
-    if (timestamp === undefined) return buildThoughtLabel(undefined);
-    if (timestamp instanceof Error) {
-      timesUnavailable = true;
-      notify?.(`pi-tune thinking time unavailable: ${timestamp.message}`, "warning");
-      return buildThoughtLabel(undefined);
-    }
-    return buildThoughtLabel(recordedTimes.get(timestamp));
+    return buildThoughtLabel(recordedTimes.get(drawn.timestamp));
   }
 
   /**
-   * Fold the transcript already drawn: a reload, and a resumed session, rebuild every block from the setting. A block
-   * whose run was measured carries that time in the session, so it folds to the same label it had.
+   * Fold the transcript already drawn: a reload, and a resumed session, rebuild every block from the setting, and the
+   * block of a measured run carries that time in the session. Called from the widget's render, because pi draws the
+   * widget before the rebuilt messages exist: the first frame that has them is the earliest chance to fold.
    */
   function foldDrawnMessages(): void {
     const screen = tui;
-    if (!screen || foldFailed || historyFolded) return;
-    historyFolded = true;
+    if (!screen || foldFailed || historyFolded || runActive) return;
     const messages = assistantMessages(screen);
     if (messages instanceof Error) {
       reportFailure(messages);
       return;
     }
-    for (const message of messages) fold(message, recordedLabel(message));
+    let folded = 0;
+    for (const message of messages) {
+      const drawn = drawnMessage(message);
+      if (drawn === undefined) continue;
+      if (drawn instanceof Error) {
+        if (timesUnavailable) continue;
+        timesUnavailable = true;
+        notify?.(`pi-tune thinking time unavailable: ${drawn.message}`, "warning");
+        continue;
+      }
+      if (drawn.pending) continue;
+      fold(message, recordedLabel(drawn));
+      folded++;
+    }
+    if (folded === 0) return;
+    historyFolded = true;
+    // The fold changed rows this frame may already have drawn, so ask for one more frame.
+    screen.requestRender();
   }
 
   /** Keep the measured time in the session: a reload and a resumed session have no run to time again. */
   function recordThinkingTime(message: AssistantMessage): void {
     if (!messageHadThinking || messageThinkingMs === undefined) return;
+    recordedTimes.set(message.timestamp, messageThinkingMs);
     host.appendEntry(TIMING_ENTRY, { timestamp: message.timestamp, ms: messageThinkingMs });
   }
 
@@ -146,6 +163,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       foldFailed = false;
       historyFolded = false;
       messageHadThinking = false;
+      runActive = false;
       recordedTimes.clear();
       timesUnavailable = false;
       notify = undefined;
@@ -162,9 +180,17 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       // The widget factory is the only place an extension is handed the TUI.
       ctx.ui.setWidget("pi-tune-thinking", (widgetTui) => {
         tui = widgetTui;
-        foldDrawnMessages();
-        return { render: () => [], invalidate() {} };
+        return {
+          render: () => {
+            foldDrawnMessages();
+            return [];
+          },
+          invalidate() {},
+        };
       });
+    },
+    messageStart(event) {
+      runActive = event.message.role === "assistant";
     },
     messageUpdate(event) {
       const update = event.assistantMessageEvent;
@@ -198,6 +224,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       thinkingStreaming = false;
       messageThinkingMs = 0;
       messageHadThinking = false;
+      runActive = false;
     },
     transformThinking(markdown, context) {
       if (context.messageType !== "assistant-thinking") return markdown;

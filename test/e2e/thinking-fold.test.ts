@@ -3,8 +3,8 @@
  * what each transcript event does to it: a relayout keeps the fold, and a reload rebuilds the transcript, so the
  * session folds what it finds again and reads the measured time back from the session entry the run recorded.
  *
- * A resumed session takes the same path but cannot be scripted here: the harness gives every pi its own temporary
- * agent directory, so a second process never sees the first one's session file.
+ * A resumed session reaches pi-tune the same way, but the transcript is rebuilt *after* the widget's first frame, so
+ * the fold has to wait for the frame that has the messages; the resume test keeps pi's root and continues it.
  *
  * Compaction cannot be scripted here: pi refuses to compact a session as small as a scenario ("Nothing to compact")
  * and a real one would need a context near the model window. It rebuilds the transcript the way a reload does.
@@ -85,4 +85,43 @@ test("a reload restores the folded label from the session", { timeout: 180_000 }
     assert.deepEqual(visibleThinking(reloaded), []);
     await pi.shot("thinking-fold-reloaded");
   });
+});
+
+test("a resumed session folds its history and restores its time", { timeout: 180_000 }, async () => {
+  const first = await startPi({
+    scenario,
+    tune: true,
+    session: true,
+    keepRoot: true,
+    settings: { hideThinkingBlock: false },
+  });
+  let measured: string[] = [];
+  try {
+    first.type("go\r");
+    await first.waitFor("First answer.");
+    await first.settle();
+    measured = foldedLabels(rows(first.screen()));
+    assert.equal(measured.length, 1, `folded before the resume:\n${first.screen().join("\n")}`);
+  } finally {
+    await first.close();
+  }
+
+  const resumed = await startPi({
+    scenario,
+    tune: true,
+    session: true,
+    continue: true,
+    rootDir: first.rootDir,
+    settings: { hideThinkingBlock: false },
+  });
+  try {
+    await resumed.waitFor("First answer.");
+    await resumed.settle();
+    const lines = rows(resumed.screen());
+    assert.deepEqual(foldedLabels(lines), measured, `the recorded time comes back:\n${lines.join("\n")}`);
+    assert.deepEqual(visibleThinking(lines), [], "and the block is folded, not open");
+    await resumed.shot("thinking-fold-resumed");
+  } finally {
+    await resumed.close();
+  }
 });

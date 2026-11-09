@@ -42,15 +42,24 @@ export function assistantMessages(tui: TUI): AssistantMessageComponent[] | Error
   return failure ?? found;
 }
 
-/** The timestamp Pi stamped on the message this component draws; `undefined` until a message is attached. */
-export function assistantMessageTimestamp(component: AssistantMessageComponent): number | undefined | Error {
+/** What the transcript needs to know about the message a component draws. */
+export interface DrawnMessage {
+  /** The timestamp Pi stamped on it; a recorded thinking time is keyed by it. */
+  timestamp: number;
+  /** Pi marks a message `pending` while it streams, so its block is still being written. */
+  pending: boolean;
+}
+
+/** The message a component draws; `undefined` until one is attached. */
+export function drawnMessage(component: AssistantMessageComponent): DrawnMessage | undefined | Error {
   const lastMessage = (component as unknown as { lastMessage?: unknown }).lastMessage;
   if (lastMessage === undefined) return undefined;
   if (typeof lastMessage !== "object" || lastMessage === null) {
     return new Error("the drawn assistant message is not an object");
   }
-  const timestamp = (lastMessage as { timestamp?: unknown }).timestamp;
-  return typeof timestamp === "number" ? timestamp : new Error("the drawn assistant message has no timestamp");
+  const { timestamp, stopReason } = lastMessage as { timestamp?: unknown; stopReason?: unknown };
+  if (typeof timestamp !== "number") return new Error("the drawn assistant message has no timestamp");
+  return { timestamp, pending: stopReason === "pending" };
 }
 
 /** The message being drawn last, which is the one a stream appends to. */

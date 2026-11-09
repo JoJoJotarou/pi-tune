@@ -10,6 +10,7 @@ export default (pi: ExtensionAPI) => {
 
   pi.registerMarkdownTransformer((markdown, context) => session.transformThinking(markdown, context));
   pi.on("session_start", (_event, ctx) => session.start(ctx));
+  pi.on("message_start", (event) => session.messageStart(event));
   pi.on("message_update", (event) => session.messageUpdate(event));
   pi.on("message_end", (event) => session.messageEnd(event));
 };
