@@ -21,10 +21,10 @@ interface Harness {
   message: AssistantMessageComponent;
   /** What the reader sees for that message, thinking fold included. */
   rows(): string[];
-  /** The tree pi is drawing this component in. */
-  tui: TUI;
-  /** Hand pi's next frame another tree, as a rebuilt transcript would. */
-  bind(tree: TUI): void;
+  /** Draw the message into the transcript, as a run does. */
+  draw(): void;
+  /** Hand pi's next frame a tree; defaults to the transcript the session last saw. */
+  bind(tree?: TUI): void;
   labels: string[];
   warnings: string[];
   now(ms: number): void;
@@ -41,7 +41,8 @@ function harness(): Harness {
       { type: "text", text: "done" },
     ],
   } as never);
-  const tui = { children: [message] } as unknown as TUI;
+  // A fresh session starts empty; a rebuilt one already holds its messages.
+  const transcript = { children: [] as unknown[] } as unknown as TUI;
   let widget: ((tui: TUI, theme: unknown) => unknown) | undefined;
   const ctx: ThinkingContext = {
     mode: "tui",
@@ -50,8 +51,6 @@ function harness(): Harness {
       setWidget: (_key, content) => {
         if (typeof content !== "function") return;
         widget = content as unknown as (tui: TUI, theme: unknown) => unknown;
-        // Pi calls the factory on its next frame, and the tree it hands over is live.
-        widget(tui, testTheme());
       },
       notify: (text, level) => warnings.push(`${level}: ${text}`),
     },
@@ -67,14 +66,22 @@ function harness(): Harness {
         .map((row) => stripTerminalSequences(row).trimEnd())
         .filter((row) => row.trim() !== "")
         .map((row) => row.trimStart()),
-    tui,
-    bind: (tree) => widget?.(tree, testTheme()),
+    draw: () => {
+      (transcript as unknown as { children: unknown[] }).children.push(message);
+    },
+    bind: (tree = transcript) => widget?.(tree, testTheme()),
     labels,
     warnings,
     now: (ms) => {
       nowMs = ms;
     },
   };
+}
+
+/** Start a session and draw its first frame: an empty transcript, before any run. */
+function start(h: Harness): void {
+  h.session.start(h.ctx);
+  h.bind();
 }
 
 function thinkingEvent(
@@ -99,7 +106,8 @@ function transform(session: ThinkingSession, markdown: string): string {
 
 test("a streamed block rolls in one row, then folds to its measured time", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   assert.match(transform(h.session, "plan the answer"), /^◆ Thinking · /);
 
@@ -110,9 +118,19 @@ test("a streamed block rolls in one row, then folds to its measured time", () =>
   assert.ok(!h.rows().includes("plan the answer"), `the folded block hides its text:\n${h.rows().join("\n")}`);
 });
 
+test("a rebuilt transcript is folded without a time", () => {
+  const h = harness();
+  h.draw(); // a reload or a resumed session draws its messages before this session starts
+  start(h);
+
+  assert.equal(h.rows()[0], "◆ Thought");
+  assert.ok(!h.rows().includes("plan the answer"), `history folds:\n${h.rows().join("\n")}`);
+});
+
 test("an opened block is pi's own markdown, untouched", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan the answer"));
 
@@ -122,7 +140,8 @@ test("an opened block is pi's own markdown, untouched", () => {
 
 test("two thinking blocks in one message fold to their total", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start", 0));
   h.now(1_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "first"));
@@ -136,7 +155,8 @@ test("two thinking blocks in one message fold to their total", () => {
 
 test("a block that never ends claims no time", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(4_000);
   h.session.messageEnd(assistantEnd());
@@ -147,7 +167,8 @@ test("a block that never ends claims no time", () => {
 
 test("one unmeasured block leaves the whole message unmeasured", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start", 0));
   h.now(1_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "measured"));
@@ -159,7 +180,8 @@ test("one unmeasured block leaves the whole message unmeasured", () => {
 
 test("a clock that goes backwards claims no time", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
@@ -169,7 +191,8 @@ test("a clock that goes backwards claims no time", () => {
 
 test("start labels history and resets the message being streamed", () => {
   const h = harness();
-  h.session.start(h.ctx);
+  start(h);
+  h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(2_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "stale"));
@@ -177,32 +200,36 @@ test("start labels history and resets the message being streamed", () => {
   h.session.start(h.ctx);
   assert.deepEqual(h.labels, ["◆ Thinking · click to expand", "◆ Thinking · click to expand"]);
 
+  h.bind();
+  assert.equal(h.rows()[0], "◆ Thought", "the rebuilt transcript is folded again");
+
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(3_000);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "fresh"));
   assert.equal(h.rows()[0], "◆ Thought for 0.5s");
 });
 
-test("the fold waits for the message to be drawn, then applies to it", () => {
+test("a frame drawn before the message exists still folds later runs", () => {
   const h = harness();
-  h.session.start(h.ctx);
-  h.bind({ children: [], requestRender() {} } as unknown as TUI);
-
+  start(h);
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(1_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
   assert.deepEqual(h.warnings, [], "a transcript without the message yet is not breakage");
-  assert.ok(h.rows().includes("plan the answer"), h.rows().join("\n"));
 
-  h.bind(h.tui);
   h.session.messageEnd(assistantEnd());
+  h.draw();
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(2_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
   assert.equal(h.rows()[0], "◆ Thought for 0.5s");
 });
 
 test("a moved transcript shape warns once and stops folding", () => {
   const h = harness();
+  const broken = { children: [h.message, { not: "a component" }] } as unknown as TUI;
   h.session.start(h.ctx);
-  h.bind({ children: [h.message, { not: "a component" }], requestRender() {} } as unknown as TUI);
+  h.bind(broken);
 
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));

@@ -1,6 +1,7 @@
 /**
  * The fold is state on `AssistantMessageComponent`, so it only holds while pi keeps that component. These tests pin
- * what each transcript event does to it: a relayout keeps the fold, a reload rebuilds the transcript and resets it.
+ * what each transcript event does to it: a relayout keeps the fold, and a reload rebuilds the transcript, so the
+ * session folds what it finds again — without the measured time, which only the live run knew.
  *
  * Compaction cannot be scripted here: pi refuses to compact a session as small as a scenario ("Nothing to compact")
  * and a real one would need a context near the model window. It rebuilds the transcript the way a reload does.
@@ -60,7 +61,7 @@ test("a folded block survives a resize and still opens", { timeout: 180_000 }, a
   });
 });
 
-test("a reload rebuilds the transcript in the configured state", { timeout: 180_000 }, async () => {
+test("a reload folds the rebuilt transcript without a measured time", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario, tune: true, settings: { hideThinkingBlock: true } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
@@ -73,14 +74,16 @@ test("a reload rebuilds the transcript in the configured state", { timeout: 180_
     await pi.waitFor("First answer.");
     await pi.settle();
 
-    // The rebuilt components start from the setting, so the measured label is gone rather than stale.
+    // The rebuilt transcript is folded again, but its measured run is gone, so it claims no time and no stale number
+    // is left behind.
     const reloaded = rows(pi.screen());
     assert.equal(foldedLabels(reloaded).length, 0, `no stale duration label:\n${reloaded.join("\n")}`);
     assert.equal(
-      reloaded.filter((line) => line.includes(OPEN_LABEL)).length,
+      reloaded.filter((line) => line.trim() === "◆ Thought").length,
       1,
-      `the block is back to pi's hidden label:\n${reloaded.join("\n")}`,
+      `the block is folded again:\n${reloaded.join("\n")}`,
     );
+    assert.equal(reloaded.filter((line) => line.includes(OPEN_LABEL)).length, 0, reloaded.join("\n"));
     assert.deepEqual(visibleThinking(reloaded), []);
     await pi.shot("thinking-fold-reloaded");
   });

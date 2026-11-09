@@ -13,15 +13,15 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
  * A child that is not a component means the shape moved; that returns an `Error` so the caller can drop the fold.
  * No assistant message drawn yet is `undefined`, which the caller skips.
  */
-export function newestAssistantMessage(tui: TUI): AssistantMessageComponent | undefined | Error {
+export function assistantMessages(tui: TUI): AssistantMessageComponent[] | Error {
   const seen = new Set<unknown>();
-  let newest: AssistantMessageComponent | undefined;
+  const found: AssistantMessageComponent[] = [];
   let failure: Error | undefined;
 
   const visit = (component: Component): void => {
     if (failure !== undefined || seen.has(component)) return;
     seen.add(component);
-    if (component instanceof AssistantMessageComponent) newest = component;
+    if (component instanceof AssistantMessageComponent) found.push(component);
     const children = (component as { children?: unknown }).children;
     if (children === undefined) return;
     if (!Array.isArray(children)) {
@@ -38,7 +38,13 @@ export function newestAssistantMessage(tui: TUI): AssistantMessageComponent | un
   };
 
   visit(tui);
-  return failure ?? newest;
+  return failure ?? found;
+}
+
+/** The message being drawn last, which is the one a stream appends to. */
+export function newestAssistantMessage(tui: TUI): AssistantMessageComponent | undefined | Error {
+  const messages = assistantMessages(tui);
+  return messages instanceof Error ? messages : messages.at(-1);
 }
 
 function isComponent(value: unknown): value is Component {

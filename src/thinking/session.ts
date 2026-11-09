@@ -1,11 +1,12 @@
 import type {
+  AssistantMessageComponent,
   ExtensionContext,
   MarkdownTransformContext,
   MessageEndEvent,
   MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
 import { type TUI, visibleWidth } from "@earendil-works/pi-tui";
-import { newestAssistantMessage } from "../internals/transcript-components.ts";
+import { assistantMessages, newestAssistantMessage } from "../internals/transcript-components.ts";
 import { buildThoughtLabel } from "./label.ts";
 import { buildThinkingWindow } from "./window.ts";
 
@@ -42,6 +43,21 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
   let notify: ((message: string, level: "warning") => void) | undefined;
   /** Set once the transcript shape moved: the fold stops rather than guesses, and the block stays as Pi drew it. */
   let foldFailed = false;
+  /** The drawn transcript is folded once per session, on the first frame that pc draws the widget. */
+  let historyFolded = false;
+
+  function fold(message: AssistantMessageComponent, label: string): void {
+    // No repaint request: pi draws a frame after every event, and a forced full redraw here would re-render the
+    // whole transcript on each message end.
+    message.setHideThinkingBlock(true);
+    message.setHiddenThinkingLabel(label);
+    message.invalidate();
+  }
+
+  function reportFailure(error: Error): void {
+    foldFailed = true;
+    notify?.(`pi-tune thinking fold disabled: ${error.message}`, "warning");
+  }
 
   /** Fold the newest assistant message to `◆ Thought for …`; the block's own text is handed back by the transformer. */
   function foldSettledThinking(): void {
@@ -50,15 +66,26 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
     const message = newestAssistantMessage(screen);
     if (message === undefined) return;
     if (message instanceof Error) {
-      foldFailed = true;
-      notify?.(`pi-tune thinking fold disabled: ${message.message}`, "warning");
+      reportFailure(message);
       return;
     }
-    message.setHideThinkingBlock(true);
-    message.setHiddenThinkingLabel(buildThoughtLabel(messageThinkingMs));
-    // No repaint request: pi draws a frame after every event, and a forced full redraw here re-renders the whole
-    // transcript on each message end.
-    message.invalidate();
+    fold(message, buildThoughtLabel(messageThinkingMs));
+  }
+
+  /**
+   * Fold the transcript already drawn: a reload, and a resumed session, rebuild every block from the setting, and the
+   * blocks in them have settled long before. Their measured runs are gone, so they fold without a time.
+   */
+  function foldDrawnMessages(): void {
+    const screen = tui;
+    if (!screen || foldFailed || historyFolded) return;
+    historyFolded = true;
+    const messages = assistantMessages(screen);
+    if (messages instanceof Error) {
+      reportFailure(messages);
+      return;
+    }
+    for (const message of messages) fold(message, buildThoughtLabel(undefined));
   }
 
   /** Close one run and add it to the message total; a clock that went backwards leaves the total unmeasured. */
@@ -81,6 +108,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       messageThinkingMs = 0;
       tui = undefined;
       foldFailed = false;
+      historyFolded = false;
       notify = undefined;
       if (ctx.mode !== "tui") return;
       notify = (message, level) => ctx.ui.notify(message, level);
@@ -89,6 +117,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
       // The widget factory is the only place an extension is handed the TUI.
       ctx.ui.setWidget("pi-tune-thinking", (widgetTui) => {
         tui = widgetTui;
+        foldDrawnMessages();
         return { render: () => [], invalidate() {} };
       });
     },
