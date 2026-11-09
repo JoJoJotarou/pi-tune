@@ -153,9 +153,10 @@ function gitText(git: GitState, theme: Theme): string {
 }
 
 /**
- * Row 1: cwd and branch left, model and thinking level right. The cwd is its home-relative path while the row can
- * take it and its project name once it cannot; the branch yields its middle, and the git counts leave entirely,
- * before the row falls back to the shorter name.
+ * Row 1: cwd and branch left, model and thinking level right. The git counts stay while any spelling of the name
+ * and branch can carry them: the path first, then the branch elided, then the project name; once no spelling fits,
+ * the counts go and the path comes back. Without counts the cwd is its home-relative path while the row can take it
+ * and its project name once it cannot.
  */
 function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
   const tinted = (text: string): string => theme.fg("muted", text);
@@ -194,7 +195,7 @@ function identityRow(parts: FooterParts, right: string, usable: number, theme: T
     if (visibleWidth(name) <= usable) candidates.push(justify(tinted(name), "", usable));
   }
   const line = candidates.find((candidate): candidate is string => candidate !== undefined);
-  return truncateToWidth(line ?? tinted(labelled(parts.project, tails[0] ?? "")), usable);
+  return truncateToWidth(line ?? tinted(labelled(parts.project, "")), usable);
 }
 
 /**
