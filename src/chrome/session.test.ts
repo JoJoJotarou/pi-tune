@@ -10,7 +10,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { type ChromeContext, type ChromeHost, type ChromeSession, createChromeSession } from "./session.ts";
+import {
+  type ChromeContext,
+  type ChromeHost,
+  type ChromeSession,
+  createChromeSession,
+} from "./session.ts";
 
 const theme = testTheme("dark");
 initTheme("dark");
@@ -166,9 +171,10 @@ test("start renders the header counts and the footer line", () => {
 
   const footer = plain(h.footer());
   assert.match(footer[0], /myproj \(feat\/x\)/);
-  assert.match(footer[0], /↑100 ↓50 \$0\.250 · 0\.5%\/200k \(auto\)/);
-  assert.match(footer[0], /commands/);
-  assert.equal(footer[1], "1 thread");
+  assert.match(footer[1], /▤ 150 tok/);
+  assert.match(footer[1], /◔ 0\.5% \(1\.0k\/200k\)/);
+  assert.match(footer[1], /commands/);
+  assert.equal(footer[2], "1 thread");
 });
 
 test("the focus check warns once per session, then keeps the hints", () => {
@@ -178,17 +184,17 @@ test("the focus check warns once per session, then keeps the hints", () => {
   h.footer();
   assert.equal(h.notified.length, 1);
   assert.match(h.notified[0], /^pi-tune chrome: /);
-  assert.match(plain(h.footer())[0], /commands/);
+  assert.match(plain(h.footer())[1], /commands/);
 });
 
 test("a focused dialog hides the key hints", () => {
   const h = harness();
-  assert.match(plain(h.footer())[0], /commands/);
+  assert.match(plain(h.footer())[1], /commands/);
 
   h.setFocus(false);
-  const line = plain(h.footer())[0];
-  assert.doesNotMatch(line, /commands/);
-  assert.match(line, /myproj \(feat\/x\)/);
+  const rows = plain(h.footer());
+  assert.doesNotMatch(rows[1], /commands/);
+  assert.match(rows[0], /myproj \(feat\/x\)/);
   assert.deepEqual(h.notified, []);
 });
 
@@ -196,10 +202,10 @@ test("a typed draft during a run shows the steer hints", () => {
   const h = harness();
   h.setEditorText("fix it");
   h.session.agentStart();
-  assert.match(plain(h.footer())[0], /steer/);
+  assert.match(plain(h.footer())[1], /steer/);
 
   h.session.agentSettled();
-  const line = plain(h.footer())[0];
+  const line = plain(h.footer())[1];
   assert.doesNotMatch(line, /steer/);
   assert.match(line, /files/);
 });
@@ -210,27 +216,27 @@ test("ttft and the rate come from the stream clock", () => {
   h.now(12_500);
   h.session.messageUpdate(streamUpdate("text_delta", 10));
   h.now(15_000);
-  const streaming = plain(h.footer())[0];
+  const streaming = plain(h.footer())[1];
   assert.match(streaming, /4 tok\/s/);
   assert.match(streaming, /TTFT 2\.5s/);
 
   h.now(17_000);
   h.session.messageEnd(streamEnd(40));
-  assert.match(plain(h.footer())[0], /9 tok\/s/);
+  assert.match(plain(h.footer())[1], /9 tok\/s/);
 });
 
 test("editor stash and btw mode change the hints", () => {
   const h = harness();
   h.session.editorReady();
   h.setEditorText("note");
-  assert.match(plain(h.footer())[0], /stash/);
+  assert.match(plain(h.footer())[1], /stash/);
 
   h.setEditorText("");
   h.session.editorStash(true);
-  assert.match(plain(h.footer())[0], /restore/);
+  assert.match(plain(h.footer())[1], /restore/);
 
   h.session.btwMode(true);
-  const line = plain(h.footer())[0];
+  const line = plain(h.footer())[1];
   assert.doesNotMatch(line, /commands/);
   assert.doesNotMatch(line, /shell/);
   assert.match(line, /files/);
@@ -251,35 +257,33 @@ test("shutdown clears the session and a restart starts fresh", () => {
   h.replaceEntries([]);
   h.setEditorText("");
   h.restart();
-  const restarted = plain(h.footer())[0];
-  assert.match(restarted, /myproj/);
-  assert.doesNotMatch(restarted, /tok\/s/);
-  assert.doesNotMatch(restarted, /TTFT/);
-  assert.doesNotMatch(restarted, /steer/);
+  const restarted = plain(h.footer());
+  assert.match(restarted[0], /myproj/);
+  assert.doesNotMatch(restarted.join("\n"), /tok\/s|TTFT|steer/);
 });
 
 test("the footer rereads the entries only after an append", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[0], /↑100 ↓50 /);
+  assert.match(plain(h.footer())[1], /▤ 150 tok/);
   h.footer();
   h.footer();
   assert.equal(h.entryReads(), 1);
 
   h.append({ type: "usage", usage: usage(30) } as SessionEntry);
-  assert.match(plain(h.footer())[0], /↑200 ↓80 /);
+  assert.match(plain(h.footer())[1], /▤ 280 tok/);
   assert.equal(h.entryReads(), 2);
 });
 
 test("a restarted session does not reuse the previous session's totals", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[0], /↓50 /);
+  assert.match(plain(h.footer())[1], /▤ 150 tok/);
 
   h.session.shutdown();
   h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
   h.restart();
-  assert.match(plain(h.footer())[0], /↓7 /);
+  assert.match(plain(h.footer())[1], /▤ 107 tok/);
 });
 
 test("the footer names the model and the thinking level Pi reports", () => {

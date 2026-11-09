@@ -14,7 +14,7 @@ function scenario(tokensPerSecond?: number): Scenario {
   };
 }
 
-test("idle chrome shows a one-row header and a native footer", { timeout: 180_000 }, async () => {
+test("idle chrome shows a one-row header and a two-row footer", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: scenario(), cols: 100, rows: 30 });
   try {
     await pi.waitFor("π pi 1.4.0");
@@ -28,14 +28,14 @@ test("idle chrome shows a one-row header and a native footer", { timeout: 180_00
     assert.equal(headerRows[0].includes("skills"), false, headerRows[0]);
     assert.equal(headerRows[0].includes("MCP"), false, headerRows[0]);
 
-    const footerRows = screen.filter((line) => line.includes("%/"));
+    const footerRows = screen.filter((line) => line.includes("◔"));
     assert.equal(footerRows.length, 1, screen.join("\n"));
     const footer = footerRows[0];
     assert.ok(footer, screen.join("\n"));
-    assert.ok(footer.includes("project"), footer);
-    assert.ok(footer.includes("%/"), footer);
-    assert.ok(footer.includes("(auto)"), footer);
+    assert.ok(footer.includes("%"), footer);
     assert.ok(!footer.includes("full/path"), footer);
+    const identity = screen.find((line) => line.includes("project")) ?? "";
+    assert.ok(identity.includes("project"), screen.join("\n"));
     await pi.shot("footer-idle");
     await pi.shot("header");
   } finally {
@@ -71,7 +71,7 @@ test("key hints follow the draft, the stash and the focused dialog", { timeout: 
     await pi.waitForGone("a draft");
     pi.press("ctrl+l");
     await pi.waitFor("Only showing models from configured providers.");
-    const during = pi.screen().find((row) => row.includes("%/")) ?? "";
+    const during = pi.screen().find((row) => row.includes("◔")) ?? "";
     assert.ok(during, pi.screen().join("\n"));
     assert.equal(during.includes("@ files"), false, during);
     await pi.shot("footer-hints-dialog");
@@ -109,8 +109,7 @@ test("footer shows the live token rate while a message streams", { timeout: 180_
     pi.type("write\r");
     await pi.waitFor(/tok\/s/, 60_000);
     const footer = pi.screen().find((line) => line.includes("tok/s")) ?? "";
-    assert.ok(footer.includes("%/"), footer);
-    assert.ok(footer.includes("(auto)"), footer);
+    assert.ok(footer.includes("%"), footer);
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     assert.equal(statusRow.includes("tok/s"), false, statusRow);
     assert.match(footer, /TTFT \d/, footer);
@@ -123,11 +122,11 @@ test("footer shows the live token rate while a message streams", { timeout: 180_
 test("narrow chrome keeps the footer inside 40 columns", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: scenario(), cols: 40, rows: 30 });
   try {
-    await pi.waitFor("(auto)");
-    const footerRows = pi.screen().filter((line) => line.includes("(auto)"));
+    await pi.waitFor("◔");
+    const footerRows = pi.screen().filter((line) => line.includes("◔"));
     assert.equal(footerRows.length, 1, pi.screen().join("\n"));
     assert.ok(visibleWidth(footerRows[0]) <= 40, footerRows[0]);
-    assert.ok(footerRows[0].includes("%/"), footerRows[0]);
+    assert.ok(footerRows[0].includes("%"), footerRows[0]);
     const headerRow = pi.screen().find((line) => line.includes("π pi")) ?? "";
     assert.ok(visibleWidth(headerRow) <= 40, headerRow);
     await pi.shot("footer-narrow-40");
@@ -148,8 +147,8 @@ test("a short message after a measured one keeps the last token rate", { timeout
     pi.type("go\r");
     await pi.waitFor("all done", 60_000);
     await pi.waitForGone("to stop");
-    const footer = pi.screen().find((line) => line.includes("%/")) ?? "";
-    assert.ok(footer.includes("tok/s"), footer);
+    const footer = pi.screen().find((line) => line.includes("tok/s")) ?? "";
+    assert.ok(footer.includes("%"), footer);
   } finally {
     await pi.close();
   }

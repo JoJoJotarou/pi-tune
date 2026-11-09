@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
 
 export interface FooterStats {
@@ -10,9 +10,10 @@ export interface FooterStats {
   /** Cache hit rate of the latest assistant message, percent. */
   cacheHitPercent?: number;
   cost: number;
+  /** Estimated tokens currently in the context window, or null when unknown. */
+  contextTokens: number | null;
   contextPercent: number | null;
   contextWindow: number;
-  autoCompact: boolean;
   /** Output tokens per second of the streaming or last finished assistant message. */
   rate?: number;
   /** Wait of the latest model request for its first token, in milliseconds. */
@@ -61,45 +62,17 @@ export function streamRate(outputTokens: number, startedAt: number, now: number)
   return Math.round(outputTokens / (elapsedMs / 1000));
 }
 
-export interface StatsOptions {
-  cost?: boolean;
-  cache?: boolean;
+/** `32%`: whole percent once it matters, one decimal below ten so small readings stay visible. */
+export function formatContextPercent(percent: number | null): string {
+  if (percent == null) return "?";
+  return `${percent < 10 ? percent.toFixed(1) : Math.round(percent)}%`;
 }
 
-/** Pi's native stat line, without extensions' experimental marker or subscription suffix. */
-export function formatStats(stats: FooterStats, options: StatsOptions = {}): string {
-  const fields: string[] = [];
-  if (stats.input > 0) fields.push(`↑${compactNumber(stats.input)}`);
-  if (stats.output > 0) fields.push(`↓${compactNumber(stats.output)}`);
-  if (options.cache ?? true) {
-    if (stats.cacheRead > 0) fields.push(`R${compactNumber(stats.cacheRead)}`);
-    if (stats.cacheWrite > 0) fields.push(`W${compactNumber(stats.cacheWrite)}`);
-    if ((stats.cacheRead > 0 || stats.cacheWrite > 0) && stats.cacheHitPercent != null) {
-      fields.push(`CH${stats.cacheHitPercent.toFixed(1)}%`);
-    }
-  }
-  if ((options.cost ?? true) && stats.cost > 0) fields.push(`$${stats.cost.toFixed(3)}`);
-
-  const percent = stats.contextPercent == null ? "?" : `${stats.contextPercent.toFixed(1)}%`;
-  const context = `${percent}/${compactNumber(stats.contextWindow)}${stats.autoCompact ? " (auto)" : ""}`;
-  const tail = fields.length > 0 ? `${fields.join(" ")} · ${context}` : context;
-  const speed: string[] = [];
-  if (stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0) {
-    speed.push(`${Math.round(stats.rate)} tok/s`);
-  }
-  if (stats.ttftMs != null && Number.isFinite(stats.ttftMs) && stats.ttftMs >= 0) {
-    speed.push(`TTFT ${formatDuration(stats.ttftMs)}`);
-  }
-  return speed.length > 0 ? [tail, ...speed].join(" · ") : tail;
-}
-
-interface LayoutOptions {
-  hints: boolean;
-  cost: boolean;
-  cache: boolean;
-  branch: boolean;
-  /** The model and thinking level; it goes before the usage numbers when the row is too narrow. */
-  identity: boolean;
+/** `32% (315k/1.0M)`: the share, the estimated tokens in the window, and the window itself. */
+export function formatContextReading(stats: FooterStats): string {
+  const percent = formatContextPercent(stats.contextPercent);
+  const tokens = stats.contextTokens == null ? "?" : compactNumber(stats.contextTokens);
+  return `${percent} (${tokens}/${compactNumber(stats.contextWindow)})`;
 }
 
 /** Pi's one-line status sanitation: no control characters, no repeated spaces. */
@@ -110,66 +83,132 @@ function sanitizeStatusText(text: string): string {
     .trim();
 }
 
-function footerLines(line: string, statuses: FooterParts["statuses"], width: number, theme: Theme): string[] {
-  const lines = [line];
-  if (statuses && statuses.length > 0) {
-    const text = [...statuses]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, value]) => sanitizeStatusText(value))
-      .join(" ");
-    lines.push(truncateToWidth(theme.fg("dim", text), width, theme.fg("dim", "...")));
+function statusLines(statuses: FooterParts["statuses"], width: number, theme: Theme): string[] {
+  if (!statuses || statuses.length === 0) return [];
+  const text = [...statuses]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, value]) => sanitizeStatusText(value))
+    .join(" ");
+  return [truncateToWidth(theme.fg("dim", text), width, theme.fg("dim", "..."))];
+}
+
+function identityText(parts: FooterParts, theme: Theme): string {
+  if (parts.identity === undefined) return "";
+  return (
+    theme.fg("muted", parts.identity.model) +
+    theme.fg("dim", " · ") +
+    theme.getThinkingBorderColor(parts.identity.level)(parts.identity.thinking)
+  );
+}
+
+/** A row with `left` at the start and `right` against its last column, padded to exactly `usable`. */
+function justify(left: string, right: string, usable: number): string | undefined {
+  const leftWidth = visibleWidth(left);
+  if (right === "") return left + " ".repeat(Math.max(0, usable - leftWidth));
+  const gap = usable - leftWidth - visibleWidth(right);
+  if (gap < 2) return undefined;
+  return left + " ".repeat(gap) + right;
+}
+
+/** `feat/footer-layout` → `feat/…layout`: keep both ends of a branch that cannot take the whole row. */
+function elideMiddle(text: string, width: number): string {
+  if (visibleWidth(text) <= width) return text;
+  if (width <= 1) return "…";
+  const left = Math.ceil((width - 1) / 2);
+  const right = Math.floor((width - 1) / 2);
+  return sliceByColumn(text, 0, left) + "…" + sliceByColumn(text, visibleWidth(text) - right, right);
+}
+
+/** Row 1: project/branch left, model and thinking level right; the branch yields its middle first. */
+function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
+  const project = theme.fg("muted", parts.project);
+  const full = theme.fg("muted", parts.project + (parts.branch ? ` (${parts.branch})` : ""));
+  if (right === "") return truncateToWidth(justify(full, "", usable) ?? full, usable);
+  const candidates: (string | undefined)[] = [justify(full, right, usable)];
+  if (parts.branch && right !== "") {
+    const budget = usable - 2 - visibleWidth(right) - visibleWidth(project) - 3;
+    if (budget >= 4) {
+      const branch = elideMiddle(parts.branch, budget);
+      candidates.push(justify(theme.fg("muted", `${parts.project} (${branch})`), right, usable));
+    }
   }
-  return lines;
+  candidates.push(justify(project, right, usable));
+  candidates.push(justify(full, "", usable));
+  const line = candidates.find((candidate): candidate is string => candidate !== undefined);
+  return truncateToWidth(line ?? (right === "" ? project : `${project}  ${right}`), usable);
+}
+
+/** Row 2: key hints left, the DSH-style token, speed, and context pills right. */
+function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
+  const stats = parts.stats;
+  const muted = (text: string) => theme.fg("muted", text);
+  const dim = (text: string) => theme.fg("dim", text);
+  const accent = (text: string) => theme.fg("accent", text);
+  const join = (...items: string[]): string => items.filter((item) => item !== "").join(` ${dim("·")} `);
+  const pill = (content: string): string => theme.bg("toolPendingBg", ` ${content} `);
+
+  const total = stats.input + stats.cacheRead + stats.cacheWrite + stats.output;
+  const hit = stats.cacheHitPercent == null ? "" : `${Math.round(stats.cacheHitPercent)}%`;
+  const cost = stats.cost > 0 ? `$${stats.cost.toFixed(2)}` : "";
+  const tokenIcon = `${accent("▤")} ${muted(`${compactNumber(total)} tok`)}`;
+  const tokenFull =
+    total > 0 ? pill(join(tokenIcon, hit === "" ? "" : muted(hit), cost === "" ? "" : muted(cost))) : "";
+  const tokenCompact = total > 0 ? pill(join(tokenIcon, hit === "" ? "" : muted(hit))) : "";
+  const tokenMini = total > 0 ? pill(tokenIcon) : "";
+
+  const rate =
+    stats.rate != null && Number.isFinite(stats.rate) && stats.rate > 0 ? `${Math.round(stats.rate)} tok/s` : "";
+  const ttft = stats.ttftMs != null ? `TTFT ${formatDuration(stats.ttftMs)}` : "";
+  const speedFull = rate === "" ? "" : pill(join(`${accent("↯")} ${muted(rate)}`, ttft === "" ? "" : muted(ttft)));
+  const speedCompact = rate === "" ? "" : pill(`${accent("↯")} ${muted(rate)}`);
+
+  const percent = stats.contextPercent;
+  const contextColor: "dim" | "text" | "warning" | "error" =
+    percent == null ? "dim" : percent >= 90 ? "error" : percent >= 70 ? "warning" : "text";
+  const contextLabel = formatContextPercent(percent);
+  const used = stats.contextTokens == null ? "?" : compactNumber(stats.contextTokens);
+  const contextFull = pill(
+    `${accent("◔")} ${theme.fg(contextColor, contextLabel)} ${dim(`(${used}/${compactNumber(stats.contextWindow)})`)}`,
+  );
+  const contextCompact = pill(`${accent("◔")} ${theme.fg(contextColor, contextLabel)}`);
+
+  const sets: (readonly string[])[] = [
+    [tokenFull, speedFull, contextFull],
+    [tokenCompact, speedFull, contextFull],
+    [tokenCompact, speedCompact, contextFull],
+    [tokenCompact, speedCompact, contextCompact],
+    // Tokens and context stay; speed is the transient field, so it yields before either.
+    [tokenCompact, contextFull],
+    [tokenCompact, contextCompact],
+    [tokenMini, contextCompact],
+    [speedCompact, contextCompact],
+    [contextCompact],
+  ];
+  const hints = parts.hints ?? "";
+  for (const withHints of [true, false]) {
+    if (withHints && hints === "") continue;
+    for (const set of sets) {
+      const groups = set.filter((group) => group !== "");
+      if (groups.length === 0) continue;
+      const pills = groups.join("  ");
+      const left = withHints ? hints : "";
+      const gap = left === "" ? 0 : 2;
+      if (visibleWidth(left) + visibleWidth(pills) + gap > usable) continue;
+      const row =
+        left === ""
+          ? " ".repeat(usable - visibleWidth(pills)) + pills
+          : left + " ".repeat(usable - visibleWidth(left) - visibleWidth(pills)) + pills;
+      return truncateToWidth(row, usable);
+    }
+  }
+  return truncateToWidth(hints === "" ? " ".repeat(usable) : hints, usable);
 }
 
 export function footerLine(parts: FooterParts, width: number, theme: Theme): string[] {
   if (width <= 0) return [""];
-  // The right-aligned part keeps one column free, like the header above the transcript.
-  const usable = Math.max(1, width - 1);
-
-  const branchSuffix = parts.branch ? ` (${parts.branch})` : "";
-  const identityText =
-    parts.identity === undefined
-      ? ""
-      : theme.fg("muted", parts.identity.model) +
-        theme.fg("dim", " · ") +
-        theme.getThinkingBorderColor(parts.identity.level)(parts.identity.thinking);
-  const build = (layout: LayoutOptions): string | undefined => {
-    const left = theme.fg("muted", parts.project + (layout.branch ? branchSuffix : ""));
-    const stats = theme.fg("dim", formatStats(parts.stats, { cost: layout.cost, cache: layout.cache }));
-    const identity = layout.identity ? identityText : "";
-    const right = identity === "" ? stats : `${stats}  ${identity}`;
-    const hints = layout.hints ? (parts.hints ?? "") : "";
-    const leftWidth = visibleWidth(left);
-    const rightWidth = visibleWidth(right);
-    const hintWidth = visibleWidth(hints);
-    const gap = hints ? 4 : 2;
-    if (leftWidth + rightWidth + hintWidth + gap > usable) return undefined;
-    if (hints) {
-      const spare = usable - leftWidth - rightWidth - hintWidth;
-      const before = Math.floor(spare / 2);
-      return left + " ".repeat(before) + hints + " ".repeat(spare - before) + right;
-    }
-    return left + " ".repeat(usable - leftWidth - rightWidth) + right;
-  };
-
-  const attempts: LayoutOptions[] = [
-    { hints: true, identity: true, cost: true, cache: true, branch: true },
-    { hints: false, identity: true, cost: true, cache: true, branch: true },
-    { hints: false, identity: true, cost: false, cache: true, branch: true },
-    { hints: false, identity: true, cost: false, cache: false, branch: true },
-    { hints: false, identity: true, cost: false, cache: false, branch: false },
-    // The usage numbers win the last columns: they change every turn, while the model does not.
-    { hints: false, identity: false, cost: false, cache: false, branch: false },
-  ];
-  for (const attempt of attempts) {
-    const line = build(attempt);
-    if (line !== undefined) return footerLines(line, parts.statuses, width, theme);
-  }
-
-  const left = theme.fg("muted", parts.project);
-  const right = [theme.fg("dim", formatStats(parts.stats, { cost: false, cache: false })), identityText]
-    .filter((part) => part !== "")
-    .join("  ");
-  return footerLines(truncateToWidth(`${left}  ${right}`, usable), parts.statuses, width, theme);
+  // The input block spans the full width, so the footer does too: its right edge lines up with the block.
+  const usable = Math.max(1, width);
+  const row1 = identityRow(parts, identityText(parts, theme), usable, theme);
+  const row2 = pillRow(parts, usable, theme);
+  return [row1, row2, ...statusLines(parts.statuses, width, theme)];
 }

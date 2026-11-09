@@ -215,7 +215,6 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
             }
             const usage = usageCache.totals;
             const context = session.getContextUsage();
-            const settings = host.settings();
             const stats: FooterStats = {
               input: usage.input,
               output: usage.output,
@@ -223,9 +222,9 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
               cacheWrite: usage.cacheWrite,
               cacheHitPercent: usage.cacheHitPercent,
               cost: usage.cost,
+              contextTokens: context?.tokens ?? null,
               contextPercent: context?.percent ?? null,
               contextWindow: context?.contextWindow ?? session.model?.contextWindow ?? 0,
-              autoCompact: settings.compaction?.enabled !== false,
               rate:
                 (streamStartedAt === undefined
                   ? undefined
