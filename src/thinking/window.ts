@@ -17,7 +17,7 @@
 
 export type WidthFn = (text: string) => number;
 
-const LABEL = "◆ Thinking: ";
+const LABEL = "◆ Thinking · ";
 const ELLIPSIS = "…";
 const ITALIC_OFF = "\x1b[23m";
 const ITALIC_ON = "\x1b[3m";
@@ -25,6 +25,9 @@ const ITALIC_ON = "\x1b[3m";
 const RIGHT_INSET = 3;
 const MIN_CONTENT_WIDTH = 1;
 const DEFAULT_WIDTH = 80;
+/** Raw characters kept ahead of the clip: a slice this deep fills a row even at one column per character. */
+const TAIL_CHARS_PER_COLUMN = 4;
+const TAIL_MIN_CHARS = 256;
 /** Comma inserted at paragraph seams between two CJK runs; folding inside a paragraph joins silently. */
 const PARAGRAPH_JOIN_PUNCT = "，";
 
@@ -246,23 +249,9 @@ export function hookAwareWidth(text: string, widthOf: WidthFn): number {
   return widthOf(text) + scanMarkdownHooks(text).inserted;
 }
 
-/** Break text into rows of at most `budget` visible columns, never splitting a code point. */
-function wrapByWidth(text: string, budget: number, widthOf: WidthFn): string[] {
-  const rows: string[] = [];
-  let row = "";
-  let used = 0;
-  for (const ch of text) {
-    const w = widthOf(ch);
-    if (used > 0 && used + w > budget) {
-      rows.push(row);
-      row = "";
-      used = 0;
-    }
-    row += ch;
-    used += w;
-  }
-  if (row !== "" || rows.length === 0) rows.push(row);
-  return rows;
+/** Whether a UTF-16 code unit is the low half of a surrogate pair, which must keep its preceding unit. */
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 /** Start index of the tail window of `text` that fits `maxWidth` columns (dropped head gets an ellipsis elsewhere). */
@@ -283,58 +272,61 @@ export function clipToTailIndex(text: string, maxWidth: number, widthOf: WidthFn
   return i;
 }
 
+interface Tail {
+  /** The newest text that fits one row. */
+  text: string;
+  /** Whether anything was dropped in front of `text`. */
+  dropped: boolean;
+}
+
+/** Move a slice start back off the low half of a surrogate pair, which would otherwise lose its code point. */
+function backwardStart(text: string, start: number): number {
+  return start > 0 && isLowSurrogate(text.charCodeAt(start)) ? start - 1 : start;
+}
+
 /**
- * Compress a thinking block into a bounded stack of rows. With `maxLines = 1` this is a
- * single continuously rolling line (label inline, head dropped behind a `…`). With more
- * lines the label becomes its own row (`◆ Thinking...` when truncated) followed by the
- * last `maxLines - 1` wrapped rows of the stream, so the newest text stays visible.
+ * Join only as much of the tail as one row can show, so the work per frame follows the width rather than the
+ * block: a thinking block grows one delta at a time and pi redraws the transcript on each of them.
+ */
+function tailWindow(markdown: string, budget: number, widthOf: WidthFn, ellipsisWidth: number): Tail {
+  if (budget - ellipsisWidth <= 0) return { text: "", dropped: true };
+  const hookWidth = (text: string): number => hookAwareWidth(text, widthOf);
+  const chunk = Math.max(TAIL_MIN_CHARS, budget * TAIL_CHARS_PER_COLUMN);
+  let start = backwardStart(markdown, Math.max(0, markdown.length - chunk));
+  for (;;) {
+    const slice = markdown.slice(start).replace(/\t/g, " ");
+    const clean = stripUnpairedBackticks(joinAllLines(slice.split(LINE_BREAK_RE)));
+    const from = clipToTailIndex(clean, budget, hookWidth, ellipsisWidth);
+    // Nothing was dropped inside the slice: if it does not fill the row either, text before it is still missing
+    // (space runs collapse, so a deep slice can hold far less than its length).
+    if (from === 0 && start > 0 && hookWidth(clean) < budget) {
+      start = backwardStart(markdown, Math.max(0, start - chunk));
+      continue;
+    }
+    return { text: clean.slice(from), dropped: start > 0 || from > 0 };
+  }
+}
+
+/**
+ * Compress a thinking block into one continuously rolling row: `◆ Thinking · …newest words`. The label leads the
+ * row while there is room for it, a dropped head leaves a `…`, and only the text is italic.
  * `availableWidth` is the content width pi hands the transformer (padding already removed).
  */
-export function buildThinkingWindow(
-  markdown: string,
-  availableWidth: number,
-  widthOf: WidthFn,
-  ansi = true,
-  maxLines = 1,
-): string {
-  const body = markdown.replace(/\t/g, " ").trim();
-  if (body === "") return markdown;
-  const line = joinAllLines(body.split(LINE_BREAK_RE));
-  if (line === "") return markdown;
+export function buildThinkingWindow(markdown: string, availableWidth: number, widthOf: WidthFn, ansi = true): string {
+  if (markdown.trim() === "") return markdown;
 
   const fullWidth = Math.max(8, Math.floor(availableWidth) || DEFAULT_WIDTH);
   const labelWidth = widthOf(LABEL);
   const ellipsisWidth = widthOf(ELLIPSIS);
   const minLabeledWidth = labelWidth + ellipsisWidth + MIN_CONTENT_WIDTH;
   const width = fullWidth - RIGHT_INSET >= minLabeledWidth ? fullWidth - RIGHT_INSET : fullWidth;
-  const italicOff = ansi ? ITALIC_OFF : "";
-  const italicOn = ansi ? ITALIC_ON : "";
-
-  if (maxLines > 1) {
-    const budget = Math.max(MIN_CONTENT_WIDTH, width);
-    const rows = wrapByWidth(stripUnpairedBackticks(line), budget, widthOf).map((row) =>
-      // Escaping judges pairing per row; a markdown link split across rows degrades to
-      // literal text, which is acceptable for a preview.
-      escapeMarkdownHooks(stripUnpairedBackticks(row)),
-    );
-    const bodyRows = Math.max(1, maxLines - 1);
-    const hidden = rows.length - bodyRows;
-    if (width < labelWidth) return [ELLIPSIS, ...rows.slice(-bodyRows)].join("\n");
-    const label = italicOff + (hidden > 0 ? "◆ Thinking..." : LABEL) + italicOn;
-    return [label, ...rows.slice(-bodyRows)].join("\n");
-  }
-
   const useLabel = width >= minLabeledWidth;
-  const label = useLabel ? LABEL : "";
-  const budget = Math.max(MIN_CONTENT_WIDTH, width - widthOf(label));
-  const hookWidth = (text: string): number => hookAwareWidth(text, widthOf);
+  const budget = Math.max(MIN_CONTENT_WIDTH, width - (useLabel ? labelWidth : 0));
 
-  const cleanLine = stripUnpairedBackticks(line);
-  const ellipsisFits = budget - ellipsisWidth > 0;
-  const from = ellipsisFits ? clipToTailIndex(cleanLine, budget, hookWidth, ellipsisWidth) : cleanLine.length;
-  const clipped = cleanLine.slice(from);
-  const prefix = from > 0 && ellipsisFits ? ELLIPSIS : "";
+  const tail = tailWindow(markdown, budget, widthOf, ellipsisWidth);
   // Head-truncation can cut inside a code span or strand a `]`; judge escaping on the window only.
-  const content = escapeMarkdownHooks(stripUnpairedBackticks(clipped));
-  return useLabel ? italicOff + label + italicOn + prefix + content : prefix + content;
+  const content = escapeMarkdownHooks(stripUnpairedBackticks(tail.text));
+  const prefix = tail.dropped && budget - ellipsisWidth > 0 ? ELLIPSIS : "";
+  if (!useLabel) return prefix + content;
+  return (ansi ? ITALIC_OFF : "") + LABEL + (ansi ? ITALIC_ON : "") + prefix + content;
 }

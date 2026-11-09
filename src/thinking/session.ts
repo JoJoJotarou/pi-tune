@@ -11,9 +11,6 @@ import { buildThoughtSummary } from "./summary.ts";
 import { createThinkingTiming } from "./timing.ts";
 import { buildThinkingWindow } from "./window.ts";
 
-/** Rows shown for an expanded thinking block: the head row plus the newest content rows. */
-const WINDOW_LINES = 4;
-
 /** What the thinking session reads from the running Pi instance; injected so tests can fake it. */
 export interface ThinkingHost {
   now(): number;
@@ -145,7 +142,7 @@ export function createThinkingSession(host: ThinkingHost): ThinkingSession {
           return buildThoughtSummary(markdown, durationMs, context.availableWidth, visibleWidth);
       }
       // No measured duration: keep the rolling window as the residue rather than inventing a summary.
-      return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, host.colorEnabled(), WINDOW_LINES);
+      return buildThinkingWindow(markdown, context.availableWidth, visibleWidth, host.colorEnabled());
     },
   };
 }

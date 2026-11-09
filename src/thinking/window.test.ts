@@ -13,18 +13,24 @@ import {
 
 const ANSI_TRUE = true;
 
-/** The core invariant: the output is exactly one line and never exceeds the width. */
+/** The core invariant: the output is one row, never wider than the width, and survives pi's markdown re-parse. */
 function assertSingleLine(markdown: string, width: number, ansi = ANSI_TRUE): string {
   const line = buildThinkingWindow(markdown, width, visibleWidth, ansi);
   const lineBreak = /[\n\r\u2028\u2029]/;
   assert.ok(!lineBreak.test(line), "must not contain line breaks");
   assert.ok(visibleWidth(line) <= width, `width ${visibleWidth(line)} exceeds ${width}`);
+  const rows = new Markdown(line, 0, 0, noopTheme)
+    .render(width)
+    .map((row) => row.trimEnd())
+    .filter((row) => row !== "");
+  assert.equal(rows.length, 1, `markdown must keep one row, got ${rows.length}:\n${rows.join("\n")}`);
+  assert.ok(visibleWidth(rows[0]) <= width, `rendered width ${visibleWidth(rows[0])} exceeds ${width}`);
   return line;
 }
 
-test("short thinking fits and keeps the label", () => {
+test("short thinking fits and keeps the label on the same row", () => {
   const line = assertSingleLine("step one and two", 80);
-  assert.equal(line, "\x1b[23m◆ Thinking: \x1b[3mstep one and two");
+  assert.equal(line, "\x1b[23m◆ Thinking · \x1b[3mstep one and two");
 });
 
 test("overflow drops the head behind an ellipsis and keeps the tail", () => {
@@ -91,14 +97,14 @@ test("clipToTailIndex keeps the tail within budget", () => {
 
 test("no ANSI when disabled", () => {
   const line = buildThinkingWindow("hello", 80, visibleWidth, false);
-  assert.equal(line, "◆ Thinking: hello");
+  assert.equal(line, "◆ Thinking · hello");
   assert.ok(!line.includes("\x1b"));
 });
 
 test("narrow terminal keeps content and drops the label", () => {
   const long = Array.from({ length: 30 }, (_, i) => `w${i}`).join("");
   const line = assertSingleLine(long, 10);
-  assert.ok(!line.includes("Thinking: "));
+  assert.ok(!line.includes("Thinking"));
   assert.ok(line.startsWith("…"));
   assert.ok(line.endsWith("w29"));
 });
@@ -130,59 +136,49 @@ const noopTheme = {
   underline: (t: string) => t,
 };
 
-/** True rendering invariant for multi-line windows: markdown re-parse must not merge or widen rows. */
-function renderedRows(markdown: string, width: number, maxLines: number): string[] {
-  const output = buildThinkingWindow(markdown, width, visibleWidth, false, maxLines);
-  const md = new Markdown(output, 0, 0, noopTheme);
-  return md
-    .render(width)
-    .map((row) => row.trimEnd())
-    .filter((row) => row !== "");
-}
-
-function assertBoundedRows(markdown: string, width: number, maxLines: number): string[] {
-  const rows = renderedRows(markdown, width, maxLines);
-  assert.ok(rows.length <= maxLines, `expected ≤ ${maxLines} rows, got ${rows.length}:\n${rows.join("\n")}`);
-  for (const row of rows) {
-    assert.ok(visibleWidth(row) <= width, `row width ${visibleWidth(row)} exceeds ${width}: ${row}`);
-  }
-  return rows;
-}
-
-function multiMarkdown(): string {
+function hostileMarkdown(): string {
   return [
     "## Heading with `code` and <angle>",
     "",
     "- list item `a\nb` spanning",
     "contact foo@example.com and [docs](https://x.y) plus array[0](weird)",
     "",
-    "中文段落接缝测试,多行窗口的宽度与行数都要稳。",
+    "中文段落接缝测试,窗口的宽度与行数都要稳。",
   ].join("\n");
 }
 
-function multiCjk(): string {
+function longCjk(): string {
   const sentence = "先读一遍需求,确认改动范围只在渲染层。超出预算时从头部丢弃,行尾永远是最新写下的内容。";
   return `${Array.from({ length: 5 }, () => sentence).join("\n\n")}这一句必须留在最后一行。`;
 }
 
-for (const width of [40, 80, 120]) {
-  for (const source of [multiMarkdown(), multiCjk()]) {
-    test(`multi-line window holds ≤4 rows at width ${width} (${source.slice(0, 6)}…)`, () => {
-      const rows = assertBoundedRows(source, width, 4);
-      assert.ok(rows[0].includes("◆ Thinking"), `label row expected:\n${rows.join("\n")}`);
-    });
-  }
-}
-
-test("multi-line window marks a dropped head with Thinking...", () => {
-  const rows = assertBoundedRows(multiCjk(), 40, 4);
-  assert.ok(rows[rows.length - 1].endsWith("。"), `newest text stays at the tail:\n${rows.join("\n")}`);
-  assert.equal(rows[0], "◆ Thinking...");
+test("heading, list, link and code markup collapse into the rolling row", () => {
+  const line = assertSingleLine(hostileMarkdown(), 80);
+  assert.ok(line.includes("◆ Thinking · "), `label expected: ${line}`);
 });
 
-test("multi-line window without overflow shows every row and no ellipsis", () => {
-  const rows = assertBoundedRows("short thought", 80, 4);
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0], "◆ Thinking:");
-  assert.equal(rows[1], "short thought");
+for (const width of [40, 80, 120]) {
+  test(`a long CJK stream keeps its newest sentence at width ${width}`, () => {
+    const line = assertSingleLine(longCjk(), width);
+    const newest = width === 40 ? "最后一行。" : "这一句必须留在最后一行。";
+    assert.ok(line.endsWith(newest), `newest text stays at the tail: ${line}`);
+    assert.ok(visibleWidth(line) <= width);
+  });
+}
+
+test("the paragraph seam keeps a comma between CJK runs", () => {
+  const line = assertSingleLine("第一段结尾\n\n第二段开头", 80);
+  assert.ok(line.endsWith("第一段结尾，第二段开头"), line);
+});
+
+test("a huge block only joins its tail, and keeps the last line", () => {
+  const filler = Array.from({ length: 2000 }, (_, i) => `filler line ${i} of the thinking block`).join("\n");
+  const line = assertSingleLine(`${filler}\npinned tail sentence.`, 80, false);
+  assert.ok(line.endsWith("pinned tail sentence."), line);
+  assert.ok(line.startsWith("◆ Thinking · …"), line);
+});
+
+test("a deep run of blank lines does not hide the text before it", () => {
+  const line = buildThinkingWindow(`real text at the start.\n${"\n".repeat(300)}tail.`, 80, visibleWidth, false);
+  assert.equal(line, "◆ Thinking · real text at the start. tail.");
 });

@@ -111,16 +111,19 @@ test("the summary keeps the measured thinking time, not the whole reply's", { ti
   });
 });
 
-test("a streaming visible run shows the rolling line then the summary", { timeout: 180_000 }, async () => {
+test("a streaming visible run shows one rolling row then the summary", { timeout: 180_000 }, async () => {
   const pi = await startPi({ scenario: streamingScenario, tune: true, settings: { hideThinkingBlock: false } });
   await closeAfter(pi, async () => {
     pi.type("go\r");
-    await pi.waitFor(/◆ Thinking/);
+    await pi.waitFor(/◆ Thinking · /);
     await pi.shot("thinking-streaming");
+    const streaming = rows(pi.screen()).filter((row) => row.includes("◆ Thinking · "));
+    assert.equal(streaming.length, 1, `one rolling row expected:\n${pi.screen().join("\n")}`);
+    assert.ok(streaming[0].length > "◆ Thinking · ".length, `the row carries the newest words: ${streaming[0]}`);
     await pi.waitFor("All set.");
     const lines = rows(pi.screen());
     assert.equal(countRows(lines, "◆ Thought"), 1, `finished summary expected:\n${lines.join("\n")}`);
-    assert.equal(countRows(lines, "◆ Thinking: "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
+    assert.equal(countRows(lines, "◆ Thinking · "), 0, `rolling line must be gone:\n${lines.join("\n")}`);
     assert.equal(countRows(lines, LABEL), 0, `hidden label must not appear:\n${lines.join("\n")}`);
   });
 });
