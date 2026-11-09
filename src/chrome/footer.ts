@@ -1,6 +1,9 @@
+import { homedir } from "node:os";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatDuration } from "../shared/format.ts";
+
+const HOME = homedir();
 
 export interface FooterStats {
   input: number;
@@ -112,6 +115,13 @@ function justify(left: string, right: string, usable: number): string | undefine
   return left + " ".repeat(gap) + right;
 }
 
+/** `/Users/me/project` → `~/project`: shell's own shorthand, so the row spends its columns on the path. */
+export function tildePath(path: string, home: string): string {
+  if (home === "" || home === "/") return path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
 /** `feat/footer-layout` → `feat/…layout`: keep both ends of a branch that cannot take the whole row. */
 function elideMiddle(text: string, width: number): string {
   if (visibleWidth(text) <= width) return text;
@@ -122,21 +132,23 @@ function elideMiddle(text: string, width: number): string {
 }
 
 /**
- * Row 1: cwd/branch left, model and thinking level right. The cwd is its full path while the row can take it and
- * its project name once it cannot; the branch yields its middle before the row falls back to the shorter name.
+ * Row 1: cwd/branch left, model and thinking level right. The cwd is its home-relative path while the row can take
+ * it and its project name once it cannot; the branch yields its middle before the row falls back to the shorter name.
  */
 function identityRow(parts: FooterParts, right: string, usable: number, theme: Theme): string {
   const tinted = (text: string): string => theme.fg("muted", text);
-  const names = parts.cwd !== undefined && parts.cwd !== parts.project ? [parts.cwd, parts.project] : [parts.project];
-  const labelled = (name: string): string => (parts.branch ? `${name} (${parts.branch})` : name);
+  const path = parts.cwd === undefined ? undefined : tildePath(parts.cwd, HOME);
+  const names = path !== undefined && path !== parts.project ? [path, parts.project] : [parts.project];
+  const labelled = (name: string): string => (parts.branch ? `${name} ⎇ ${parts.branch}` : name);
   const candidates: (string | undefined)[] = [];
   // The model stays on the row as long as any name leaves room for it.
   if (right !== "") {
     for (const name of names) {
       candidates.push(justify(tinted(labelled(name)), right, usable));
+      // ` ⎇ ` takes the three columns the parentheses did, so the branch keeps the same budget.
       const budget = usable - 2 - visibleWidth(right) - visibleWidth(name) - 3;
       if (parts.branch && budget >= 4) {
-        candidates.push(justify(tinted(`${name} (${elideMiddle(parts.branch, budget)})`), right, usable));
+        candidates.push(justify(tinted(`${name} ⎇ ${elideMiddle(parts.branch, budget)}`), right, usable));
       }
       candidates.push(justify(tinted(name), right, usable));
     }
@@ -150,7 +162,10 @@ function identityRow(parts: FooterParts, right: string, usable: number, theme: T
   return truncateToWidth(line ?? tinted(labelled(parts.project)), usable);
 }
 
-/** Row 2: key hints left, the DSH-style token, speed, and context pills right. */
+/**
+ * Row 2: key hints left, the DSH-style token, speed, and context pills right. A key hint is the lowest rank: it
+ * shares the row only with the complete pill set, so a narrower terminal loses the hints before any reading.
+ */
 function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const stats = parts.stats;
   const muted = (text: string) => theme.fg("muted", text);
@@ -160,12 +175,13 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
   const pill = (content: string): string => theme.bg("toolPendingBg", ` ${content} `);
 
   const total = stats.input + stats.cacheRead + stats.cacheWrite + stats.output;
-  const hit = stats.cacheHitPercent == null ? "" : `${Math.round(stats.cacheHitPercent)}%`;
+  // The cache hit rate belongs to the latest request, not the session: the word keeps it from reading as a share
+  // of the token total next to it.
+  const hit = stats.cacheHitPercent == null ? "" : `${muted(`${Math.round(stats.cacheHitPercent)}%`)}${dim(" cached")}`;
   const cost = stats.cost > 0 ? `$${stats.cost.toFixed(2)}` : "";
-  const tokenIcon = `${accent("▤")} ${muted(`${compactNumber(total)} tok`)}`;
-  const tokenFull =
-    total > 0 ? pill(join(tokenIcon, hit === "" ? "" : muted(hit), cost === "" ? "" : muted(cost))) : "";
-  const tokenCompact = total > 0 ? pill(join(tokenIcon, hit === "" ? "" : muted(hit))) : "";
+  const tokenIcon = `${accent("∑")} ${muted(`${compactNumber(total)} tok`)}`;
+  const tokenFull = total > 0 ? pill(join(tokenIcon, hit, cost === "" ? "" : muted(cost))) : "";
+  const tokenCompact = total > 0 ? pill(join(tokenIcon, hit)) : "";
   const tokenMini = total > 0 ? pill(tokenIcon) : "";
 
   const rate =
@@ -196,10 +212,12 @@ function pillRow(parts: FooterParts, usable: number, theme: Theme): string {
     [speedCompact, contextCompact],
     [contextCompact],
   ];
+  // A key hint shares the row only with the complete set: it is the first thing to go, before any reading does.
+  const complete = sets.slice(0, 1);
   const hints = parts.hints ?? "";
   for (const withHints of [true, false]) {
     if (withHints && hints === "") continue;
-    for (const set of sets) {
+    for (const set of withHints ? complete : sets) {
       const groups = set.filter((group) => group !== "");
       if (groups.length === 0) continue;
       const pills = groups.join("  ");

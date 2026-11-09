@@ -60,15 +60,19 @@ editor's top border.
 
 | Part | Name | Example |
 |---|---|---|
-| Left | `project（项目）` and `branch（分支）` | `pi-tune (main)` |
+| Left | `project（项目）` and `branch（分支）` | `pi-tune ⎇ main` |
 | Center | `key hints（按键提示）` | `/ commands · @ files · ! shell` |
-| Right | `stats（用量统计）` | `0.0%/1.0M (auto)` |
+| Right | `stats（用量统计）` | `∑ 380k tok · 91% cached · $0.42` |
 
 `key hints（按键提示）` follow the editor state (`src/chrome/hints.ts`): an empty draft shows
 `/ commands · @ files · ! shell`, plus `ctrl+s restore` when a draft is stashed; a draft with text shows
 `@ files · ctrl+s stash`. During a run, text in the editor switches them to steer / follow-up, while an empty
-editor keeps the three prefixes. A btw drawer keeps only `@ files`; a dialog-focused editor hides them. At
-narrow widths `footer（底栏）` drops the center part first, then cost and cache fields.
+editor keeps the three prefixes. A btw drawer keeps only `@ files`; a dialog-focused editor hides them.
+
+`key hints（按键提示）` rank below every reading in `stats（用量统计）`: they share the row only with the complete
+pill set, so narrowing drops them before it drops a field. Past that the pills yield in their own order: cost,
+`TTFT`, speed, the context reading, the cache rate, then the token total. A 100-column terminal therefore shows
+the readings alone, and the hints return once the row can take them next to all of them.
 
 ## Names not to use
 

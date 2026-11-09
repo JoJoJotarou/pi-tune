@@ -10,12 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import {
-  type ChromeContext,
-  type ChromeHost,
-  type ChromeSession,
-  createChromeSession,
-} from "./session.ts";
+import { type ChromeContext, type ChromeHost, type ChromeSession, createChromeSession } from "./session.ts";
 
 const theme = testTheme("dark");
 initTheme("dark");
@@ -170,8 +165,8 @@ test("start renders the header counts and the footer line", () => {
   assert.match(header, /myproj/);
 
   const footer = plain(h.footer());
-  assert.match(footer[0], /myproj \(feat\/x\)/);
-  assert.match(footer[1], /▤ 150 tok/);
+  assert.match(footer[0], /myproj ⎇ feat\/x/);
+  assert.match(footer[1], /∑ 150 tok/);
   assert.match(footer[1], /◔ 0\.5% \(1\.0k\/200k\)/);
   assert.match(footer[1], /commands/);
   assert.equal(footer[2], "1 thread");
@@ -194,7 +189,7 @@ test("a focused dialog hides the key hints", () => {
   h.setFocus(false);
   const rows = plain(h.footer());
   assert.doesNotMatch(rows[1], /commands/);
-  assert.match(rows[0], /myproj \(feat\/x\)/);
+  assert.match(rows[0], /myproj ⎇ feat\/x/);
   assert.deepEqual(h.notified, []);
 });
 
@@ -265,25 +260,25 @@ test("shutdown clears the session and a restart starts fresh", () => {
 test("the footer rereads the entries only after an append", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /▤ 150 tok/);
+  assert.match(plain(h.footer())[1], /∑ 150 tok/);
   h.footer();
   h.footer();
   assert.equal(h.entryReads(), 1);
 
   h.append({ type: "usage", usage: usage(30) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /▤ 280 tok/);
+  assert.match(plain(h.footer())[1], /∑ 280 tok/);
   assert.equal(h.entryReads(), 2);
 });
 
 test("a restarted session does not reuse the previous session's totals", () => {
   const h = harness();
   h.append({ type: "usage", usage: usage(50) } as SessionEntry);
-  assert.match(plain(h.footer())[1], /▤ 150 tok/);
+  assert.match(plain(h.footer())[1], /∑ 150 tok/);
 
   h.session.shutdown();
   h.replaceEntries([{ type: "usage", usage: usage(7) } as SessionEntry]);
   h.restart();
-  assert.match(plain(h.footer())[1], /▤ 107 tok/);
+  assert.match(plain(h.footer())[1], /∑ 107 tok/);
 });
 
 test("the footer names the model and the thinking level Pi reports", () => {
