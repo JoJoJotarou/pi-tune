@@ -56,6 +56,10 @@ export interface PiSession {
   wheel(col: number, row: number, direction?: "up" | "down"): void;
   waitFor(text: string | RegExp, timeoutMs?: number): Promise<void>;
   waitForGone(text: string | RegExp, timeoutMs?: number): Promise<void>;
+  /** Resize the pseudo-terminal and the screen model, then wait for the redraw to settle. */
+  resize(cols: number, rows: number): Promise<void>;
+  /** Wait until three polls in a row agree: for repaints no `waitFor` can observe. */
+  settle(): Promise<void>;
   screen(): string[];
   shot(name: string): Promise<void>;
   close(): Promise<void>;
@@ -136,8 +140,8 @@ function matches(text: string, matcher: string | RegExp): boolean {
 }
 
 export async function startPi(options: StartOptions): Promise<PiSession> {
-  const cols = options.cols ?? 100;
-  const rows = options.rows ?? 40;
+  let cols = options.cols ?? 100;
+  let rows = options.rows ?? 40;
   ensureSpawnHelper();
 
   const root = mkdtempSync(join(tmpdir(), "pi-tune-e2e-"));
@@ -302,6 +306,16 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
     },
     waitForGone(text, timeoutMs) {
       return waitFor(text, timeoutMs, true);
+    },
+    async resize(nextCols, nextRows) {
+      cols = nextCols;
+      rows = nextRows;
+      pty.resize(nextCols, nextRows);
+      term.resize(nextCols, nextRows);
+      await waitForStableScreen();
+    },
+    settle() {
+      return waitForStableScreen();
     },
     screen: readScreen,
     async shot(name) {
