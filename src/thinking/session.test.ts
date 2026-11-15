@@ -329,20 +329,85 @@ test("start labels history and resets the message being streamed", () => {
   assert.equal(h.rows()[0], "◆ Thought for 0.5s");
 });
 
-test("a frame drawn before the message exists still folds later runs", () => {
+test("a settled block with no assistant message warns once and stops folding", () => {
   const h = harness();
   start(h);
   h.session.messageUpdate(thinkingEvent("thinking_start"));
   h.now(1_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
-  assert.deepEqual(h.warnings, [], "a transcript without the message yet is not breakage");
 
-  h.session.messageEnd(assistantEnd());
+  assert.equal(h.warnings.length, 1, h.warnings.join("\n"));
+  assert.match(h.warnings[0], /fold disabled: .*assistant message/);
+
   h.draw();
   h.session.messageUpdate(thinkingEvent("thinking_start"));
-  h.now(2_000);
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan again"));
+
+  assert.equal(h.warnings.length, 1, "the warning is reported once");
+  assert.ok(h.rows().includes("plan the answer"), `the fold stays off:\n${h.rows().join("\n")}`);
+});
+
+test("a frame before the messages exist still folds them once drawn", () => {
+  const h = harness();
+  start(h);
+  h.frame();
+  h.draw();
+  h.frame();
+  h.frame();
+
+  assert.equal(h.rows()[0], "◆ Thought");
+  assert.deepEqual(h.warnings, []);
+});
+
+test("a pending drawn message is folded once it settles", () => {
+  const h = harness({ pending: true });
+  h.draw();
+  start(h);
+  assert.ok(h.rows().includes("plan the answer"), `a pending message is left alone:\n${h.rows().join("\n")}`);
+
+  (h.message as unknown as { lastMessage: { stopReason: string } }).lastMessage.stopReason = "stop";
+  h.frame();
+  assert.equal(h.rows()[0], "◆ Thought");
+});
+
+test("a transcript with messages but nothing to fold is walked once, not on every frame", () => {
+  const h = harness();
+  let walks = 0;
+  const tree = {
+    get children() {
+      walks++;
+      return [h.message];
+    },
+    requestRender: () => {},
+  } as unknown as TUI;
+  (h.message as unknown as { lastMessage?: unknown }).lastMessage = { stopReason: "stop" };
+  h.session.start(h.ctx);
+  h.bind(tree);
+  h.frame();
+  h.frame();
+  h.frame();
+
+  assert.equal(walks, 1);
+});
+
+test("shutdown drops the old session so its events no longer warn or record", () => {
+  const h = harness();
+  const tree = { children: [h.message], requestRender: () => {} } as unknown as TUI;
+  h.session.start(h.ctx);
+  h.bind(tree);
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.now(1_500);
   h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan"));
-  assert.equal(h.rows()[0], "◆ Thought for 0.5s");
+  assert.deepEqual(h.warnings, []);
+  (tree as unknown as { children: unknown[] }).children.push({ not: "a component" });
+
+  h.session.shutdown();
+  h.session.messageEnd(assistantEnd());
+  assert.deepEqual(h.appended, [], "the old run state is gone");
+
+  h.session.messageUpdate(thinkingEvent("thinking_start"));
+  h.session.messageUpdate(thinkingEvent("thinking_end", 0, "plan again"));
+  assert.deepEqual(h.warnings, [], "the old ctx is never notified");
 });
 
 test("a moved transcript shape warns once and stops folding", () => {
