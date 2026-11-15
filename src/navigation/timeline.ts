@@ -315,6 +315,8 @@ export class TimelineRail implements Component {
     this.layoutCache = undefined;
     this.transcript = undefined;
     this.resetHover();
+    // The rail will never draw or hide itself again, so the columns it still covers must be given back here.
+    this.publishCovered(0);
   }
 
   /** Eligibility, also used as the overlay's `visible` gate so Pi's own scrollbar works while the rail is off. */

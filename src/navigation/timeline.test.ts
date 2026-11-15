@@ -273,7 +273,7 @@ test("reports the covered columns, once per change, and clears them when the rai
   assert.deepEqual(published, [2, 0]);
 });
 
-test("a disposed rail stops drawing and publishing, so a replaced session cannot be reported to", () => {
+test("a disposed rail stops drawing, and the columns it covered are given back once", () => {
   const published: number[] = [];
   const tui = fakeTui(conversation());
   const rail = new TimelineRail(
@@ -289,7 +289,22 @@ test("a disposed rail stops drawing and publishing, so a replaced session cannot
   assert.equal(rail.visible(), false);
   assert.deepEqual(rail.render(2), []);
   assert.equal(rail.handleMouse(mouse({ type: "move", button: "none", y: 0 })), undefined);
-  assert.deepEqual(published, [2]);
+  assert.deepEqual(published, [2, 0], "the tools area stops padding rows for a rail that is gone");
+});
+
+test("a rail that never showed publishes nothing when it is disposed", () => {
+  const published: number[] = [];
+  const tui = fakeTui([new UserMessageComponent("only question")]);
+  const rail = new TimelineRail(
+    tui as never,
+    () => testTheme("dark"),
+    () => {},
+    (covered) => published.push(covered),
+  );
+
+  rail.dispose();
+
+  assert.deepEqual(published, []);
 });
 
 test("frames that leave the transcript's shape alone do not walk the chat again", () => {
