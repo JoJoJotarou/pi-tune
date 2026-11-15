@@ -43,6 +43,8 @@ interface Harness {
   replaceEntries(entries: SessionEntry[]): void;
   /** How often the session read the whole entry list. */
   entryReads(): number;
+  /** How often the session asked the footer's screen for a frame. */
+  renders(): number;
   setEditorText(text: string): void;
   setFocus(focus: boolean | Error): void;
   /** Swaps the repository reading the fake git returns. */
@@ -156,6 +158,7 @@ function harness(options: HarnessOptions = {}): Harness {
       entries = next;
     },
     entryReads: () => reads,
+    renders: () => renders.count,
     setEditorText: (text) => {
       editorText = text;
     },
@@ -279,6 +282,9 @@ test("shutdown clears the session and a restart starts fresh", () => {
   h.session.shutdown();
   assert.deepEqual(h.footer(), []);
   assert.deepEqual(h.header(), []);
+  const drawn = h.renders();
+  h.session.btwMode(true);
+  assert.equal(h.renders(), drawn, "an event after shutdown reached the old session's screen");
 
   h.replaceEntries([]);
   h.setEditorText("");

@@ -82,13 +82,6 @@ export function formatContextPercent(percent: number | null): string {
   return `${percent < 10 ? percent.toFixed(1) : Math.round(percent)}%`;
 }
 
-/** `32% (315k/1.0M)`: the share, the estimated tokens in the window, and the window itself. */
-export function formatContextReading(stats: FooterStats): string {
-  const percent = formatContextPercent(stats.contextPercent);
-  const tokens = stats.contextTokens == null ? "?" : compactNumber(stats.contextTokens);
-  return `${percent} (${tokens}/${compactNumber(stats.contextWindow)})`;
-}
-
 /** Two decimals with thousands grouped, because a session that costs four figures should not push the row out. */
 const COST_FORMAT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 

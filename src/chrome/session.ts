@@ -325,6 +325,7 @@ export function createChromeSession(host: ChromeHost): ChromeSession {
       reset();
       mcpConfigured = 0;
       render();
+      tui = undefined;
     },
   };
 }

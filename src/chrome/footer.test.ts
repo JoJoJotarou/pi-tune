@@ -9,7 +9,6 @@ import {
   type FooterStats,
   footerLine,
   formatContextPercent,
-  formatContextReading,
   formatCost,
   streamRate,
   tildePath,
@@ -71,8 +70,6 @@ test("context readings keep one decimal below ten percent", () => {
   assert.equal(formatContextPercent(10), "10%");
   assert.equal(formatContextPercent(31.5), "32%");
   assert.equal(formatContextPercent(null), "?");
-  assert.equal(formatContextReading(stats), "5.3% (53k/1.0M)");
-  assert.equal(formatContextReading({ ...stats, contextTokens: null, contextPercent: null }), "? (?/1.0M)");
 });
 
 test("the footer has an identity row and a pill row", () => {
@@ -183,6 +180,10 @@ test("the session pill spells usage the way Pi's footer does, without a summed t
 test("the context reading shows the used and total tokens", () => {
   const line = plain(footerLine({ ...parts, hints: "" }, 120, theme))[1];
   assert.match(line, /◔ 5\.3% \(53k\/1\.0M\)/);
+
+  const unknown = { ...stats, contextTokens: null, contextPercent: null };
+  const unknownLine = plain(footerLine({ ...parts, hints: "", stats: unknown }, 120, theme))[1] ?? "";
+  assert.match(unknownLine, /◔ \? \(\?\/1\.0M\)/, unknownLine);
 });
 
 test("the branch yields its middle before the model leaves the identity row", () => {
