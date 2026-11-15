@@ -16,17 +16,28 @@ export interface WriteRecord {
 }
 
 const records = new Map<string, WriteRecord>();
+/**
+ * The plan of every write call the session has shown, so a row Pi rebuilds from session entries (after
+ * compaction, `/tree`, `/fork`) draws the same header and diff as the first one. It holds a short meta, the
+ * body kind, and Pi's hunked diff, which replaces the up-to-1-MB old text: only the changed hunks and their
+ * context lines (a whole-file rewrite is the exception, where the diff is about old plus new content).
+ */
+const plans = new Map<string, WritePlan>();
 
 export function rememberWriteRecord(toolCallId: string, record: WriteRecord): void {
   records.set(toolCallId, record);
 }
 
-export function writeRecord(toolCallId: string): WriteRecord | undefined {
-  return records.get(toolCallId);
+/** Reads and releases a record: the old text is kept only until the result has been planned. */
+export function takeWriteRecord(toolCallId: string): WriteRecord | undefined {
+  const record = records.get(toolCallId);
+  records.delete(toolCallId);
+  return record;
 }
 
-export function clearWriteRecords(): void {
+export function clearWrites(): void {
   records.clear();
+  plans.clear();
 }
 
 /** Reads the write target before the tool runs; a missing file records `existed: false`. */
@@ -63,6 +74,19 @@ export function planWrite(record: WriteRecord | undefined, content: string): Wri
   return { meta: diffMeta(diff, "overwrite"), body: "diff", diff };
 }
 
+/**
+ * The plan of one write call, made once: the pre-image is released and every later row draws this plan. A call
+ * with no pre-image yet (or a resumed one, which never has it) is planned again on its next render.
+ */
+export function planWriteOnce(toolCallId: string, content: string): WritePlan {
+  const planned = plans.get(toolCallId);
+  if (planned !== undefined) return planned;
+  const record = takeWriteRecord(toolCallId);
+  const plan = planWrite(record, content);
+  if (record !== undefined) plans.set(toolCallId, plan);
+  return plan;
+}
+
 /** Numbered rows for a new file: the first lines while collapsed, all of them expanded. */
 export function renderWriteLines(
   path: string,
@@ -77,7 +101,7 @@ export function renderWriteLines(
 
   const shown = expanded ? total : Math.min(total, PREVIEW_LINES);
   const numberWidth = String(total).length;
-  const styled = highlightLines(lines, path);
+  const styled = highlightLines(lines.slice(0, shown), path);
   const rows: string[] = [];
   for (let index = 0; index < shown; index++) {
     const number = String(index + 1).padStart(numberWidth);

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { assertFits } from "../../test/width.ts";
 import { grepBody, listBody, treeRows } from "./tree.ts";
 
 initTheme("dark");
@@ -11,10 +12,6 @@ const theme = testTheme();
 
 function plain(lines: string[]): string[] {
   return lines.map(stripTerminalSequences);
-}
-
-function assertFits(lines: string[], width: number): void {
-  for (const line of plain(lines)) assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(line)}`);
 }
 
 test("tree rows draw a connector and the last child under three spaces", () => {

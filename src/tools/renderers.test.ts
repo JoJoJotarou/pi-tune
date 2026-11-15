@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import type { AgentToolResult, ToolRenderers } from "@earendil-works/pi-coding-agent";
+import { mock, test } from "node:test";
+import type { AgentToolResult, Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { initTheme, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
 import { type Component, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { assertFits } from "../../test/width.ts";
 import { setRailCoveredColumns } from "./rail.ts";
 import { toolRenderers } from "./renderers.ts";
-import { clearRuns, setHeadExpanded, setRunPlan, toggleCallExpanded } from "./run.ts";
-import { rememberWriteRecord } from "./write.ts";
+import { clearRuns, registerRow, setHeadExpanded, setRunPlan, toggleCallExpanded } from "./run.ts";
+import { createToolsSession } from "./session.ts";
+import { clearWrites, rememberWriteRecord, takeWriteRecord, type WriteRecord } from "./write.ts";
 
 const theme = testTheme();
 initTheme("dark");
@@ -63,6 +65,12 @@ function plain(lines: string[]): string[] {
   return lines.map(stripTerminalSequences);
 }
 
+/** A write call's pre-image as the tool_call hook records it, in a session of its own. */
+function writePreImage(id: string, record: WriteRecord): void {
+  clearWrites();
+  rememberWriteRecord(id, record);
+}
+
 function callLines(name: string, args: unknown, ctx: TestContext, width = 80): string[] {
   const renderers = toolRenderers(name, () => baseRenderers);
   assert.ok(renderers, `${name} was not resolved`);
@@ -87,20 +95,49 @@ function text(value: string): AgentToolResult<unknown> {
   return { content: [{ type: "text", text: value }], details: undefined };
 }
 
-function bgOpen(token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"): string {
-  return theme.bg(token, "").replace("\u001b[49m", "");
+/** The background sequence a token writes in the theme that drew the lines. */
+function bgOpen(token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg", drawn: Theme): string {
+  return drawn.bg(token, "").replace("\u001b[49m", "");
 }
 
 function assertPainted(lines: string[], token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"): void {
-  const open = bgOpen(token);
+  const open = bgOpen(token, theme);
   assert.ok(lines.length > 0, "nothing was rendered");
   for (const line of lines) assert.ok(line.startsWith(open), `not painted with ${token}: ${JSON.stringify(line)}`);
 }
 
-function assertFits(lines: string[], width: number): void {
-  for (const line of lines) {
-    assert.ok(visibleWidth(line) <= width, `width ${width}: ${JSON.stringify(stripTerminalSequences(line))}`);
-  }
+/**
+ * The theme Pi's own shell paints a row with: the one it hands our renderers. It is not `testTheme()`,
+ * which is always truecolor, so an expected escape must come from this theme instead.
+ */
+let shellTheme: Theme | undefined;
+
+/** The renderers Pi's shell draws with, recording the theme it hands them. */
+function shellRenderers(name: string): ToolRenderers {
+  const renderers = toolRenderers(name, () => baseRenderers);
+  const renderCall = renderers?.renderCall;
+  const renderResult = renderers?.renderResult;
+  assert.ok(renderCall && renderResult, `${name} has no renderers`);
+  return {
+    ...renderers,
+    renderCall: (args, handed, context) => {
+      shellTheme = handed;
+      return renderCall(args, handed, context);
+    },
+    renderResult: (result, options, handed, context) => {
+      shellTheme = handed;
+      return renderResult(result, options, handed, context);
+    },
+  };
+}
+
+function shellBgOpen(token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"): string {
+  return bgOpen(token, shellThemeOrFail());
+}
+
+function shellThemeOrFail(): Theme {
+  assert.ok(shellTheme !== undefined, "Pi's shell handed our renderers no theme");
+  return shellTheme;
 }
 
 test("resolves only the built-in tools and keeps each one's renderers", () => {
@@ -280,6 +317,15 @@ test("an expanded body keeps two columns free on the right, like the left indent
   }
 });
 
+test("an expanded body and its painted block still fit widths 1 to 3", () => {
+  const ctx = context({ args: { path: "README.md" } });
+  for (const width of [1, 2, 3]) {
+    const rows = resultLines("read", text("one\ntwo"), { expanded: true, isPartial: false }, ctx, width);
+    assert.ok(rows.length > 0, `width ${width} rendered nothing`);
+    assertFits(rows, width);
+  }
+});
+
 test("an expanded bash call draws the whole command in its header, wrapped, and no $ line", () => {
   const command = `echo ${"x".repeat(150)}`;
   const ctx = context({ args: { command }, expanded: true });
@@ -396,7 +442,7 @@ test("an edit without diff details falls back to Pi's renderer", () => {
 });
 
 test("a new file shows its first three lines and a truncation line", () => {
-  rememberWriteRecord("call-1", { existed: false });
+  writePreImage("call-1", { existed: false });
   const content = Array.from({ length: 15 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n");
   const ctx = context({ args: { path: "src/new.ts", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
@@ -414,7 +460,7 @@ test("a new file shows its first three lines and a truncation line", () => {
 test("an overwrite diffs against the old text and folds to three lines", () => {
   const oldText = "one\ntwo\nthree\nfour\nfive\n";
   const content = "one\nTWO\nthree\nfour\nfive\nsix\n";
-  rememberWriteRecord("call-1", { existed: true, oldText });
+  writePreImage("call-1", { existed: true, oldText });
   const ctx = context({ args: { path: "notes.txt", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
 
@@ -432,7 +478,7 @@ test("an overwrite diffs against the old text and folds to three lines", () => {
 });
 
 test("an overwrite without old text shows the new lines and says only overwrite", () => {
-  rememberWriteRecord("call-1", { existed: true });
+  writePreImage("call-1", { existed: true });
   const content = "one\ntwo\nthree\nfour\n";
   const ctx = context({ args: { path: "notes.txt", content } });
   const lines = plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx));
@@ -449,8 +495,54 @@ test("a write without a record has only a line count", () => {
   assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /2 lines/);
 });
 
+test("a planned write keeps its meta and diff for every row of that call", () => {
+  const oldText = "one\ntwo\n";
+  const content = "one\nTWO\n";
+  writePreImage("call-1", { existed: true, oldText });
+  const renderers = toolRenderers("write", () => baseRenderers);
+  const renderResult = renderers?.renderResult;
+  assert.ok(renderResult, "write has no renderResult");
+  const options = { expanded: false, isPartial: false };
+  const body = (lines: string[]) =>
+    plain(lines)
+      .slice(0, -1)
+      .map((line) => line.trim());
+  const diffRows = ["1   one", "2 - two", "2 + TWO"];
+
+  const ctx = context({ args: { path: "notes.txt", content } });
+  const collapsed = renderResult(text("ok"), options, theme, ctx);
+  assert.deepEqual(body(collapsed.render(80)), diffRows);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /overwrite · \+1 −1/);
+  // The pre-image is gone; the plan is all that is kept.
+  assert.equal(takeWriteRecord("call-1"), undefined);
+
+  // Pi rebuilds the transcript from session entries (compaction, `/tree`, `/fork`) with a fresh state:
+  // the new row still draws the write's own header and diff.
+  const rebuilt = context({ args: { path: "notes.txt", content } });
+  assert.deepEqual(body(resultLines("write", text("ok"), { ...options, expanded: true }, rebuilt, 80)), diffRows);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, rebuilt))[1], /overwrite · \+1 −1/);
+
+  // Pi draws the same row again when it expands, at another width, or after a redraw.
+  assert.deepEqual(body(collapsed.render(60)), diffRows);
+  const expanded = plain(renderResult(text("ok"), { ...options, expanded: true }, theme, ctx).render(80));
+  assert.deepEqual(body(expanded), diffRows);
+});
+
+test("a session reset drops every planned write", () => {
+  writePreImage("call-1", { existed: true, oldText: "one\ntwo\n" });
+  const args = { path: "notes.txt", content: "one\nTWO\n" };
+  const ctx = context({ args });
+  assert.ok(plain(resultLines("write", text("ok"), { expanded: false, isPartial: false }, ctx)).length > 0);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, ctx))[1], /overwrite · \+1 −1/);
+
+  clearWrites();
+  const next = context({ args });
+  assert.deepEqual(resultLines("write", text("ok"), { expanded: false, isPartial: false }, next), []);
+  assert.match(plain(callLines("write", { path: "notes.txt" }, next))[1], /2 lines/);
+});
+
 test("an unfinished write has no body", () => {
-  rememberWriteRecord("call-1", { existed: false });
+  writePreImage("call-1", { existed: false });
   const ctx = context({ args: { path: "src/new.ts", content: "one\n" }, executionStarted: false });
   assert.deepEqual(resultLines("write", text(""), { expanded: false, isPartial: true }, ctx), []);
 });
@@ -483,7 +575,7 @@ test("no tool block mentions ctrl+o or the expand keybinding", () => {
 test("every rendered line fits widths 40 and 100", () => {
   const diff = " 1 a\n-2 b\n+2 B\n 3 c\n-4 d\n+4 D\n 5 e";
   const content = Array.from({ length: 15 }, (_, index) => `const value${index + 1} = ${index + 1};`).join("\n");
-  rememberWriteRecord("call-1", { existed: true, oldText: "one\ntwo\n" });
+  writePreImage("call-1", { existed: true, oldText: "one\ntwo\n" });
 
   const cases: [string, unknown, AgentToolResult<unknown>, TestContext][] = [
     ["bash", { command: `echo ${"x".repeat(120)}` }, text("1\n2\n3\n4\n5\n"), context()],
@@ -514,7 +606,7 @@ test("every body line of a painted block opens with the background escape", () =
   const lines = resultLines("read", text("one\ntwo"), { expanded: true, isPartial: false }, ctx);
   assertPainted(lines, "toolSuccessBg");
 
-  rememberWriteRecord("call-1", { existed: false });
+  writePreImage("call-1", { existed: false });
   const writeCtx = context({ args: { path: "new.ts", content: "one\ntwo\n" } });
   assertPainted(resultLines("write", text("ok"), { expanded: false, isPartial: false }, writeCtx), "toolSuccessBg");
 });
@@ -725,6 +817,69 @@ test("renderCall starts the row's clock only once the tool executes", () => {
   assert.equal(typeof running.state.startedAt, "number");
 });
 
+test("session start and shutdown stop every clock still running", () => {
+  const session = createToolsSession();
+  const empty = { sessionManager: { getBranch: () => [] as never } };
+  mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    let redraws = 0;
+    const running = () => context({ args: { command: "make" }, isPartial: true, invalidate: () => redraws++ });
+
+    const beforeShutdown = running();
+    headerFor("bash", { command: "make" }, beforeShutdown);
+    mock.timers.tick(1000);
+    assert.equal(redraws, 4);
+
+    // No final result arrives for this call: the session still stops its clock.
+    session.shutdown();
+    mock.timers.tick(1000);
+    assert.equal(redraws, 4);
+
+    const beforeStart = running();
+    headerFor("bash", { command: "make" }, beforeStart);
+    mock.timers.tick(500);
+    assert.equal(redraws, 6);
+
+    session.start(empty);
+    mock.timers.tick(1000);
+    assert.equal(redraws, 6);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a running row re-arms its clock after the session reset stopped it", () => {
+  const session = createToolsSession();
+  const empty = { sessionManager: { getBranch: () => [] as never } };
+  mock.timers.enable({ apis: ["setInterval"] });
+  try {
+    let redraws = 0;
+    const ctx = context({ args: { command: "make" }, isPartial: true, invalidate: () => redraws++ });
+    headerFor("bash", { command: "make" }, ctx);
+    const startedAt = ctx.state.startedAt;
+    mock.timers.tick(500);
+    assert.equal(redraws, 2);
+
+    session.start(empty);
+    mock.timers.tick(500);
+    assert.equal(redraws, 2, "the reset did not stop the clock");
+
+    // Pi repaints the still-running row: the clock comes back at the same start, so the elapsed time is kept.
+    headerFor("bash", { command: "make" }, ctx);
+    assert.equal(ctx.state.startedAt, startedAt);
+    mock.timers.tick(500);
+    assert.equal(redraws, 4);
+
+    // A row that already has its result never arms a clock again.
+    ctx.isPartial = false;
+    headerFor("bash", { command: "make" }, ctx);
+    mock.timers.tick(500);
+    assert.equal(redraws, 4);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("an expanded running bash keeps its clock in the header until the body has a timer line", () => {
   const ctx = context({ args: { command: "make" }, isPartial: true, expanded: true, durationMs: undefined });
   ctx.state.startedAt = Date.now() - 2000;
@@ -849,7 +1004,7 @@ function readRow(
   lines: number,
   options: { isError?: boolean; durationMs?: number } = {},
 ): ToolExecutionComponent {
-  const renderers = toolRenderers("read", () => baseRenderers);
+  const renderers = shellRenderers("read");
   assert.ok(renderers);
   const component = new ToolExecutionComponent(
     "read",
@@ -891,7 +1046,7 @@ function readRun(): ToolExecutionComponent[] {
 
 /** Every line the card drew is painted; Pi's shell adds unpainted spacer rows around the blocks. */
 function assertPaintedCard(lines: string[], token: "toolPendingBg" | "toolSuccessBg" | "toolErrorBg"): void {
-  const open = bgOpen(token);
+  const open = shellBgOpen(token);
   const content = lines.filter((line) => stripTerminalSequences(line).trim() !== "");
   assert.ok(content.length > 0, "nothing was rendered");
   for (const line of content) assert.ok(line.startsWith(open), `not painted with ${token}: ${JSON.stringify(line)}`);
@@ -920,8 +1075,8 @@ test("a run opens with its plan, keeps a finished row, and folds after the last"
       ],
     },
   ]);
-  const readRenderers = toolRenderers("read", () => baseRenderers);
-  const grepRenderers = toolRenderers("grep", () => baseRenderers);
+  const readRenderers = shellRenderers("read");
+  const grepRenderers = shellRenderers("grep");
   assert.ok(readRenderers && grepRenderers);
   const head = new ToolExecutionComponent(
     "read",
@@ -1020,10 +1175,10 @@ test("a mixed run keeps the card open-colored and counts the failure", () => {
   const failedRow = lines.findIndex((line) => /^✗ read src\/b\.ts\s+0\.2s$/.test(line));
   const okRow = lines.findIndex((line) => /^✓ read src\/a\.ts\s+12 lines · 0\.1s$/.test(line));
   assert.ok(header >= 0 && failedRow >= 0 && okRow >= 0, lines.join("\n"));
-  assert.ok(raw[header].includes(theme.fg("error", "1 failed: src/b.ts")), "the failure is not red");
-  assert.ok(raw[header].startsWith(bgOpen("toolSuccessBg")), "the header is not the open color");
-  assert.ok(raw[failedRow].startsWith(bgOpen("toolErrorBg")), "the failed row is not red");
-  assert.ok(raw[okRow].startsWith(bgOpen("toolSuccessBg")), "the successful row is not green");
+  assert.ok(raw[header].includes(shellThemeOrFail().fg("error", "1 failed: src/b.ts")), "the failure is not red");
+  assert.ok(raw[header].startsWith(shellBgOpen("toolSuccessBg")), "the header is not the open color");
+  assert.ok(raw[failedRow].startsWith(shellBgOpen("toolErrorBg")), "the failed row is not red");
+  assert.ok(raw[okRow].startsWith(shellBgOpen("toolSuccessBg")), "the successful row is not green");
   assert.ok(
     lines.some((line) => /line 30$/.test(line)),
     `the error tail is missing:\n${lines.join("\n")}`,
@@ -1065,6 +1220,30 @@ test("a member's body opens inside the card", () => {
   assert.match(shown[row + 1] ?? "", /^BASE RESULT$/, shown.join("\n"));
   // The other rows keep their bodies folded.
   assert.equal(shown.filter((line) => line.includes("BASE RESULT")).length, 1, shown.join("\n"));
+});
+
+test("render cache: the run card redraws when a member's row is registered again", () => {
+  const [head] = readRun();
+  setHeadExpanded("run-head", true);
+  const rows = () => plain(head.render(88)).map((line) => line.trim());
+
+  let draws = 0;
+  registerRow("run-member", () => {
+    draws++;
+    return ["member row"];
+  });
+  assert.ok(rows().includes("member row"), rows().join("\n"));
+  assert.equal(draws, 1);
+
+  // Nothing changed since that render: the card hands back the lines it drew.
+  rows();
+  assert.equal(draws, 1);
+
+  // A member's renderCall registers its row again when its arguments change; the card must redraw
+  // even though no member's status, duration, or open state changed.
+  registerRow("run-member", () => ["changed row"]);
+  assert.ok(rows().includes("changed row"), rows().join("\n"));
+  assert.ok(!rows().includes("member row"), rows().join("\n"));
 });
 
 test("expanding a run renders every call on its own, exactly as ungrouped", () => {

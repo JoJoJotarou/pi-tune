@@ -4,15 +4,12 @@ import { RAIL_CHANNEL } from "../src/shared/channels.ts";
 import { setRailCoveredColumns } from "../src/tools/rail.ts";
 import { toolRenderers } from "../src/tools/renderers.ts";
 import { createToolsSession } from "../src/tools/session.ts";
-import { clearWriteRecords, recordWriteTarget } from "../src/tools/write.ts";
+import { recordWriteTarget } from "../src/tools/write.ts";
 
 export default (pi: ExtensionAPI) => {
   const session = createToolsSession();
 
-  pi.on("session_start", (_event, ctx) => {
-    clearWriteRecords();
-    session.start(ctx);
-  });
+  pi.on("session_start", (_event, ctx) => session.start(ctx));
 
   pi.on("message_start", (event, ctx) => session.messageStart(event, ctx));
   pi.on("message_update", (event, ctx) => session.messageUpdate(event, ctx));

@@ -4,7 +4,10 @@ import type {
   MessageStartEvent,
   MessageUpdateEvent,
 } from "@earendil-works/pi-coding-agent";
+import { setRailCoveredColumns } from "./rail.ts";
+import { clearClocks } from "./renderers.ts";
 import { clearRuns, type PlanEntry, planRuns, setRunPlan } from "./run.ts";
+import { clearWrites } from "./write.ts";
 
 /** The part of Pi's `ExtensionContext` the tools session uses. */
 export interface ToolsContext {
@@ -24,6 +27,15 @@ export function createToolsSession(): ToolsSession {
   /** The assistant message still streaming; the branch only carries it once it has ended. */
   let pending: PlanEntry | undefined;
 
+  /** Everything one session leaves behind: run state, row clocks, write plans, and the rail's last report. */
+  const reset = (): void => {
+    pending = undefined;
+    clearRuns();
+    clearClocks();
+    clearWrites();
+    setRailCoveredColumns(0);
+  };
+
   const rebuild = (ctx: ToolsContext): void => {
     const branch = ctx.sessionManager.getBranch() as readonly PlanEntry[];
     // The branch lags the message being streamed. `planRuns` counts a call id once, so appending
@@ -33,8 +45,7 @@ export function createToolsSession(): ToolsSession {
 
   return {
     start(ctx) {
-      clearRuns();
-      pending = undefined;
+      reset();
       rebuild(ctx);
     },
     messageStart(event, ctx) {
@@ -68,8 +79,7 @@ export function createToolsSession(): ToolsSession {
       rebuild(ctx);
     },
     shutdown() {
-      pending = undefined;
-      clearRuns();
+      reset();
     },
   };
 }

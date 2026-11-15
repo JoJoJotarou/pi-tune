@@ -12,7 +12,7 @@ import type {
   ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { getLanguageFromPath } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { exitCodeOf, failureTail, summarizeCommand } from "./bash.ts";
 import { diffMeta, PREVIEW_LINES, trimOutput, truncationLine } from "./body.ts";
 import {
@@ -41,13 +41,14 @@ import {
   registerRow,
   runCountLabel,
   runHead,
+  runRegistrations,
   runView,
   setHeadExpanded,
   toggleCallExpanded,
 } from "./run.ts";
 import { findMeta, grepMeta, lsMeta } from "./search.ts";
 import { grepBody, listBody } from "./tree.ts";
-import { planWrite, renderWriteLines, writeRecord } from "./write.ts";
+import { planWriteOnce, renderWriteLines } from "./write.ts";
 
 const COMPACT_TOOLS = new Set(["bash", "read", "edit", "write", "grep", "find", "ls", "codemode"]);
 
@@ -79,14 +80,19 @@ interface RowClock {
   timer?: ReturnType<typeof setInterval>;
 }
 
+/** Every clock whose interval is still scheduled, so a session can stop the ones no result will stop. */
+const clocks = new Set<RowClock>();
+
 /** Start the clock once the tool executes; redraws the row every {@link CLOCK_MS} while it runs. */
 function startClock(context: CompactContext): void {
   const clock = context.state as RowClock;
-  if (clock.startedAt !== undefined) return;
-  clock.startedAt = Date.now();
-  clock.timer = setInterval(() => context.invalidate(), CLOCK_MS);
+  // A session reset stops every clock but keeps the row's start time, so a still-running row re-arms its
+  // interval here, at the same start. A row with its final result never reaches this: renderCall stops it.
+  clock.startedAt ??= Date.now();
+  clock.timer ??= setInterval(() => context.invalidate(), CLOCK_MS);
   // A running tool must not keep the process alive on its own; Bun's timers may lack `unref`.
   clock.timer.unref?.();
+  clocks.add(clock);
 }
 
 function stopClock(context: CompactContext): void {
@@ -94,6 +100,16 @@ function stopClock(context: CompactContext): void {
   if (clock.timer === undefined) return;
   clearInterval(clock.timer);
   clock.timer = undefined;
+  clocks.delete(clock);
+}
+
+/** Clears every running row clock: a call whose result never arrives must not keep invalidating. */
+export function clearClocks(): void {
+  for (const clock of clocks) {
+    if (clock.timer !== undefined) clearInterval(clock.timer);
+    clock.timer = undefined;
+  }
+  clocks.clear();
 }
 
 /** Milliseconds since the tool started, or `undefined` before it started or for a row that never started. */
@@ -266,6 +282,11 @@ class HeaderComponent implements Component {
   invalidate(): void {}
 }
 
+/** A finished row cut to the width it must fit; a row that already fits comes back unchanged. */
+function clip(row: string, width: number, ellipsis: string): string {
+  return visibleWidth(row) > width ? truncateToWidth(row, width, ellipsis) : row;
+}
+
 /**
  * Body lines indented under the tool name, the same two columns kept free on the right plus whatever the timeline
  * rail covers, and the painted blank row that closes the block. The header already brings the blank row above it.
@@ -284,9 +305,12 @@ class BodyComponent implements Component {
     const lines = this.source(contentWidth);
     if (lines.length === 0) return [];
     const right = " ".repeat(BODY_INDENT + covered);
+    // A width too narrow for both indents cannot be laid out; the finished row is cut instead.
     return [
-      ...lines.map((line) => `${truncateToWidth(`${indent}${line}`, contentWidth + BODY_INDENT, "…")}${right}`),
-      indent,
+      ...lines.map((line) =>
+        clip(`${indent}${truncateToWidth(line, contentWidth + BODY_INDENT, "…")}${right}`, width, "…"),
+      ),
+      clip(indent, width, ""),
     ];
   }
 
@@ -375,7 +399,8 @@ class BodyBoxComponent implements Component {
     return this.cache.get([width, railCoveredColumns(), outputPad, status], () => {
       const box = new Box(outputPad, 0, statusBackground(status, this.theme));
       box.addChild(new BodyComponent(this.lines));
-      return box.render(width);
+      // Pi's box pads one column on each side, more than a width of 1 has.
+      return box.render(width).map((line) => clip(line, width, ""));
     });
   }
 
@@ -455,6 +480,9 @@ class RunHeaderComponent implements Component {
       statuses,
       durationMs,
       statuses.includes("running") ? Math.floor(Date.now() / CLOCK_MS) : undefined,
+      // Member rows, bodies, and labels come from closures registered in run.ts, so a registration
+      // redraws the card even when no status or duration changed.
+      runRegistrations(),
     ];
     return this.cache.get(key, () => {
       const padX = this.context.outputPad;
@@ -674,7 +702,7 @@ export const toolRenderers: ToolRendererResolver = (toolName, next) => {
 
         const path = stringArg(textArgs(context.args), "path") ?? "";
         const content = stringArg(textArgs(context.args), "content") ?? "";
-        const plan = planWrite(writeRecord(context.toolCallId), content);
+        const plan = planWriteOnce(context.toolCallId, content);
         context.state.meta = plan.meta;
         if (plan.body === "none") return new EmptyComponent();
 

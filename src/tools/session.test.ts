@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { railCoveredColumns, setRailCoveredColumns } from "./rail.ts";
 import { clearRuns, type PlanEntry, runHead, runView } from "./run.ts";
 import { createToolsSession, type ToolsContext } from "./session.ts";
+import { planWriteOnce, rememberWriteRecord } from "./write.ts";
 
 function assistant(...blocks: { type: string; id?: string; name?: string }[]): PlanEntry {
   return { type: "message", message: { role: "assistant", content: blocks } };
@@ -27,6 +29,32 @@ function update(content: { type: string; id?: string; name?: string }[]): never 
 function assistantMessage(type: "message_start" | "message_end"): never {
   return { type, message: { role: "assistant" } } as never;
 }
+
+test("start and shutdown drop the rail's last report", () => {
+  const session = createToolsSession();
+  const ctx = context([]);
+  try {
+    setRailCoveredColumns(3);
+    session.start(ctx);
+    assert.equal(railCoveredColumns(), 0);
+
+    setRailCoveredColumns(2);
+    session.shutdown();
+    assert.equal(railCoveredColumns(), 0);
+  } finally {
+    setRailCoveredColumns(0);
+  }
+});
+
+test("start and shutdown drop the planned writes", () => {
+  const session = createToolsSession();
+  for (const end of [() => session.start(context([])), () => session.shutdown()]) {
+    rememberWriteRecord("call", { existed: true, oldText: "one\n" });
+    assert.equal(planWriteOnce("call", "two\n").meta, "overwrite · +1 −1");
+    end();
+    assert.deepEqual(planWriteOnce("call", "two\n"), { meta: "1 line", body: "none" });
+  }
+});
 
 test("start plans the branch and shutdown clears it", () => {
   const session = createToolsSession();

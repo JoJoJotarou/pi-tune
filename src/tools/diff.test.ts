@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { highlightCode, initTheme } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { assertFits } from "../../test/width.ts";
 import { changedSpan, prepareDiff, previewLines, renderDiffRows } from "./diff.ts";
 
 initTheme("dark");
@@ -133,6 +134,13 @@ for (const width of [40, 100]) {
     assert.ok(plain(wrapped)[1].startsWith("   "), "a continuation row leaves the number and marker blank");
   });
 }
+
+test("a width narrower than the number gutter still fits every row", () => {
+  const diff = " 1 same\n-2 plain ascii text\n+2 plain ascii text";
+  for (const width of [1, 2, 3]) {
+    for (const opts of [options, { ...options, wrap: true }]) assertFits(rendered(diff, width, opts), width);
+  }
+});
 
 test("a collapsed preview pairs each removed line with the line that replaced it", () => {
   const diff = ["  1 a", "- 2 b", "- 3 c", "- 4 d", "+ 2 B", "+ 3 C", "+ 4 D", "  5 e"].join("\n");

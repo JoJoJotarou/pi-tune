@@ -101,20 +101,30 @@ let bodies = new Map<string, (width: number) => string[]>();
 let labels = new Map<string, string>();
 let headExpanded = new Map<string, boolean>();
 let callOpen = new Map<string, boolean>();
+/** Bumped whenever a row, body, or label is registered, so a card that drew the old closure redraws. */
+let registrations = 0;
 
 /** Renders one call's own header line; the open group card draws its members through this. */
 export function registerRow(toolCallId: string, render: (width: number) => string[]): void {
   rows.set(toolCallId, render);
+  registrations++;
 }
 
 /** Renders one call's result body, already expanded; the open group card draws opened bodies through this. */
 export function registerBody(toolCallId: string, render: (width: number) => string[]): void {
   bodies.set(toolCallId, render);
+  registrations++;
 }
 
 /** What the call is about (`src/a.ts`, `"TODO" in src`), for naming it in the group header. */
 export function registerLabel(toolCallId: string, label: string): void {
   labels.set(toolCallId, label);
+  registrations++;
+}
+
+/** How many registrations have happened; the group card keeps it in its cache key. */
+export function runRegistrations(): number {
+  return registrations;
 }
 
 export function memberRow(toolCallId: string, width: number): string[] {

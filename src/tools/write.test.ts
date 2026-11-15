@@ -12,7 +12,15 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
-import { clearWriteRecords, planWrite, recordWriteTarget, renderWriteLines, writeRecord } from "./write.ts";
+import {
+  clearWrites,
+  planWrite,
+  planWriteOnce,
+  recordWriteTarget,
+  rememberWriteRecord,
+  renderWriteLines,
+  takeWriteRecord,
+} from "./write.ts";
 
 initTheme("dark");
 setKeybindings(
@@ -41,10 +49,10 @@ test("recordWriteTarget tells a missing file from an existing one", async () => 
   writeFileSync(join(cwd, "old.txt"), "one\ntwo\n");
 
   await recordWriteTarget("new", cwd, "missing.txt");
-  assert.deepEqual(writeRecord("new"), { existed: false });
+  assert.deepEqual(takeWriteRecord("new"), { existed: false });
 
   await recordWriteTarget("old", cwd, "old.txt");
-  assert.deepEqual(writeRecord("old"), { existed: true, oldText: "one\ntwo\n" });
+  assert.deepEqual(takeWriteRecord("old"), { existed: true, oldText: "one\ntwo\n" });
 });
 
 test("a target over 1 MB or unreadable keeps only that it existed", async () => {
@@ -53,18 +61,30 @@ test("a target over 1 MB or unreadable keeps only that it existed", async () => 
   mkdirSync(join(cwd, "folder"));
 
   await recordWriteTarget("big", cwd, "big.txt");
-  assert.deepEqual(writeRecord("big"), { existed: true });
+  assert.deepEqual(takeWriteRecord("big"), { existed: true });
 
   await recordWriteTarget("folder", cwd, "folder");
-  assert.deepEqual(writeRecord("folder"), { existed: true });
+  assert.deepEqual(takeWriteRecord("folder"), { existed: true });
 });
 
-test("clearWriteRecords forgets every call", async () => {
+test("clearWrites forgets every call", async () => {
   const cwd = dir();
   await recordWriteTarget("one", cwd, "missing.txt");
-  assert.notEqual(writeRecord("one"), undefined);
-  clearWriteRecords();
-  assert.equal(writeRecord("one"), undefined);
+  await recordWriteTarget("two", cwd, "missing.txt");
+  assert.notEqual(takeWriteRecord("one"), undefined);
+
+  clearWrites();
+  assert.equal(takeWriteRecord("two"), undefined);
+});
+
+test("a call planned before its pre-image arrived is planned again once it has", () => {
+  clearWrites();
+  assert.deepEqual(planWriteOnce("late", "one\nTWO\n"), { meta: "2 lines", body: "none" });
+
+  rememberWriteRecord("late", { existed: true, oldText: "one\ntwo\n" });
+  assert.equal(planWriteOnce("late", "one\nTWO\n").meta, "overwrite · +1 −1");
+  assert.equal(takeWriteRecord("late"), undefined);
+  assert.equal(planWriteOnce("late", "ignored once planned").meta, "overwrite · +1 −1");
 });
 
 test("a new file is named by its line count and shows numbered rows", async () => {
@@ -73,7 +93,7 @@ test("a new file is named by its line count and shows numbered rows", async () =
   await recordWriteTarget("small", cwd, "src/new.ts");
   await createWriteTool(cwd).execute("write-test", { path: "src/new.ts", content });
 
-  const plan = planWrite(writeRecord("small"), content);
+  const plan = planWrite(takeWriteRecord("small"), content);
   assert.deepEqual(plan, { meta: "new · 2 lines", body: "lines" });
   assert.deepEqual(plain(renderWriteLines("src/new.ts", content, false, 80, theme)), [
     "1 │ const value1 = 1;",
@@ -102,6 +122,15 @@ test("a fifteen-line new file shows the first three rows and the fold marker", (
   assert.equal(expanded[14], "15 │ const value15 = 15;");
 });
 
+test("a long file folds to the same three rows as a short one", () => {
+  assert.deepEqual(plain(renderWriteLines("new.ts", lines(1000), false, 80, theme)), [
+    "   1 │ const value1 = 1;",
+    "   2 │ const value2 = 2;",
+    "   3 │ const value3 = 3;",
+    "… 997 more lines · click to expand",
+  ]);
+});
+
 test("an overwrite with old text diffs and counts its changes", async () => {
   const cwd = dir();
   const oldText = lines(8);
@@ -110,7 +139,7 @@ test("an overwrite with old text diffs and counts its changes", async () => {
 
   const content = `${oldText.replace("const value3 = 3;", "const value3 = 30;")}const extra = 0;\n`;
   await createWriteTool(cwd).execute("write-test", { path: "README.md", content });
-  const record = writeRecord("overwrite");
+  const record = takeWriteRecord("overwrite");
   assert.deepEqual(record, { existed: true, oldText });
 
   const plan = planWrite(record, content);

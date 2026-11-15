@@ -238,7 +238,9 @@ export function renderDiffRows(diff: PreparedDiff, width: number, theme: Theme, 
       const number = part === 0 ? row.number.padStart(numberWidth) : " ".repeat(numberWidth);
       const head = `${rowBg}${colors.gutter[kind]}${number} ${part === 0 ? marker : " "} `;
       const fill = " ".repeat(Math.max(0, textWidth - visibleWidth(line)));
-      return `${head}${rowBg}${colors.fg[kind]}${line}${rowBg}${fill}${RESET}`;
+      const filled = `${head}${rowBg}${colors.fg[kind]}${line}${rowBg}${fill}${RESET}`;
+      // A width narrower than the number gutter cannot be laid out; the finished row is cut instead.
+      return visibleWidth(filled) > width ? truncateToWidth(filled, width, "") : filled;
     });
   });
 }
