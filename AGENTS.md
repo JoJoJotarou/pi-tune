@@ -21,6 +21,9 @@ input box and footer. Extensions only. Built and tested against Pi 1.4.0.
   check fails, it reports that failure to the caller, and the caller disables the feature with one
   `ctx.ui.notify(…, "warning")`. Never fail silently.
 - `test/theme.ts`: `testTheme("dark" | "light")` returns a real Pi `Theme` for unit tests.
+- `test/width.ts`: `assertFits(lines, width)`, the width rule as an assertion. `test/render-width.test.ts` runs every
+  render entry point through it with hostile input (CJK, emoji, ANSI, long tokens) at widths from 1 to 120: add a
+  row there for each new one.
 - `test/e2e/`: real Pi in a pseudo-terminal, driven by a scripted model. See `test/e2e/README.md`. Acceptance
   screenshots: `PI_TUNE_SHOTS=<dir> npm run e2e`.
 
@@ -36,7 +39,7 @@ restate it with the canonical name before acting and point them to that document
 npm run fix        # format and apply safe lint fixes (Biome)
 npm run lint
 npm run typecheck
-npm test           # unit tests: node --test "src/**/*.test.ts"
+npm test           # unit tests: node --test "src/**/*.test.ts" "test/*.test.ts"
 npm run smoke      # loads the package in Pi (rpc mode) and fails on any extension error
 npm run e2e        # real Pi in a pseudo-terminal (needs rg and fd for the grep and find tools)
 npm run ci         # lint + typecheck + test + smoke
@@ -67,8 +70,8 @@ npm run bench      # wheel latency in a long session, Pi alone vs with pi-tune (
   every input it draws from are unchanged, and drops them in `invalidate()`. Nothing may do work per frame that
   grows with the session.
 - Before a PR that adds or changes anything drawn on screen, run `npm run bench` while nothing else heavy runs (no
-  e2e, builds or other agents): the pi-tune p50 must stay under 2x Pi alone (the bench prints the ratio). Timing
-  is noisy, so a miss counts only when a second run misses too. Put the table in the PR.
+  e2e, builds or other agents): the pi-tune p50 must stay under 2x Pi alone (the bench prints the ratio and exits
+  non-zero over it). Timing is noisy, so a miss counts only when a second run misses too. Put the table in the PR.
 - Take colors from the `Theme` you are handed (`theme.fg`, `theme.bg`, `theme.style`, `theme.colors`). Never
   hard-code ANSI colors.
 - All TUI text is English, short, and uses the exact strings given in the task spec. Issue mockups that show

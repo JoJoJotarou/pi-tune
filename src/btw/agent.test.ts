@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { createBashToolDefinition, createReadToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type SideToolOptions, sideTool } from "./agent.ts";
 import { DEFAULT_RULES } from "./rules.ts";
@@ -42,8 +42,10 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 }
 
 describe("sideTool", () => {
+  // Under $HOME, outside the sandbox's writable temp directories: the read-only test below needs a write refused.
   const dir = mkdtempSync(join(process.env.HOME ?? tmpdir(), ".pi-tune-side-tools-"));
   writeFileSync(join(dir, "notes.md"), "hello from notes\n");
+  after(() => rmSync(dir, { recursive: true, force: true }));
   const read = info(createReadToolDefinition(dir));
   const bash = info(createBashToolDefinition(dir));
 
@@ -109,9 +111,5 @@ describe("sideTool", () => {
     );
     assert.match(result, /Operation not permitted|Read-only file system/);
     assert.ok(!existsSync(join(dir, "made.txt")), "the sandbox blocked the write");
-  });
-
-  it("cleans up", () => {
-    rmSync(dir, { recursive: true, force: true });
   });
 });

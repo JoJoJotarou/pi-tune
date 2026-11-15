@@ -122,8 +122,29 @@ describe("threadMessages", () => {
   });
 
   it("serializes to the same bytes on every replay", () => {
-    const original = thread();
-    assert.equal(JSON.stringify(threadMessages(original)), JSON.stringify(threadMessages(original)));
+    const original: BtwThread = {
+      id: "t1",
+      anchorEntryId: "e10",
+      anchorTurns: 3,
+      turns: [
+        {
+          text: "<addendum>\n\nalpha?",
+          question: "alpha?",
+          messages: [assistant("first", 2)],
+          askedAt: 2,
+          durationMs: 1,
+          denied: [],
+        },
+      ],
+    };
+    // The provider's prefix cache keys on these exact bytes, so key order is part of the contract.
+    const expected = [
+      '[{"role":"user","content":[{"type":"text","text":"<addendum>\\n\\nalpha?"}],"timestamp":2},',
+      '{"role":"assistant","content":[{"type":"text","text":"first"}],"provider":"probe","model":"probe-model",',
+      '"api":"openai-completions","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,',
+      '"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":2}]',
+    ].join("");
+    assert.equal(JSON.stringify(threadMessages(original)), expected);
   });
 });
 
