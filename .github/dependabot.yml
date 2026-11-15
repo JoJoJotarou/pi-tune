@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      # The three Pi packages are the version pi-tune is built and tested against: they move together.
+      pi:
+        patterns: ["@earendil-works/*"]

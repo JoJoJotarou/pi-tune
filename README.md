@@ -8,7 +8,7 @@ Each screen area is its own extension under `extensions/`, so you can turn any o
 ## Install
 
 ```sh
-pi install npm:pi-tune@0.1.0   # every session
+pi install npm:pi-tune         # every session
 pi -e npm:pi-tune              # one run, without installing
 ```
 
@@ -60,4 +60,5 @@ See `AGENTS.md` for the layout, commands and rules, and `test/e2e/README.md` for
 
 `npm version <patch|minor|major> -m "chore(release): %s"` commits the bump and creates the annotated `vX.Y.Z`
 tag. Pushing that tag makes `.github/workflows/release.yml` rerun `npm run ci`, publish to npm with provenance
-and create the GitHub Release; it needs the `NPM_TOKEN` repository secret.
+and create the GitHub Release; it needs the `NPM_TOKEN` repository secret. Re-running the workflow is safe: a
+version already on npm and an existing Release are skipped.

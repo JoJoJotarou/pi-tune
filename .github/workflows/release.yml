@@ -2,9 +2,14 @@ name: release
 
 # Push an annotated tag `vX.Y.Z` matching package.json's version to publish to npm and open the GitHub Release.
 # Needs the repository secret `NPM_TOKEN` (an npm automation token allowed to publish `pi-tune`).
+# Safe to re-run: a version already on npm and a Release that already exists are skipped.
 on:
   push:
     tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -14,8 +19,8 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: npm
@@ -25,9 +30,16 @@ jobs:
         run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
       - run: npm run ci
       # prepublishOnly would run `npm run ci` a second time.
-      - run: npm publish --provenance --ignore-scripts
+      - name: publish unless this version is already on npm
+        run: |
+          if [ -n "$(npm view "pi-tune@${GITHUB_REF_NAME#v}" version)" ]; then
+            echo "pi-tune@${GITHUB_REF_NAME#v} is already published"
+          else
+            npm publish --provenance --ignore-scripts
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+      - name: create the Release unless it exists
+        run: gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}
