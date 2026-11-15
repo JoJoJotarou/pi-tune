@@ -295,7 +295,12 @@ try {
       `${label.padEnd(12)}${[0.5, 0.9, 1].map((p) => `${at(samples, p).toFixed(1)} ms`.padStart(10)).join("")}`,
     );
   }
-  console.log(`pi + tune / pi at p50: ${(at(tuned, 0.5) / at(pi, 0.5)).toFixed(2)}x`);
+  const ratio = at(tuned, 0.5) / at(pi, 0.5);
+  console.log(`pi + tune / pi at p50: ${ratio.toFixed(2)}x`);
+  if (ratio >= 2) {
+    console.error("over the 2x budget; timing is noisy, so a miss counts only when a second run misses too");
+    process.exitCode = 1;
+  }
 } catch (error) {
   console.error(`bench failed: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
