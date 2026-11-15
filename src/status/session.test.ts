@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import type { MessageUpdateEvent } from "@earendil-works/pi-coding-agent";
+import type { MessageEndEvent, MessageUpdateEvent } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import { createStatusSession, type StatusContext, type StatusHost, type StatusSession } from "./session.ts";
@@ -10,6 +10,10 @@ const theme = testTheme("dark");
 
 function progress(type: AssistantMessageEvent["type"]): MessageUpdateEvent {
   return { type: "message_update", assistantMessageEvent: { type } } as MessageUpdateEvent;
+}
+
+function ended(stopReason: string): MessageEndEvent {
+  return { type: "message_end", message: { role: "assistant", stopReason } } as MessageEndEvent;
 }
 
 interface Harness {
@@ -100,16 +104,60 @@ test("a settled run clears the message and appends the worked entry", () => {
   assert.equal(h.refresh.cancelled, true);
 });
 
-test("the refresh timer repaints the elapsed time", () => {
+test("a long run that ended in a provider error sets no done title", () => {
+  const h = harness();
+  const ctx = h.ctx();
+  h.session.start(ctx);
+  h.session.agentStart(ctx);
+  h.titles.length = 0;
+
+  h.session.messageEnd(ended("error"));
+  h.now(20_000);
+  h.session.agentSettled(false, ctx);
+  assert.deepEqual(h.titles, []);
+});
+
+test("a long run that ended well sets the done title", () => {
+  const h = harness();
+  const ctx = h.ctx();
+  h.session.start(ctx);
+  h.session.agentStart(ctx);
+  h.titles.length = 0;
+
+  h.session.messageEnd(ended("stop"));
+  h.now(20_000);
+  h.session.agentSettled(false, ctx);
+  assert.deepEqual(h.titles, ["✓ pi · done 19s"]);
+});
+
+test("a run that fails and then succeeds keeps the done title", () => {
+  const h = harness();
+  const ctx = h.ctx();
+  h.session.start(ctx);
+  h.session.agentStart(ctx);
+  h.titles.length = 0;
+
+  h.session.messageEnd(ended("error"));
+  h.session.messageEnd(ended("stop"));
+  h.now(20_000);
+  h.session.agentSettled(false, ctx);
+  assert.deepEqual(h.titles, ["✓ pi · done 19s"]);
+});
+
+test("same-phase deltas repaint the phase once, not once per token", () => {
   const h = harness();
   const ctx = h.ctx();
   h.session.start(ctx);
   h.session.agentStart(ctx);
   h.messages.length = 0;
 
-  h.now(3_500);
-  h.refresh.callback();
-  assert.match(lastMessage(h), /2\.5s/);
+  for (let token = 0; token < 20; token++) h.session.messageUpdate(progress("thinking_delta"));
+  assert.equal(h.messages.length, 1);
+  assert.match(lastMessage(h), /Thinking/);
+
+  for (let token = 0; token < 20; token++) h.session.messageUpdate(progress("text_delta"));
+  assert.equal(h.messages.length, 2);
+  assert.match(lastMessage(h), /Responding/);
 });
 
 test("shutdown clears the message and silences late settles", () => {
@@ -125,4 +173,33 @@ test("shutdown clears the message and silences late settles", () => {
 
   h.session.agentSettled(false, ctx);
   assert.deepEqual(h.worked, []);
+});
+
+test("a settle for a run this session never saw reports nothing", () => {
+  const h = harness();
+  const ctx = h.ctx();
+  h.session.start(ctx);
+  h.session.agentStart(ctx);
+  h.session.shutdown(ctx);
+  h.session.start(ctx);
+  h.messages.length = 0;
+  h.titles.length = 0;
+
+  h.now(20_000);
+  h.session.agentSettled(false, ctx);
+  assert.deepEqual(h.messages, []);
+  assert.deepEqual(h.titles, []);
+  assert.deepEqual(h.worked, []);
+});
+
+test("the refresh timer repaints the elapsed time", () => {
+  const h = harness();
+  const ctx = h.ctx();
+  h.session.start(ctx);
+  h.session.agentStart(ctx);
+  h.messages.length = 0;
+
+  h.now(3_500);
+  h.refresh.callback();
+  assert.match(lastMessage(h), /2\.5s/);
 });

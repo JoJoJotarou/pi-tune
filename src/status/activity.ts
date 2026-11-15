@@ -43,8 +43,11 @@ export function reduce(state: ActivityState, event: ActivityEvent, now: number):
       };
     case "turn_start":
       return { ...state, phase: "working", tools: [] };
-    case "message_update":
-      return { ...state, phase: event.kind === "text" ? "responding" : "thinking" };
+    case "message_update": {
+      const phase = event.kind === "text" ? "responding" : "thinking";
+      // The same state marks a delta that changes nothing else, so `apply` skips the per-token repaint.
+      return phase === state.phase ? state : { ...state, phase };
+    }
     case "tool_execution_start": {
       const tools = [...state.tools.filter((id) => id !== event.id), event.id];
       return { ...state, phase: "tool", tools };
@@ -99,8 +102,8 @@ export function workedFor(elapsedMs: number): string {
   return `Worked for ${formatDuration(Math.max(0, elapsedMs))}`;
 }
 
-/** The terminal title after a run, or `undefined` when the run was short or aborted. */
-export function doneTitle(elapsedMs: number, aborted: boolean): string | undefined {
-  if (aborted || elapsedMs < DONE_TITLE_MS) return undefined;
+/** The terminal title after a run, or `undefined` when the run was short or did not finish cleanly. */
+export function doneTitle(elapsedMs: number, failed: boolean): string | undefined {
+  if (failed || elapsedMs < DONE_TITLE_MS) return undefined;
   return `✓ pi · done ${formatDuration(elapsedMs)}`;
 }

@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import type { ExtensionContext, MessageUpdateEvent, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, MessageEndEvent, MessageUpdateEvent, Theme } from "@earendil-works/pi-coding-agent";
 import { type ActivityEvent, type ActivityState, describe, doneTitle, initialState, reduce } from "./activity.ts";
 
 const REFRESH_MS = 250;
@@ -31,6 +31,7 @@ export interface StatusSession {
   agentStart(ctx: StatusContext): void;
   turnStart(): void;
   messageUpdate(event: MessageUpdateEvent): void;
+  messageEnd(event: MessageEndEvent): void;
   toolExecutionStart(id: string): void;
   toolExecutionEnd(id: string): void;
   agentSettled(aborted: boolean, ctx: StatusContext): void;
@@ -59,11 +60,20 @@ export function createStatusSession(host: StatusHost): StatusSession {
   /** Stable theme object handed out by `session_start`, so renderers never touch a stored ctx. */
   let theme: Theme | undefined;
   let stopRefresh: (() => void) | undefined;
-  let shutDown = false;
+  /** Whether the run's last message came back as a provider error; a failed run gets no done title. */
+  let failed = false;
 
   function stopTimer(): void {
     stopRefresh?.();
     stopRefresh = undefined;
+  }
+
+  function reset(): void {
+    stopTimer();
+    ctx = undefined;
+    theme = undefined;
+    state = initialState;
+    failed = false;
   }
 
   function render(): void {
@@ -73,7 +83,9 @@ export function createStatusSession(host: StatusHost): StatusSession {
   }
 
   function apply(event: ActivityEvent): void {
-    state = reduce(state, event, host.now());
+    const next = reduce(state, event, host.now());
+    if (next === state) return;
+    state = next;
     render();
   }
 
@@ -85,12 +97,13 @@ export function createStatusSession(host: StatusHost): StatusSession {
 
   return {
     start(context) {
+      reset();
       theme = context.ui.theme;
-      shutDown = false;
     },
     agentStart(context) {
       ctx = context;
       stopTimer();
+      failed = false;
       if (context.mode === "tui") {
         theme ??= context.ui.theme;
         context.ui.setTitle(titleForDefault(context));
@@ -105,6 +118,10 @@ export function createStatusSession(host: StatusHost): StatusSession {
       const kind = messageProgress(event.assistantMessageEvent);
       if (kind) apply({ type: "message_update", kind });
     },
+    messageEnd(event) {
+      if (event.message.role !== "assistant") return;
+      failed = event.message.stopReason === "error";
+    },
     toolExecutionStart(id) {
       apply({ type: "tool_execution_start", id });
     },
@@ -112,26 +129,22 @@ export function createStatusSession(host: StatusHost): StatusSession {
       apply({ type: "tool_execution_end", id });
     },
     agentSettled(aborted, context) {
-      if (shutDown) {
-        state = reduce(state, { type: "agent_settled" }, host.now());
-        return;
-      }
+      // A settle for a run this session never saw, such as the previous session's run after `start`, reports
+      // nothing: the elapsed time would be measured from a start that belongs to no run.
+      if (!state.running) return;
       ctx = context;
       const elapsed = host.now() - state.startedAt;
       stopTimer();
       if (context.mode === "tui") {
         context.ui.setWorkingMessage();
-        const title = doneTitle(elapsed, aborted);
+        const title = doneTitle(elapsed, aborted || failed);
         if (title !== undefined) context.ui.setTitle(title);
       }
       host.appendWorked(elapsed);
       apply({ type: "agent_settled" });
     },
     shutdown(context) {
-      shutDown = true;
-      stopTimer();
-      ctx = undefined;
-      theme = undefined;
+      reset();
       if (context.mode === "tui") context.ui.setWorkingMessage();
     },
   };

@@ -26,6 +26,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => session.agentStart(ctx));
   pi.on("turn_start", () => session.turnStart());
   pi.on("message_update", (event) => session.messageUpdate(event));
+  pi.on("message_end", (event) => session.messageEnd(event));
   pi.on("tool_execution_start", (event) => session.toolExecutionStart(event.toolCallId));
   pi.on("tool_execution_end", (event) => session.toolExecutionEnd(event.toolCallId));
   pi.on("agent_settled", (event, ctx) => session.agentSettled(event.aborted, ctx));
