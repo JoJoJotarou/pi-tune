@@ -9,7 +9,7 @@ import { stripTerminalSequences } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
 import type { SideToolOptions } from "./agent.ts";
 import { type BtwContext, type BtwHost, type BtwSession, createBtwSession } from "./session.ts";
-import type { StoredTurn } from "./thread.ts";
+import { BTW_ENTRY_TYPE, type StoredTurn } from "./thread.ts";
 
 const theme = testTheme("dark");
 initTheme("dark");
@@ -41,9 +41,13 @@ interface Harness {
   setEditorText(text: string): void;
   inputHandler(data: string): unknown;
   drawerLines(width?: number): string[];
+  renders(): number;
+  listeners(): number;
+  tickers(): number;
+  restart(): void;
 }
 
-function harness(setup?: (dir: string) => void): Harness {
+function harness(setup?: (dir: string) => void, branch: readonly unknown[] = []): Harness {
   const dir = mkdtempSync(join(tmpdir(), "pi-tune-btw-"));
   setup?.(dir);
   const notified: Notice[] = [];
@@ -85,6 +89,9 @@ function harness(setup?: (dir: string) => void): Harness {
   let editorText = "";
   let inputHandler: (data: string) => unknown = () => undefined;
   let widgetFactory: ((tui: TUI, widgetTheme: Theme) => object) | undefined;
+  let listeners = 0;
+  let tickers = 0;
+  let renders = 0;
   const ctx = {
     mode: "tui",
     cwd: dir,
@@ -95,7 +102,7 @@ function harness(setup?: (dir: string) => void): Harness {
     sessionManager: {
       getEntries: () => [],
       getLeafId: () => "leaf-1",
-      getBranch: () => [],
+      getBranch: () => branch,
     },
     ui: {
       notify: (message: string, level?: "info" | "warning" | "error") =>
@@ -106,7 +113,10 @@ function harness(setup?: (dir: string) => void): Harness {
       },
       onTerminalInput: (handler: (data: string) => unknown) => {
         inputHandler = handler;
-        return () => {};
+        listeners += 1;
+        return () => {
+          listeners -= 1;
+        };
       },
       getEditorText: () => editorText,
       setEditorText: (text: string) => {
@@ -120,7 +130,12 @@ function harness(setup?: (dir: string) => void): Harness {
     emitBtwMode: (open) => modes.push(open),
     appendBtwEntry: (turn) => stored.push(turn),
     agentDir: () => dir,
-    every: () => () => {},
+    every: () => {
+      tickers += 1;
+      return () => {
+        tickers -= 1;
+      };
+    },
     editorFocused: () => true,
     openSideSession: (_sideCtx, _seeded, tools) => {
       side.opened.push(tools);
@@ -131,10 +146,14 @@ function harness(setup?: (dir: string) => void): Harness {
   const session = createBtwSession(host);
   session.start(ctx);
 
-  // Pi mounts the widget right after start; mounting here sets the tui the terminal-input handler needs.
-  assert.ok(widgetFactory, "session.start did not mount the widget");
-  const widgetTui = { terminal: { rows: 24 }, requestRender: () => {} } as unknown as TUI;
-  const drawer = widgetFactory(widgetTui, theme) as { render(w: number): string[] };
+  const widgetTui = { terminal: { rows: 24 }, requestRender: () => renders++ } as unknown as TUI;
+  let drawer: { render(w: number): string[] };
+  const mount = (): void => {
+    // Pi mounts the widget right after start; mounting here sets the tui the terminal-input handler needs.
+    assert.ok(widgetFactory, "session.start did not mount the widget");
+    drawer = widgetFactory(widgetTui, theme) as { render(w: number): string[] };
+  };
+  mount();
   const drawerLines = (width = 80): string[] => drawer.render(width).map((line) => stripTerminalSequences(line));
 
   return {
@@ -152,6 +171,13 @@ function harness(setup?: (dir: string) => void): Harness {
     },
     inputHandler: (data) => inputHandler(data),
     drawerLines,
+    renders: () => renders,
+    listeners: () => listeners,
+    tickers: () => tickers,
+    restart: () => {
+      session.start(ctx);
+      mount();
+    },
   };
 }
 
@@ -242,6 +268,58 @@ test("shutdown aborts the pending question", async () => {
   h.side.resolvePrompt();
   await flush();
   assert.equal(h.stored.length, 0);
+});
+
+test("shutdown clears the session and a restart starts fresh", async () => {
+  const h = harness();
+  await h.session.runBtwCommand("first?", h.ctx);
+  await flush();
+  assert.equal(h.tickers(), 1);
+  assert.equal(h.listeners(), 1);
+
+  h.session.shutdown();
+  assert.equal(h.side.aborted, true);
+  assert.equal(h.modes.at(-1), false);
+  assert.equal(h.tickers(), 0);
+  assert.equal(h.listeners(), 0);
+  assert.deepEqual(h.drawerLines(), [], "the drawer is closed");
+
+  // The aborted question resolves after the shutdown; nothing of it may reach the screen.
+  const renders = h.renders();
+  h.side.messages.push({ role: "user" }, assistantAnswer("late answer"));
+  h.side.resolvePrompt();
+  await flush();
+  assert.equal(h.stored.length, 0);
+  assert.equal(h.renders(), renders);
+
+  h.restart();
+  assert.equal(h.tickers(), 0);
+  assert.equal(h.listeners(), 1);
+  await h.session.runBtwCommand("second?", h.ctx);
+  await flush();
+  assert.equal(h.side.prompts.length, 2);
+  const lines = h.drawerLines().join("\n");
+  assert.match(lines, /second\?/);
+  assert.doesNotMatch(lines, /first\?|late answer/);
+});
+
+test("start restores the turns stored in the session branch", async () => {
+  const saved = {
+    thread: { id: "btw-old", anchorEntryId: "leaf-1", anchorTurns: 0 },
+    turn: { text: "old text", question: "old?", messages: [], askedAt: 1, durationMs: 2, denied: [] },
+  };
+  const h = harness(undefined, [
+    { type: "custom", customType: BTW_ENTRY_TYPE, data: saved },
+    { type: "custom", customType: BTW_ENTRY_TYPE, data: { junk: true } },
+    { type: "custom", customType: "pi-tune-elsewhere", data: {} },
+  ]);
+  assert.equal(h.notified.length, 1);
+  assert.match(h.notified[0].message, /Skipped 1 btw entry saved by an older pi-tune build/);
+
+  await h.session.runBtwCommand("new?", h.ctx);
+  await flush();
+  // The saved thread takes number 1, so the question asked now is number 2.
+  assert.match(h.drawerLines().join("\n"), /btw #2/);
 });
 
 test("start reports an unreadable rules file once instead of throwing", async () => {

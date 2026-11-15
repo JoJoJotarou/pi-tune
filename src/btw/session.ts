@@ -112,6 +112,28 @@ export function createBtwSession(host: BtwHost): BtwSession {
   let sandbox: SandboxKind | Error | undefined;
   let warnedUnsandboxed = false;
 
+  /** Used by `start` and `shutdown` alike: a shut-down session leaves nothing for the next one to inherit. */
+  function reset(): void {
+    if (pending) pending.stopped = true;
+    void pending?.session?.abort();
+    pending = undefined;
+    stopTicker();
+    stopListening?.();
+    stopListening = undefined;
+    open = false;
+    host.emitBtwMode(false);
+    threads = [];
+    displayedId = undefined;
+    mainTurns = 0;
+    revision = 0;
+    drawer = undefined;
+    tui = undefined;
+    rules = DEFAULT_RULES;
+    rulesPath = "pi-tune.json";
+    rulesProblem = undefined;
+    // `sandbox` and `warnedUnsandboxed` describe the process, not the session, so they stay.
+  }
+
   const displayed = (): BtwThread | null => threads.find((thread) => thread.id === displayedId) ?? null;
 
   function view(): DrawerView {
@@ -166,8 +188,7 @@ export function createBtwSession(host: BtwHost): BtwSession {
   function restore(ctx: BtwContext): void {
     const stored = ctx.sessionManager
       .getBranch()
-      .filter((entry) => entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE)
-      .map((entry) => (entry as unknown as { data?: unknown }).data);
+      .flatMap((entry) => (entry.type === "custom" && entry.customType === BTW_ENTRY_TYPE ? [entry.data] : []));
     const folded = foldThreads(stored);
     threads = folded.threads;
     if (folded.skipped > 0) {
@@ -388,12 +409,8 @@ export function createBtwSession(host: BtwHost): BtwSession {
 
   return {
     start(ctx) {
-      open = false;
-      displayedId = undefined;
-      pending = undefined;
-      host.emitBtwMode(false);
+      reset();
       rulesPath = join(host.agentDir(), "pi-tune.json");
-      rulesProblem = undefined;
       loadRules(ctx);
       restore(ctx);
       if (ctx.mode !== "tui") return;
@@ -406,16 +423,7 @@ export function createBtwSession(host: BtwHost): BtwSession {
       changed();
     },
     shutdown() {
-      if (pending) {
-        pending.stopped = true;
-        void pending.session?.abort();
-      }
-      pending = undefined;
-      stopTicker();
-      stopListening?.();
-      stopListening = undefined;
-      open = false;
-      host.emitBtwMode(false);
+      reset();
     },
     messageStart(event) {
       if ((event.message as { role?: string }).role !== "user") return;
