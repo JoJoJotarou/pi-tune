@@ -10,6 +10,24 @@ const scenario: Scenario = {
   ],
 };
 
+test("clickText reports the screen when the text is missing", { timeout: 180_000 }, async () => {
+  const pi = await startPi({ scenario });
+  try {
+    let message = "";
+    try {
+      pi.clickText("missing text");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    assert.match(message, /clickText: no match #1 for "missing text"/);
+    // The dump follows the reason, like waitFor's.
+    assert.match(message, /\n--- screen ---\n/);
+    assert.match(message, /scripted/);
+  } finally {
+    await pi.close();
+  }
+});
+
 for (const tune of [true, false]) {
   test(`scripted model runs a tool (${tune ? "after" : "before"})`, { timeout: 180_000 }, async () => {
     const pi = await startPi({ scenario, tune });

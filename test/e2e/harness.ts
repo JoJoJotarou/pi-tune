@@ -310,7 +310,8 @@ export async function startPi(options: StartOptions): Promise<PiSession> {
           from = offset + 1;
         }
       }
-      throw new Error(`clickText: no match #${nth} for ${JSON.stringify(text)}`);
+      const screen = readScreen().join("\n");
+      throw new Error(`clickText: no match #${nth} for ${JSON.stringify(text)}\n--- screen ---\n${screen}`);
     },
     waitFor(text, timeoutMs) {
       return waitFor(text, timeoutMs, false);

@@ -85,6 +85,19 @@ function railMarks(pi: PiSession, width = cols): RailMarks {
   return marks;
 }
 
+/** Wait until the rail draws one tick per prompt. */
+async function waitForTicks(pi: PiSession, count: number, timeoutMs = 20_000): Promise<RailMarks> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const marks = railMarks(pi);
+    if (marks.ticks.length === count) return marks;
+    if (Date.now() >= deadline) {
+      throw new Error(`waitForTicks timed out: ${marks.ticks.length} of ${count} ticks\n${pi.screen().join("\n")}`);
+    }
+    await sleep(50);
+  }
+}
+
 function assertNoRail(pi: PiSession, width = cols): void {
   const screen = pi.screen().join("\n");
   assert.ok(!screen.includes("▴") && !screen.includes("▾"), `rail chevrons at ${width} columns\n${screen}`);
@@ -92,14 +105,25 @@ function assertNoRail(pi: PiSession, width = cols): void {
   assert.deepEqual(railMarks(pi, width).ticks, [], `rail ticks at ${width} columns\n${screen}`);
 }
 
-/** Page up to the transcript top; no prompt is above the viewport there, so no overlay covers the scrollbar. */
+/** Page up until the transcript stops scrolling, so the top of the transcript is in the viewport. */
 async function scrollToTop(pi: PiSession): Promise<void> {
   for (let i = 0; i < 12; i++) {
+    const before = pi.screen().join("\n");
     pi.press("pageup");
-    await sleep(100);
+    // A page-up at the top repaints nothing, so a screen that stays put means the scroll is done.
+    if (!(await screenChanged(pi, before, 1000))) return;
   }
-  await sleep(400);
-  assert.notEqual(pi.screen()[0].trim(), "", `not at the transcript top\n${pi.screen().join("\n")}`);
+  throw new Error(`still scrolling after 12 page-ups\n${pi.screen().join("\n")}`);
+}
+
+/** Wait until the screen differs from `previous`, and say whether it did within `timeoutMs`. */
+async function screenChanged(pi: PiSession, previous: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (pi.screen().join("\n") !== previous) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(50);
+  }
 }
 
 test("the rail ticks jump between prompts", { timeout: 180_000 }, async () => {
@@ -198,10 +222,7 @@ test("many prompts stack one tick each", { timeout: 180_000 }, async () => {
       pi.type(`question ${i}\r`);
       await pi.waitFor(`answer ${i}`);
     }
-    await sleep(500);
-
-    const marks = railMarks(pi);
-    assert.equal(marks.ticks.length, 8, `expected 8 ticks\n${pi.screen().join("\n")}`);
+    await waitForTicks(pi, 8);
     await pi.shot("timeline-many-prompts");
   } finally {
     await pi.close();
@@ -215,7 +236,6 @@ test("a narrow terminal hides the rail and keeps Pi's scrollbar usable", { timeo
     await runTurns(pi);
     assertNoRail(pi, narrow);
 
-    // Back at the top no prompt is above the viewport, so no overlay covers the scrollbar.
     await scrollToTop(pi);
     await pi.shot("timeline-narrow");
     const before = rowOf(pi, "first question");
@@ -314,7 +334,7 @@ test("the rail stays centered on the transcript while the editor grows", { timeo
     await runTurns(pi);
     pi.type("draft");
     await pi.waitFor("draft");
-    await sleep(300);
+    await pi.settle();
     const before = railMarks(pi);
     const draftRow = rowOf(pi, "draft");
     assert.ok(before.up !== undefined, `no rail\n${pi.screen().join("\n")}`);
@@ -324,7 +344,7 @@ test("the rail stays centered on the transcript while the editor grows", { timeo
       pi.type(`more ${line}`);
     }
     await pi.waitFor("more 6");
-    await sleep(300);
+    await pi.settle();
     const grown = draftRow - rowOf(pi, "draft");
     const after = railMarks(pi);
     assert.ok(grown > 0, `the editor did not grow\n${pi.screen().join("\n")}`);

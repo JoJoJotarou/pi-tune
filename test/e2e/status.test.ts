@@ -68,6 +68,7 @@ test("working line shows Responding without the token rate", { timeout: 180_000 
   try {
     pi.type("write\r");
     await pi.waitFor(/Responding +.*to stop/);
+    // A token rate needs a second of streaming to be measurable, so wait it out before reading its absence.
     await new Promise((done) => setTimeout(done, 1500));
     const statusRow = pi.screen().find((row) => row.includes("to stop")) ?? "";
     assert.equal(statusRow.includes("tok/s"), false, statusRow);
@@ -81,8 +82,8 @@ test("Pi without pi-tune has no working line during a tool", { timeout: 180_000 
   const pi = await startPi({ scenario: toolScenario(), tune: false });
   try {
     pi.type("run it\r");
-    await pi.waitFor("run it");
-    await new Promise((done) => setTimeout(done, 1000));
+    // The tool block paints only after the run started, which is when a working line would already be up.
+    await pi.waitFor("sleep 1");
     await pi.shot("status-before");
     assert.equal(/to stop/.test(pi.screen().join("\n")), false);
   } finally {
