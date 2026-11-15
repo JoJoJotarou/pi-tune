@@ -4,6 +4,7 @@ import { type KeybindingsManager, keyText } from "@earendil-works/pi-coding-agen
 import type { EditorTheme, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { CURSOR_MARKER, stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { testTheme } from "../../test/theme.ts";
+import { assertFits } from "../../test/width.ts";
 import { TuneEditor, type TuneEditorOptions } from "./tune-editor.ts";
 
 const theme = testTheme();
@@ -84,6 +85,29 @@ test("the block still holds at sixteen columns", () => {
   const line = firstContent(editor, 16);
   assert.match(line, /^ ❯ narrow/, line);
   assert.equal(visibleWidth(line), 16);
+});
+
+test("rows without Pi's bottom border marker fall back to Pi's own look and warn once", () => {
+  const problems: string[] = [];
+  const editor = makeEditor({ onLayoutProblem: (reason) => problems.push(reason) });
+  // What an upstream change to Pi's editor rows would look like: the tag never reaches the bottom border.
+  (editor as unknown as { renderBottomBorder: (width: number, hidden: number) => string }).renderBottomBorder = (
+    width,
+  ) => "─".repeat(width);
+  editor.setText("hello");
+  for (const width of [40, 60]) {
+    const lines = editor.render(width);
+    assertFits(lines, width);
+    assert.ok(
+      !lines.some((line) => plain(line).includes("❯")),
+      `the block is still drawn:\n${lines.map(plain).join("\n")}`,
+    );
+  }
+  assert.deepEqual(problems, ["Pi's editor rows have no bottom border marker"]);
+
+  // Too narrow for a gutter is a deliberate fallback, not a layout failure.
+  assertFits(editor.render(3), 3);
+  assert.deepEqual(problems, ["Pi's editor rows have no bottom border marker"]);
 });
 
 test("the block keeps the cursor marker inside the gutter", () => {

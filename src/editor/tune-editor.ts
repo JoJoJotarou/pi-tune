@@ -11,6 +11,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import { BOTTOM_MARK, editorRows } from "../internals/editor-layout.ts";
 import { readEditorPaste } from "../internals/editor-pastes.ts";
 import { blockBackground } from "../shared/bg.ts";
 import { BTW_BORDER } from "../shared/btw.ts";
@@ -21,8 +22,6 @@ import { withGhostSuggestion } from "./suggestion.ts";
 const STASH_CONFIRM_MS = 3000;
 /** Pi exits when `app.clear` arrives twice within 500 ms of each other; the label lives exactly that long. */
 const CTRL_C_WINDOW_MS = 500;
-/** Zero-width APC: Pi pads every content line, so the bottom border needs its own tag to stay findable. */
-const BOTTOM_MARK = "\u001b_pi:tune-bottom\u0007";
 /**
  * The block's background: Pi has no neutral input token, and `toolPendingBg` is its one gray block fill. A btw side
  * thread tints the block with `customMessageBg`, the color pi-tune's drawer already uses for that thread.
@@ -46,6 +45,8 @@ export interface TuneEditorOptions {
   onDismissSuggestion?: () => void;
   /** Runs when a stash is taken (`true`) or restored (`false`), so the footer can name the next `ctrl+s`. */
   onStashChange?: (held: boolean) => void;
+  /** Runs once if Pi's editor rows cannot be read, so the caller can name the reason and keep Pi's own look. */
+  onLayoutProblem?: (reason: string) => void;
 }
 
 interface Stash {
@@ -77,6 +78,9 @@ export class TuneEditor extends CustomEditor {
   private readonly onAcceptSuggestion?: () => void;
   private readonly onDismissSuggestion?: () => void;
   private readonly onStashChange?: (held: boolean) => void;
+  private readonly onLayoutProblem?: (reason: string) => void;
+  /** The layout probe failed once; a warning per frame would repeat for as long as the editor lives. */
+  private layoutWarned = false;
   private stash?: Stash;
   private stashConfirmUntil?: number;
   private confirmTimer?: ReturnType<typeof setTimeout>;
@@ -106,6 +110,7 @@ export class TuneEditor extends CustomEditor {
     this.onAcceptSuggestion = options.onAcceptSuggestion;
     this.onDismissSuggestion = options.onDismissSuggestion;
     this.onStashChange = options.onStashChange;
+    this.onLayoutProblem = options.onLayoutProblem;
   }
 
   /** Ghost suggestion shown on the empty editor's first content row; Tab fills it. */
@@ -124,7 +129,7 @@ export class TuneEditor extends CustomEditor {
   }
 
   /** Ctrl+V reaches this path; route large text through the bracketed paste so it collapses like Cmd+V. */
-  insertTextAtCursor(text: string): void {
+  override insertTextAtCursor(text: string): void {
     if (isLargePaste(text)) {
       super.handleInput(`\x1b[200~${text}\x1b[201~`);
       return;
@@ -132,7 +137,7 @@ export class TuneEditor extends CustomEditor {
     super.insertTextAtCursor(text);
   }
 
-  handleInput(data: string): void {
+  override handleInput(data: string): void {
     if (matchesKey(data, "ctrl+s")) {
       this.handleStash();
       return;
@@ -174,7 +179,7 @@ export class TuneEditor extends CustomEditor {
     super.handleInput(data);
   }
 
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  override handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     // The draft renders inside the block, after the margin and the gutter, and the block drops Pi's top border,
     // so a click is shifted by both the gutter and the rows the block added or removed above the draft.
     const result =
@@ -202,19 +207,20 @@ export class TuneEditor extends CustomEditor {
     this.tui.requestRender();
   }
 
-  render(width: number): string[] {
+  override render(width: number): string[] {
     const inner = blockContentWidth(width);
     this.blockOffset = width - inner;
-    if (inner < 1) {
-      // Too narrow for a gutter: Pi's own editor keeps the draft visible.
-      this.blockOffset = 0;
-      return super.render(width);
+    // Too narrow for a gutter: Pi's own editor keeps the draft visible.
+    if (inner < 1) return this.piLines(width);
+    const rows = editorRows(super.render(inner));
+    if (rows instanceof Error) {
+      if (!this.layoutWarned) {
+        this.layoutWarned = true;
+        this.onLayoutProblem?.(rows.message);
+      }
+      return this.piLines(width);
     }
-    const lines = super.render(inner);
-    const bottom = lines.findIndex((line) => line.startsWith(BOTTOM_MARK));
-    if (bottom < 0) return lines.map((line) => truncateToWidth(line, width, ""));
-    const plain = lines.map((line, index) => (index === bottom ? line.slice(BOTTOM_MARK.length) : line));
-    const content = plain.slice(1, bottom);
+    const content = rows.content;
     const rest = this.ghostRest();
     if (rest !== undefined && content.length === 1) {
       // A one-line draft has exactly one content row; the rest of the suggestion goes after its cursor.
@@ -222,13 +228,13 @@ export class TuneEditor extends CustomEditor {
     }
     // The chevron keeps Pi's own editor border color, which follows the thinking level.
     const paint = blockBackground(this.btw ? BTW_BG : BLOCK_BG, this.themeOf());
-    const above = this.statusLabel(plain[0] ?? "");
+    const above = this.statusLabel(rows.top);
     // Our first content row sits below Pi's top border and the status line, above the block's top edge.
     this.rowShift = 1 - (above === undefined ? 0 : 1) - BLOCK_PADDING;
     const theme = this.themeOf();
     const fill = theme.colors[this.btw ? BTW_BG : BLOCK_BG];
     // Pi draws the autocomplete list flush left; the block must not push it under the draft.
-    const menu = plain.slice(bottom + 1).map((line) => truncateToWidth(line, width, "", true));
+    const menu = rows.below.map((line) => truncateToWidth(line, width, "", true));
     return [
       ...(above === undefined ? [] : [statusLine(above, width)]),
       blockEdgeRow(width, "top", fill, theme),
@@ -238,8 +244,14 @@ export class TuneEditor extends CustomEditor {
     ];
   }
 
-  protected renderBottomBorder(width: number, hiddenLineCount: number): string {
+  protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
     return BOTTOM_MARK + super.renderBottomBorder(width, hiddenLineCount);
+  }
+
+  /** Pi's own rows cut to the width: the fallback whenever the block is not drawn. */
+  private piLines(width: number): string[] {
+    this.blockOffset = 0;
+    return super.render(width).map((line) => truncateToWidth(line, width, ""));
   }
 
   /** The part of the suggestion still to type: shown while the draft is its start and the cursor ends it. */

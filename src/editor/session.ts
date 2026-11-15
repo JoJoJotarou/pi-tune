@@ -91,6 +91,22 @@ export function createEditorSession(host: EditorHost): EditorSession {
     tui?.requestRender();
   };
 
+  /** `start` and `shutdown` share it: nothing of one session outlives it. btw mode is the Pi area's, not a session's. */
+  function reset(): void {
+    suggestion?.discard();
+    chatModel = undefined;
+    registry = undefined;
+    suggestion = undefined;
+    suggestPath = undefined;
+    suggestSettings = undefined;
+    suggestProblem = undefined;
+    notify = undefined;
+    currentTheme = undefined;
+    openPreviewModal = undefined;
+    editor = undefined;
+    tui = undefined;
+  }
+
   const completeSuggestion: SuggestionComplete = async ({ model: target, systemPrompt, userMessage, signal }) => {
     if (!registry) throw new Error("model registry unavailable");
     const chat = target as Model<Api>;
@@ -224,7 +240,7 @@ export function createEditorSession(host: EditorHost): EditorSession {
       suggestion?.discard();
     },
     start(ctx) {
-      suggestion?.discard();
+      reset();
       if (ctx.mode !== "tui") return;
       chatModel = ctx.model;
       registry = ctx.modelRegistry;
@@ -270,6 +286,8 @@ export function createEditorSession(host: EditorHost): EditorSession {
           onAcceptSuggestion: () => suggestion?.accepted(),
           onDismissSuggestion: () => suggestion?.discard(),
           onStashChange: (held) => host.emitStash(held),
+          onLayoutProblem: (reason) =>
+            notify?.(`pi-tune editor: ${reason}; the input box keeps Pi's own look.`, "warning"),
         });
         instance.setBtwMode(btwMode);
         editor = instance;
@@ -278,17 +296,7 @@ export function createEditorSession(host: EditorHost): EditorSession {
       });
     },
     shutdown() {
-      suggestion?.discard();
-      suggestion = undefined;
-      suggestPath = undefined;
-      suggestSettings = undefined;
-      suggestProblem = undefined;
-      notify = undefined;
-      currentTheme = undefined;
-      openPreviewModal = undefined;
-      editor = undefined;
-      tui = undefined;
-      registry = undefined;
+      reset();
     },
     suggestCompletions(prefix) {
       const argument = /^(model|style)\s+(\S*)$/.exec(prefix);
